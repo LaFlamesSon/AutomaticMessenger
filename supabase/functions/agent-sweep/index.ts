@@ -5,12 +5,20 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
 const MAX_EMAILS_PER_ACCOUNT = 25;
-const MODEL = "claude-haiku-4-5"; // cheap tier per unit-economics plan
+// LLM provider — any OpenAI-compatible chat-completions API.
+// Default: Gemini's free tier (1,500 requests/day, $0 at personal volume).
+// To switch providers (DeepSeek, OpenAI, Groq, ...) just change the secrets:
+//   LLM_BASE_URL  e.g. https://api.deepseek.com/v1
+//   LLM_MODEL     e.g. deepseek-chat
+//   LLM_API_KEY   that provider's key
+const LLM_BASE_URL = Deno.env.get("LLM_BASE_URL") ??
+  "https://generativelanguage.googleapis.com/v1beta/openai";
+const MODEL = Deno.env.get("LLM_MODEL") ?? "gemini-flash-latest";
+const LLM_API_KEY = Deno.env.get("LLM_API_KEY") ?? Deno.env.get("GEMINI_API_KEY") ?? "";
 
 type Category = "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit";
 
@@ -135,39 +143,50 @@ Hard rules for drafts:
 ${profile.custom_rules ? `- ${profile.custom_rules}` : ""}${styleExamples}`;
 }
 
-const TRIAGE_SCHEMA = {
-  type: "object",
-  properties: {
-    category: { type: "string", enum: ["urgent", "action_needed", "fyi", "low_priority", "spam_or_poor_fit"] },
-    summary: { type: "string" },
-    draft: { type: ["string", "null"] },
-  },
-  required: ["category", "summary", "draft"],
-  additionalProperties: false,
-} as const;
+const OUTPUT_INSTRUCTION = `
+
+OUTPUT FORMAT: Respond with ONLY a JSON object, no other text:
+{"category": "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit", "summary": "<one sentence>", "draft": "<reply text>" or null}`;
 
 async function triageEmail(
-  anthropic: Anthropic,
   systemPrompt: string,
   from: string,
   subject: string,
   body: string,
 ): Promise<Triage> {
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
-    output_config: { format: { type: "json_schema", schema: TRIAGE_SCHEMA } },
-    messages: [{
-      role: "user",
-      content: `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 6000)}`,
-    }],
+  const resp = await fetch(`${LLM_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${LLM_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 1024,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt + OUTPUT_INSTRUCTION },
+        {
+          role: "user",
+          content: `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 6000)}`,
+        },
+      ],
+    }),
   });
-  if (response.stop_reason === "refusal") {
-    return { category: "spam_or_poor_fit", summary: "Content declined by safety filters.", draft: null };
+  if (!resp.ok) throw new Error(`LLM API ${resp.status}: ${await resp.text()}`);
+  const data = await resp.json();
+  let text: string = data.choices?.[0]?.message?.content ?? "";
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  if (!text) {
+    return { category: "spam_or_poor_fit", summary: "Content could not be analyzed.", draft: null };
   }
-  const text = response.content.find((b: any) => b.type === "text")?.text ?? "{}";
-  return JSON.parse(text) as Triage;
+  const parsed = JSON.parse(text);
+  const categories = ["urgent", "action_needed", "fyi", "low_priority", "spam_or_poor_fit"];
+  return {
+    category: categories.includes(parsed.category) ? parsed.category : "low_priority",
+    summary: String(parsed.summary ?? ""),
+    draft: typeof parsed.draft === "string" && parsed.draft.trim() ? parsed.draft : null,
+  } as Triage;
 }
 
 // ---------------------------------------------------------------- draft creation
@@ -197,8 +216,6 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  const anthropic = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
-
   const { data: accounts, error: accErr } = await supabase
     .from("ia_gmail_accounts")
     .select("*, ia_users(id, email)");
@@ -248,7 +265,7 @@ Deno.serve(async (req: Request) => {
           continue; // never reply to no-reply senders; leave unlabeled
         }
 
-        const triage = await triageEmail(anthropic, systemPrompt, from, subject, extractBody(msg.payload));
+        const triage = await triageEmail(systemPrompt, from, subject, extractBody(msg.payload));
 
         let draftCreated = false;
         if (triage.draft && (triage.category === "urgent" || triage.category === "action_needed")) {

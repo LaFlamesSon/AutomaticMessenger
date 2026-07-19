@@ -7,7 +7,15 @@ Target project: the fresh Supabase project (`xkrpxvswdkreglmefuot`).
 | Secret | Where to get it |
 |---|---|
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud Console → OAuth client, type **Web application**. Add the gmail-oauth function URL (step 2) as an **Authorized redirect URI**. Enable the Gmail API and add yourself as a test user. |
-| `ANTHROPIC_API_KEY` | console.anthropic.com → API keys. Phase 0 usage on your own inbox costs cents/month. |
+| `GEMINI_API_KEY` | aistudio.google.com/apikey — free, no card required. The free tier (1,500 requests/day) covers personal-inbox volume many times over. |
+
+**Optional — use a different LLM provider** (any OpenAI-compatible API). Set these three secrets instead of `GEMINI_API_KEY`:
+
+| Provider | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_KEY` |
+|---|---|---|---|
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | platform.deepseek.com key |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | platform.openai.com key |
+| Groq (free tier) | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` | console.groq.com key |
 | `AGENT_CRON_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Shared between the cron job and the function. |
 
 ## 1. Apply the schema
@@ -37,7 +45,7 @@ protected by the `x-agent-secret` header instead.)
 supabase secrets set \
   GOOGLE_CLIENT_ID=... \
   GOOGLE_CLIENT_SECRET=... \
-  ANTHROPIC_API_KEY=... \
+  GEMINI_API_KEY=... \
   AGENT_CRON_SECRET=...
 ```
 
