@@ -1,0 +1,54 @@
+# AutomaticMessenger configuration.
+# Copy this file to config.yaml and edit it — config.yaml is gitignored.
+
+# --- Matching rules (checked in order; first match wins) ---------------------
+# Placeholders available in templates:
+#   {{sender_name}}  {{first_name}}  {{company}}  {{topic}}  {{subject}}
+rules:
+  - name: sponsorships
+    keywords: ["paid", "sponsorship", "sponsored", "collab", "collaboration"]
+    match_in: [subject, body]
+    template: |
+      Hi {{first_name}},
+
+      Thanks for reaching out about {{topic}}! I'm definitely interested in
+      hearing more about working with {{company}}.
+
+      Could you share the campaign details, deliverables, and budget range?
+      I'll get back to you with availability and rates.
+
+  - name: advertising
+    keywords: ["advertisement", "advertising", "ad placement", "promote"]
+    match_in: [subject, body]
+    template: |
+      Hi {{first_name}},
+
+      Thanks for your message about {{topic}}. I do consider advertising
+      opportunities — please send over the specifics (format, timeline, and
+      budget) and I'll review it shortly.
+
+# Appended to every reply.
+signature: |
+  Best,
+  Yafet
+
+# --- Gmail -------------------------------------------------------------------
+credentials_file: credentials.json   # OAuth client from Google Cloud Console
+token_file: token.json               # created automatically on first login
+processed_label: AutoMessenger/Processed
+
+# --- Behaviour ---------------------------------------------------------------
+# Which emails to scan. Standard Gmail search syntax.
+query: "in:inbox is:unread newer_than:7d"
+max_replies_per_run: 10        # safety cap per sweep
+mark_as_read: true             # mark handled emails as read
+skip_no_reply_senders: true    # never reply to no-reply@ addresses
+
+# --- AI fill-ins (optional, off by default — heuristics are free) ------------
+# Uses any OpenAI-compatible endpoint. The default points at a FREE local
+# model via Ollama (https://ollama.com — `ollama pull llama3.2`).
+# To use OpenAI's paid API instead: set llm_base_url to
+# https://api.openai.com/v1 and export OPENAI_API_KEY.
+ai_fill_ins: false
+llm_base_url: http://localhost:11434/v1
+llm_model: llama3.2

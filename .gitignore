@@ -1,0 +1,13 @@
+# Secrets & personal config — never commit these
+credentials.json
+token.json
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
