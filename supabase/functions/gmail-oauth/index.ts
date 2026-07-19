@@ -8,9 +8,10 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 
-function selfUrl(req: Request): string {
-  const url = new URL(req.url);
-  return `${url.origin}${url.pathname}`;
+function selfUrl(_req: Request): string {
+  // Supabase strips the /functions/v1 prefix from req.url inside the function,
+  // so derive the public URL from SUPABASE_URL instead of the request.
+  return `${Deno.env.get("SUPABASE_URL")}/functions/v1/gmail-oauth`;
 }
 
 Deno.serve(async (req: Request) => {
