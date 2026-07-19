@@ -92,12 +92,22 @@ Deno.serve(async (req: Request) => {
   await supabase.from("ia_voice_profiles")
     .upsert({ user_id: user.id }, { onConflict: "user_id", ignoreDuplicates: true });
 
+  // Surface the extension access token so onboarding is copy-paste simple.
+  const { data: freshUser } = await supabase
+    .from("ia_users").select("api_token").eq("id", user.id).single();
+
   return new Response(
-    `<html><body style="font-family: system-ui; max-width: 40rem; margin: 4rem auto;">
-      <h2>✅ ${emailAddress} connected</h2>
+    `<html><head><meta charset="utf-8"></head>
+    <body style="font-family: system-ui; max-width: 40rem; margin: 4rem auto; line-height: 1.6;">
+      <h2>&#9989; ${emailAddress} connected</h2>
       <p>The inbox agent will start triaging on its next sweep. Drafts appear in
-      your Gmail drafts folder — nothing is ever sent automatically.</p>
+      your Gmail drafts folder &mdash; nothing is ever sent automatically.</p>
+      <h3>Your extension access token</h3>
+      <p><code style="background:#f4f2ed;padding:8px 12px;border-radius:8px;display:inline-block;font-size:15px;">${freshUser?.api_token ?? ""}</code></p>
+      <p style="color:#6f7075;font-size:14px;">Paste this into the CaughtUp Chrome
+      extension to see your digest, chat with your agent, and manage settings.
+      Keep it private &mdash; it grants access to your agent.</p>
     </body></html>`,
-    { headers: { "Content-Type": "text/html" } },
+    { headers: { "Content-Type": "text/html; charset=utf-8" } },
   );
 });

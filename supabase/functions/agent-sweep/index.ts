@@ -290,6 +290,45 @@ async function loadMediaKit(supabase: any, userId: string): Promise<Attachment[]
 
 // ---------------------------------------------------------------- main
 
+// Style learning: when the user sends a draft we wrote (possibly after
+// editing it), capture the before/after pair into ia_draft_edits so future
+// drafts sound more like them. Runs on recent, unsent, uncaptured drafts.
+async function learnFromSentDrafts(supabase: any, token: string, account: any): Promise<number> {
+  const { data: rows } = await supabase
+    .from("ia_processed_emails")
+    .select("id, thread_id, draft_text")
+    .eq("gmail_account_id", account.id)
+    .eq("draft_created", true)
+    .eq("auto_sent", false)
+    .eq("edit_captured", false)
+    .not("draft_text", "is", null)
+    .gte("processed_at", new Date(Date.now() - 7 * 86400_000).toISOString())
+    .limit(10);
+  let learned = 0;
+  for (const row of rows ?? []) {
+    try {
+      const thread = await gmailGet(token, `/threads/${row.thread_id}?format=full`);
+      const sent = (thread.messages ?? []).find((m: any) => (m.labelIds ?? []).includes("SENT"));
+      if (!sent) continue; // draft not sent yet; check again next sweep
+      let sentText = extractBody(sent.payload);
+      // strip the quoted reply tail
+      sentText = sentText.split(/\r?\nOn .{5,100}wrote:/)[0].split(/\r?\n>/)[0].trim();
+      const norm = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
+      if (norm(sentText) && norm(sentText) !== norm(row.draft_text)) {
+        await supabase.from("ia_draft_edits").insert({
+          user_id: account.user_id,
+          original_draft: row.draft_text,
+          edited_final: sentText.slice(0, 4000),
+        });
+        learned++;
+      }
+      await supabase.from("ia_processed_emails")
+        .update({ edit_captured: true }).eq("id", row.id);
+    } catch { /* transient - retry next sweep */ }
+  }
+  return learned;
+}
+
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -397,6 +436,8 @@ Deno.serve(async (req: Request) => {
         digest[triage.category].push({ from, subject, summary: triage.summary, draft_created: draftCreated });
       }
 
+      const learned = await learnFromSentDrafts(supabase, token, account);
+
       await supabase.from("ia_agent_runs").update({
         finished_at: new Date().toISOString(),
         emails_scanned: scanned, drafts_created: drafted, status: "ok",
@@ -406,7 +447,7 @@ Deno.serve(async (req: Request) => {
 
       results.push({
         account: account.gmail_address,
-        scanned, drafted,
+        scanned, drafted, style_examples_learned: learned,
         digest: scanned === 0 ? "All caught up" : digest,
       });
     } catch (err) {
