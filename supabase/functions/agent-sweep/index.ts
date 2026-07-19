@@ -388,6 +388,7 @@ Deno.serve(async (req: Request) => {
           summary: triage.summary,
           draft_created: draftCreated,
           auto_sent: autoSent,
+          draft_text: draftCreated ? triage.draft : null,
           sender: from,
           subject,
         });

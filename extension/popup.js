@@ -129,17 +129,32 @@ function addMsg(cls, text) {
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 
+function showTyping() {
+  const div = document.createElement("div");
+  div.className = "msg agent typing";
+  div.id = "typing";
+  div.innerHTML = "<i></i><i></i><i></i>";
+  $("messages").appendChild(div);
+  $("messages").scrollTop = $("messages").scrollHeight;
+}
+function hideTyping() {
+  document.getElementById("typing")?.remove();
+}
+
 $("chatForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const text = $("chatInput").value.trim();
   if (!text) return;
   $("chatInput").value = "";
   addMsg("user", text);
+  showTyping();
   try {
     const res = await api("chat", { message: text });
+    hideTyping();
     addMsg("agent", res.reply ?? res.error ?? "…");
     if (res.rule_added) addMsg("rule", `New rule saved: ${res.rule_added}`);
   } catch {
+    hideTyping();
     addMsg("agent", "Connection problem — try again.");
   }
 });

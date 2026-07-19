@@ -76,14 +76,21 @@ Deno.serve(async (req: Request) => {
         .from("ia_chat_messages").select("role, content")
         .eq("user_id", user.id).order("created_at", { ascending: false }).limit(12);
       const { data: recent } = await supabase
-        .from("ia_processed_emails").select("category, sender, subject, summary")
+        .from("ia_processed_emails")
+        .select("category, sender, subject, summary, draft_created, auto_sent, draft_text")
         .order("processed_at", { ascending: false }).limit(10);
+      const recentCtx = (recent ?? []).map((e: any) => ({
+        ...e,
+        draft_text: e.draft_text ? String(e.draft_text).slice(0, 500) : null,
+      }));
 
       const system = `You are the user's inbox agent ("CaughtUp"). You triage their Gmail every few hours, summarize what matters, and draft replies in their voice. You are chatting with the user (${profile?.display_name || user.email}) inside your Chrome extension.
 
 Their current settings: occupation="${profile?.occupation}", services="${profile?.services}", tone="${profile?.tone}", signoff="${profile?.signoff}", auto_send=${profile?.auto_send}, custom rules="${profile?.custom_rules || "none"}".
 
-Recently triaged emails (context): ${JSON.stringify(recent ?? [])}
+Recently triaged emails (context): ${JSON.stringify(recentCtx)}
+
+About that context: draft_created=true means you ALREADY wrote a reply draft and it is sitting in their Gmail drafts folder right now (draft_text is what you wrote - quote it if they ask). auto_sent=true means the reply was already sent. Never offer to "draft a reply" for an email that already has one - instead point them to the existing draft.
 
 Be helpful, brief, and concrete. IMPORTANT: when the user gives a standing instruction about how to handle their email (e.g. "never suggest calls on Fridays", "be more casual"), respond with JSON: {"reply": "<your confirmation>", "new_rule": "<the rule stated concisely>"}. Otherwise respond with JSON: {"reply": "<your answer>", "new_rule": null}. Respond with ONLY that JSON object.`;
 

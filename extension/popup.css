@@ -78,7 +78,25 @@ header .ghost { color: var(--cream); border-color: #3a3b40; font-size: 12px; pad
 
 /* Chat */
 #messages { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; min-height: 240px; }
-.msg { max-width: 85%; padding: 8px 12px; border-radius: 12px; line-height: 1.45; }
+.msg {
+  max-width: 85%; padding: 8px 12px; border-radius: 12px; line-height: 1.45;
+  animation: msg-in 0.28s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.typing { display: flex; gap: 4px; padding: 12px 14px; }
+.typing i {
+  width: 6px; height: 6px; border-radius: 99px; background: var(--soft);
+  animation: bounce 1.2s infinite;
+}
+.typing i:nth-child(2) { animation-delay: 0.15s; }
+.typing i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce {
+  0%, 60%, 100% { transform: none; opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
 .msg.user { align-self: flex-end; background: var(--ink); color: var(--cream); border-bottom-right-radius: 4px; }
 .msg.agent { align-self: flex-start; background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 4px; }
 .msg.rule { align-self: center; font-size: 12px; color: var(--good); background: #e5f3ea; border-radius: 99px; padding: 3px 12px; }
