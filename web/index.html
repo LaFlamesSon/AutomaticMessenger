@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CaughtUp — Your inbox, already handled</title>
+<style>
+  :root {
+    --ink: #17181c; --cream: #f7f5f0; --accent: #e07a3f;
+    --soft: #6f7075; --line: #e4e1da; --good: #2c7a4b;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--cream); line-height: 1.6; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+  header { background: var(--ink); color: var(--cream); }
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; }
+  .logo { font-weight: 800; font-size: 20px; }
+  .logo .mark { color: var(--accent); }
+  nav a.cta { background: var(--accent); color: #fff; padding: 9px 20px; border-radius: 8px; text-decoration: none; font-weight: 700; }
+
+  .hero { padding: 72px 0 88px; text-align: center; background: var(--ink); color: var(--cream); }
+  .hero h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.1; max-width: 17ch; margin: 0 auto 20px; }
+  .hero h1 em { color: var(--accent); font-style: normal; }
+  .hero p { color: #b9bac0; font-size: 19px; max-width: 52ch; margin: 0 auto 32px; }
+  .hero .cta { font-size: 17px; padding: 14px 32px; }
+  .hero .note { font-size: 13px; color: #8a8b92; margin-top: 14px; }
+
+  section { padding: 72px 0; }
+  h2 { font-size: 32px; margin-bottom: 12px; text-align: center; }
+  .lead { text-align: center; color: var(--soft); max-width: 60ch; margin: 0 auto 48px; }
+
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+  .step { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 26px; }
+  .step .n { display: inline-block; width: 30px; height: 30px; line-height: 30px; text-align: center; border-radius: 99px; background: var(--accent); color: #fff; font-weight: 800; margin-bottom: 12px; }
+  .step h3 { margin-bottom: 8px; }
+  .step p { color: var(--soft); font-size: 15px; }
+
+  .demo { background: #fff; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .digestcard { max-width: 420px; margin: 0 auto; background: var(--cream); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 12px 40px rgba(23,24,28,.08); }
+  .digestcard h4 { font-size: 12px; letter-spacing: .1em; color: var(--accent); margin-bottom: 10px; }
+  .mail { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; font-size: 14px; }
+  .mail b { display: block; }
+  .mail span { color: var(--soft); font-size: 13px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 700; background: #fdeee3; color: var(--accent); border-radius: 99px; padding: 2px 10px; margin-top: 8px; }
+  .caught { text-align: center; color: var(--good); font-weight: 700; padding-top: 6px; }
+
+  .price { text-align: center; }
+  .pricecard { display: inline-block; background: #fff; border: 2px solid var(--ink); border-radius: 18px; padding: 36px 48px; }
+  .amount { font-size: 54px; font-weight: 800; }
+  .amount small { font-size: 18px; color: var(--soft); font-weight: 600; }
+  .pricecard ul { list-style: none; padding: 18px 0 26px; text-align: left; }
+  .pricecard li { padding: 5px 0 5px 26px; position: relative; }
+  .pricecard li::before { content: "✓"; position: absolute; left: 0; color: var(--good); font-weight: 800; }
+  .cta.big { background: var(--accent); color: #fff; padding: 14px 40px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 17px; }
+
+  footer { background: var(--ink); color: #8a8b92; padding: 32px 0; font-size: 14px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <nav>
+      <div class="logo"><span class="mark">✉</span> CaughtUp</div>
+      <a class="cta" href="#pricing">Get started</a>
+    </nav>
+  </div>
+  <div class="hero wrap">
+    <h1>Never miss a <em>paid opportunity</em> in your inbox again</h1>
+    <p>CaughtUp is an AI agent that lives in your Gmail. It triages every email, drafts replies in your voice, and attaches your media kit when brands ask — so you open your inbox to work that's already done.</p>
+    <a class="cta" href="#pricing">Add to Chrome — free trial</a>
+    <div class="note">It never sends anything without your say-so. You stay in control.</div>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2>How it works</h2>
+  <p class="lead">Three minutes to set up. Then it just runs.</p>
+  <div class="steps">
+    <div class="step"><span class="n">1</span><h3>Connect Gmail</h3><p>One click, Google's official sign-in. No passwords, revoke anytime.</p></div>
+    <div class="step"><span class="n">2</span><h3>Teach it your voice</h3><p>Tell it what you do and how you write — or just chat with it. Every correction makes it sharper.</p></div>
+    <div class="step"><span class="n">3</span><h3>Open your inbox to done</h3><p>Urgent deals surfaced, replies drafted in-thread, junk filtered, media kit attached when asked.</p></div>
+  </div>
+</section>
+
+<section class="demo">
+  <div class="wrap">
+    <h2>Your morning, with CaughtUp</h2>
+    <p class="lead">A digest that reads itself — urgent first, noise collapsed.</p>
+    <div class="digestcard">
+      <h4>⚡ URGENT</h4>
+      <div class="mail"><b>Vela Skincare — partnerships</b><span>Paid UGC collab, finalizing creators by Friday.</span><span class="pill">draft ready · media kit attached</span></div>
+      <h4>✋ ACTION NEEDED</h4>
+      <div class="mail"><b>Atlas Coffee</b><span>Wants a packaging refresh quote for Q4.</span><span class="pill">draft ready</span></div>
+      <div class="caught">+ 23 newsletters &amp; pitches handled for you 🎉</div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap price" id="pricing">
+  <h2>Simple pricing</h2>
+  <p class="lead">Less than one missed brand deal per year.</p>
+  <div class="pricecard">
+    <div class="amount">$12<small>/month</small></div>
+    <ul>
+      <li>Unlimited email triage</li>
+      <li>Reply drafts in your voice</li>
+      <li>Media kit auto-attach</li>
+      <li>Chat to fine-tune your agent</li>
+      <li>Auto-send mode (optional)</li>
+      <li>14-day free trial</li>
+    </ul>
+    <a class="cta big" href="#">Start free trial</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">CaughtUp · It never sends anything you didn't approve · Privacy · Terms</div>
+</footer>
+
+</body>
+</html>

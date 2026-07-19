@@ -24,6 +24,12 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
+  // Files are stored per-user: media-kit/{user_id}/<file>
+  const { data: firstUser } = await supabase.from("ia_users").select("id").limit(1).single();
+  if (!firstUser) return new Response(JSON.stringify({ error: "no users" }), { status: 400 });
+  // Clean up any legacy root-level copies
+  await supabase.storage.from("media-kit").remove(FILES.map((f) => f.name));
+
   const results: any[] = [];
   for (const f of FILES) {
     try {
@@ -32,7 +38,7 @@ Deno.serve(async (req: Request) => {
       const bytes = new Uint8Array(await resp.arrayBuffer());
       const { error } = await supabase.storage
         .from("media-kit")
-        .upload(f.name, bytes, { contentType: f.mime, upsert: true });
+        .upload(`${firstUser.id}/${f.name}`, bytes, { contentType: f.mime, upsert: true });
       if (error) throw new Error(error.message);
       results.push({ file: f.name, bytes: bytes.length, ok: true });
     } catch (err) {

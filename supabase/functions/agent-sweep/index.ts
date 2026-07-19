@@ -268,14 +268,14 @@ function buildDraftMime(
   return b64urlEncode(parts.join("\r\n"));
 }
 
-// Load up to 3 files from the media-kit storage bucket (user uploads samples
-// there via the dashboard). Cached per invocation.
-async function loadMediaKit(supabase: any): Promise<Attachment[]> {
-  const { data: files, error } = await supabase.storage.from("media-kit").list("", { limit: 10 });
+// Load up to 3 files from the user's folder in the media-kit bucket
+// (media-kit/{user_id}/...). Cached per account per invocation.
+async function loadMediaKit(supabase: any, userId: string): Promise<Attachment[]> {
+  const { data: files, error } = await supabase.storage.from("media-kit").list(userId, { limit: 10 });
   if (error || !files?.length) return [];
   const out: Attachment[] = [];
   for (const f of files.filter((f: any) => f.name && !f.name.startsWith(".")).slice(0, 3)) {
-    const { data: blob, error: dlErr } = await supabase.storage.from("media-kit").download(f.name);
+    const { data: blob, error: dlErr } = await supabase.storage.from("media-kit").download(`${userId}/${f.name}`);
     if (dlErr || !blob) continue;
     const buf = await blob.arrayBuffer();
     if (buf.byteLength > 8_000_000) continue; // keep drafts well under Gmail limits
@@ -309,9 +309,9 @@ Deno.serve(async (req: Request) => {
   if (accErr) return new Response(JSON.stringify({ error: accErr.message }), { status: 500 });
 
   const results: any[] = [];
-  let mediaKit: Attachment[] | null = null; // loaded on first portfolio request
 
   for (const account of accounts ?? []) {
+    let mediaKit: Attachment[] | null = null; // per-user, loaded on first portfolio request
     const { data: run } = await supabase
       .from("ia_agent_runs")
       .insert({ gmail_account_id: account.id })
@@ -356,10 +356,11 @@ Deno.serve(async (req: Request) => {
         const triage = await triageEmail(systemPrompt, from, subject, extractBody(msg.payload));
 
         let draftCreated = false;
+        let autoSent = false;
         if (triage.draft && (triage.category === "urgent" || triage.category === "action_needed")) {
           let attachments: Attachment[] = [];
           if (triage.wants_portfolio) {
-            if (mediaKit === null) mediaKit = await loadMediaKit(supabase);
+            if (mediaKit === null) mediaKit = await loadMediaKit(supabase, account.user_id);
             attachments = mediaKit;
           }
           const raw = buildDraftMime(
@@ -367,7 +368,13 @@ Deno.serve(async (req: Request) => {
             header(msg.payload, "Message-ID"), header(msg.payload, "References"),
             attachments,
           );
-          await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
+          if (profile.auto_send === true) {
+            // Opt-in only: reply goes out immediately instead of waiting as a draft.
+            await gmailPost(token, "/messages/send", { raw, threadId: msg.threadId });
+            autoSent = true;
+          } else {
+            await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
+          }
           draftCreated = true;
           drafted++;
         }
@@ -380,6 +387,7 @@ Deno.serve(async (req: Request) => {
           category: triage.category,
           summary: triage.summary,
           draft_created: draftCreated,
+          auto_sent: autoSent,
           sender: from,
           subject,
         });

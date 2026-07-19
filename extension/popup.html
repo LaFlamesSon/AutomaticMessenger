@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="mark">✉</span>
+      <span class="name">CaughtUp</span>
+    </div>
+    <button id="sweepBtn" class="ghost" title="Check inbox now">Sweep now</button>
+  </header>
+
+  <nav>
+    <button class="tab active" data-tab="today">Today</button>
+    <button class="tab" data-tab="chat">Chat</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <!-- Token setup (shown until connected) -->
+  <section id="setup" class="panel hidden">
+    <h2>Connect your agent</h2>
+    <p class="sub">Paste your access token once. You can find it in your welcome message or ask your admin.</p>
+    <input id="tokenInput" type="password" placeholder="Access token">
+    <button id="saveToken" class="primary">Connect</button>
+    <p id="setupError" class="error hidden">That token didn't work — check it and try again.</p>
+  </section>
+
+  <!-- Today -->
+  <section id="today" class="panel">
+    <div id="lastRun" class="lastrun"></div>
+    <div id="digest"></div>
+  </section>
+
+  <!-- Chat -->
+  <section id="chat" class="panel hidden">
+    <div id="messages"></div>
+    <form id="chatForm">
+      <input id="chatInput" type="text" placeholder="Teach your agent… e.g. “be more casual”" autocomplete="off">
+      <button type="submit" class="primary">Send</button>
+    </form>
+  </section>
+
+  <!-- Settings -->
+  <section id="settings" class="panel hidden">
+    <label>Name <input id="f_display_name"></label>
+    <label>What you do <input id="f_occupation"></label>
+    <label>Services <input id="f_services"></label>
+    <label>Voice / tone <input id="f_tone"></label>
+    <label>Sign-off <input id="f_signoff"></label>
+    <label>Standing rules <textarea id="f_custom_rules" rows="3"></textarea></label>
+    <label class="toggle">
+      <input id="f_auto_send" type="checkbox">
+      <span><strong>Auto-send replies</strong> — send immediately instead of saving drafts. Off = you always review first.</span>
+    </label>
+    <button id="saveProfile" class="primary">Save</button>
+    <p id="saveMsg" class="ok hidden">Saved ✓</p>
+    <hr>
+    <button id="disconnect" class="ghost danger">Disconnect</button>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
