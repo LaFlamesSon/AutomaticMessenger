@@ -357,6 +357,7 @@ Deno.serve(async (req: Request) => {
 
         let draftCreated = false;
         let autoSent = false;
+        let gmailDraftId: string | null = null;
         if (triage.draft && (triage.category === "urgent" || triage.category === "action_needed")) {
           let attachments: Attachment[] = [];
           if (triage.wants_portfolio) {
@@ -389,6 +390,7 @@ Deno.serve(async (req: Request) => {
           draft_created: draftCreated,
           auto_sent: autoSent,
           draft_text: draftCreated ? triage.draft : null,
+          gmail_draft_id: gmailDraftId,
           sender: from,
           subject,
         });

@@ -99,10 +99,29 @@ async function loadDigest() {
           ? '<span class="badge draft">draft ready</span>'
           : "";
       card.innerHTML =
-        `<div class="from"></div><div class="subj"></div><div class="sum"></div>${badge}`;
+        `<div class="from"></div><div class="subj"></div><div class="sum"></div><div class="cardfoot">${badge}</div>`;
       card.querySelector(".from").textContent = e.sender;
       card.querySelector(".subj").textContent = e.subject;
       card.querySelector(".sum").textContent = e.summary;
+      // One-click send for ready drafts (the middle ground before auto-send)
+      if (e.draft_created && !e.auto_sent && e.gmail_draft_id) {
+        const btn = document.createElement("button");
+        btn.className = "sendbtn";
+        btn.textContent = "Send ↗";
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          btn.textContent = "Sending…";
+          const res = await api("send_draft", { id: e.id }).catch(() => ({}));
+          if (res.ok) {
+            card.querySelector(".cardfoot").innerHTML = '<span class="badge sent">reply sent</span>';
+          } else {
+            btn.disabled = false;
+            btn.textContent = "Send ↗";
+            btn.title = res.error ?? "Failed - try from Gmail drafts";
+          }
+        });
+        card.querySelector(".cardfoot").appendChild(btn);
+      }
       wrap.appendChild(card);
     }
     digest.appendChild(wrap);

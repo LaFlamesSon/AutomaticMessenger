@@ -73,6 +73,14 @@ header .ghost { color: var(--cream); border-color: #3a3b40; font-size: 12px; pad
 }
 .badge.draft { background: #fdeee3; color: var(--accent); }
 .badge.sent { background: #e5f3ea; color: var(--good); }
+.cardfoot { display: flex; align-items: center; gap: 8px; }
+.sendbtn {
+  margin-top: 6px; padding: 3px 12px; font-size: 12px; font-weight: 700;
+  background: var(--ink); color: var(--cream); border: 0; border-radius: 99px;
+  cursor: pointer;
+}
+.sendbtn:hover { background: var(--accent); }
+.sendbtn:disabled { opacity: 0.6; cursor: default; }
 .empty { text-align: center; color: var(--soft); padding: 40px 0; }
 .empty .big { font-size: 28px; display: block; margin-bottom: 8px; }
 

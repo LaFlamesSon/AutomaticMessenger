@@ -51,7 +51,7 @@ Deno.serve(async (req: Request) => {
     case "digest": {
       const { data: rows } = await supabase
         .from("ia_processed_emails")
-        .select("category, sender, subject, summary, draft_created, auto_sent, processed_at")
+        .select("id, category, sender, subject, summary, draft_created, auto_sent, gmail_draft_id, processed_at")
         .gte("processed_at", new Date(Date.now() - 86400_000 * 2).toISOString())
         .order("processed_at", { ascending: false })
         .limit(100);
@@ -90,7 +90,8 @@ Their current settings: occupation="${profile?.occupation}", services="${profile
 
 Recently triaged emails (context): ${JSON.stringify(recentCtx)}
 
-About that context: draft_created=true means you ALREADY wrote a reply draft and it is sitting in their Gmail drafts folder right now (draft_text is what you wrote - quote it if they ask). auto_sent=true means the reply was already sent. Never offer to "draft a reply" for an email that already has one - instead point them to the existing draft.
+About that context: draft_created=true means you ALREADY wrote a reply draft and it is sitting in their Gmail drafts folder right now (draft_text is what you wrote - quote it if they ask; if draft_text is null the draft still exists, you just don't have its text on hand). auto_sent=true means the reply was already sent. Never offer to "draft a reply" for an email that already has one - instead point them to the existing draft.
+THE DATA ABOVE IS THE SOURCE OF TRUTH. If anything you said earlier in this conversation contradicts it (e.g. you previously said no draft exists when draft_created=true), the data wins - correct yourself rather than repeating the earlier mistake.
 
 Be helpful, brief, and concrete. IMPORTANT: when the user gives a standing instruction about how to handle their email (e.g. "never suggest calls on Fridays", "be more casual"), respond with JSON: {"reply": "<your confirmation>", "new_rule": "<the rule stated concisely>"}. Otherwise respond with JSON: {"reply": "<your answer>", "new_rule": null}. Respond with ONLY that JSON object.`;
 
@@ -150,6 +151,46 @@ Be helpful, brief, and concrete. IMPORTANT: when the user gives a standing instr
       const { error } = await supabase
         .from("ia_voice_profiles").update(updates).eq("user_id", user.id);
       if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    // ------------------------------------------------------------ send an existing draft
+    case "send_draft": {
+      const rowId = String(body.id ?? "");
+      if (!rowId) return json({ error: "missing id" }, 400);
+      const { data: row } = await supabase
+        .from("ia_processed_emails")
+        .select("id, gmail_draft_id, auto_sent, gmail_account_id, ia_gmail_accounts(refresh_token, user_id)")
+        .eq("id", rowId).maybeSingle();
+      if (!row) return json({ error: "not found" }, 404);
+      if ((row as any).ia_gmail_accounts?.user_id !== user.id) return json({ error: "not yours" }, 403);
+      if (row.auto_sent) return json({ error: "already sent" }, 409);
+      if (!row.gmail_draft_id) {
+        return json({ error: "This draft predates send-from-extension. Send it from Gmail's drafts folder." }, 422);
+      }
+      const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: CFG["ia_google_client_id"],
+          client_secret: CFG["ia_google_client_secret"],
+          refresh_token: (row as any).ia_gmail_accounts.refresh_token,
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!tokenResp.ok) return json({ error: "gmail auth failed" }, 502);
+      const { access_token } = await tokenResp.json();
+      const sendResp = await fetch(
+        "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ id: row.gmail_draft_id }),
+        },
+      );
+      if (!sendResp.ok) return json({ error: `gmail send failed: ${await sendResp.text()}` }, 502);
+      await supabase.from("ia_processed_emails")
+        .update({ auto_sent: true }).eq("id", rowId);
       return json({ ok: true });
     }
 
