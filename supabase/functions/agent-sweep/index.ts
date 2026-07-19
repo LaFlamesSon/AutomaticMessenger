@@ -9,16 +9,27 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
 const MAX_EMAILS_PER_ACCOUNT = 25;
-// LLM provider — any OpenAI-compatible chat-completions API.
-// Default: Gemini's free tier (1,500 requests/day, $0 at personal volume).
-// To switch providers (DeepSeek, OpenAI, Groq, ...) just change the secrets:
-//   LLM_BASE_URL  e.g. https://api.deepseek.com/v1
-//   LLM_MODEL     e.g. deepseek-chat
-//   LLM_API_KEY   that provider's key
-const LLM_BASE_URL = Deno.env.get("LLM_BASE_URL") ??
-  "https://generativelanguage.googleapis.com/v1beta/openai";
-const MODEL = Deno.env.get("LLM_MODEL") ?? "gemini-flash-latest";
-const LLM_API_KEY = Deno.env.get("LLM_API_KEY") ?? Deno.env.get("GEMINI_API_KEY") ?? "";
+// Configuration comes from Supabase Vault (via the ia_get_config RPC), with
+// environment variables as fallback. Vault keys are prefixed ia_*.
+// LLM: any OpenAI-compatible chat-completions API. Default is Gemini's free
+// tier (1,500 requests/day, $0 at personal volume). To switch providers
+// (DeepSeek, OpenAI, Groq, ...) set ia_llm_base_url / ia_llm_model / ia_llm_api_key.
+let CFG: Record<string, string> = {};
+
+function cfg(vaultName: string, envName: string, fallback = ""): string {
+  return CFG[vaultName] ?? Deno.env.get(envName) ?? fallback;
+}
+
+function llmBaseUrl(): string {
+  return cfg("ia_llm_base_url", "LLM_BASE_URL",
+    "https://generativelanguage.googleapis.com/v1beta/openai");
+}
+function llmModel(): string {
+  return cfg("ia_llm_model", "LLM_MODEL", "gemini-flash-latest");
+}
+function llmApiKey(): string {
+  return cfg("ia_llm_api_key", "LLM_API_KEY") || cfg("ia_gemini_api_key", "GEMINI_API_KEY");
+}
 
 type Category = "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit";
 
@@ -49,8 +60,8 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: Deno.env.get("GOOGLE_CLIENT_ID")!,
-      client_secret: Deno.env.get("GOOGLE_CLIENT_SECRET")!,
+      client_id: cfg("ia_google_client_id", "GOOGLE_CLIENT_ID"),
+      client_secret: cfg("ia_google_client_secret", "GOOGLE_CLIENT_SECRET"),
       refresh_token: refreshToken,
       grant_type: "refresh_token",
     }),
@@ -154,14 +165,14 @@ async function triageEmail(
   subject: string,
   body: string,
 ): Promise<Triage> {
-  const resp = await fetch(`${LLM_BASE_URL}/chat/completions`, {
+  const resp = await fetch(`${llmBaseUrl()}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${LLM_API_KEY}`,
+      Authorization: `Bearer ${llmApiKey()}`,
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: llmModel(),
       max_tokens: 1024,
       response_format: { type: "json_object" },
       messages: [
@@ -208,14 +219,18 @@ function buildDraftMime(to: string, subject: string, bodyText: string, inReplyTo
 // ---------------------------------------------------------------- main
 
 Deno.serve(async (req: Request) => {
-  if (req.headers.get("x-agent-secret") !== Deno.env.get("AGENT_CRON_SECRET")) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
-  }
-
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  const { data: cfgRows } = await supabase.rpc("ia_get_config");
+  CFG = Object.fromEntries((cfgRows ?? []).map((r: any) => [r.name, r.secret]));
+
+  const expected = cfg("ia_agent_cron_secret", "AGENT_CRON_SECRET");
+  if (!expected || req.headers.get("x-agent-secret") !== expected) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+  }
   const { data: accounts, error: accErr } = await supabase
     .from("ia_gmail_accounts")
     .select("*, ia_users(id, email)");

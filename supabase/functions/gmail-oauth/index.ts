@@ -15,7 +15,17 @@ function selfUrl(req: Request): string {
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
-  const clientId = Deno.env.get("GOOGLE_CLIENT_ID")!;
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  // Config from Supabase Vault, env vars as fallback.
+  const { data: cfgRows } = await supabase.rpc("ia_get_config");
+  const CFG: Record<string, string> = Object.fromEntries(
+    (cfgRows ?? []).map((r: any) => [r.name, r.secret]),
+  );
+  const clientId = CFG["ia_google_client_id"] ?? Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
+  const clientSecret = CFG["ia_google_client_secret"] ?? Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
   const code = url.searchParams.get("code");
 
   if (!code) {
@@ -36,7 +46,7 @@ Deno.serve(async (req: Request) => {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: clientId,
-      client_secret: Deno.env.get("GOOGLE_CLIENT_SECRET")!,
+      client_secret: clientSecret,
       code,
       grant_type: "authorization_code",
       redirect_uri: selfUrl(req),
@@ -59,11 +69,6 @@ Deno.serve(async (req: Request) => {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
   });
   const { emailAddress } = await profileResp.json();
-
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
 
   const { data: user, error: userErr } = await supabase
     .from("ia_users")
