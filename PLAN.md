@@ -28,6 +28,9 @@ sending anything itself.
 ## Roadmap gates
 0. **Prove the loop** on founder inbox via Supabase (~2 wks). Gate: founder stops reading inbox manually.
 1. **Private beta**: extension + 100 test users, style memory (learn from edited drafts). Gate: ≥30% week-3 retention + "I'd pay" signals.
+   - Extension UX: one-click enable (Google sign-in only), sidebar **chat with the agent** backed by per-user context history (ia_chat_messages) — teaching moments become persistent rules/style memory.
+   - Media kit: user uploads work samples once; agent attaches them when a brand asks to see work (shipped server-side in Phase 0).
+   - Web platform (marketing + billing + account dashboard): clean SaaS style in the vein of apollo.io — product-led landing, simple pricing page, Stripe checkout.
 2. **Monetize**: CASA + OAuth verification (start immediately — it's the long pole), Stripe ($12/mo, $96/yr, 14-day trial), landing page. Gate: verification approved + 10 paying subs.
 3. **Launch**: Chrome Web Store public, Product Hunt, Workspace Add-on (mobile), more personas via prompt-profile swaps.
 

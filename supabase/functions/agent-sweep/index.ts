@@ -37,6 +37,13 @@ interface Triage {
   category: Category;
   summary: string;
   draft: string | null;
+  wants_portfolio: boolean;
+}
+
+interface Attachment {
+  name: string;
+  mime: string;
+  b64: string;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -151,13 +158,15 @@ For the email you receive:
 Hard rules for drafts:
 - Never state prices, availability, or turnaround times
 - Never accept or decline an offer — drafts gather information only
+- If the sender asked to see work samples or a portfolio, mention that a few samples are attached
 ${profile.custom_rules ? `- ${profile.custom_rules}` : ""}${styleExamples}`;
 }
 
 const OUTPUT_INSTRUCTION = `
 
 OUTPUT FORMAT: Respond with ONLY a JSON object, no other text:
-{"category": "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit", "summary": "<one sentence>", "draft": "<reply text>" or null}`;
+{"category": "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit", "summary": "<one sentence>", "draft": "<reply text>" or null, "wants_portfolio": true or false}
+wants_portfolio is true ONLY when the sender explicitly asks to see work samples, a portfolio, or example images.`;
 
 async function triageEmail(
   systemPrompt: string,
@@ -189,7 +198,7 @@ async function triageEmail(
   let text: string = data.choices?.[0]?.message?.content ?? "";
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   if (!text) {
-    return { category: "spam_or_poor_fit", summary: "Content could not be analyzed.", draft: null };
+    return { category: "spam_or_poor_fit", summary: "Content could not be analyzed.", draft: null, wants_portfolio: false };
   }
   const parsed = JSON.parse(text);
   const categories = ["urgent", "action_needed", "fyi", "low_priority", "spam_or_poor_fit"];
@@ -197,23 +206,86 @@ async function triageEmail(
     category: categories.includes(parsed.category) ? parsed.category : "low_priority",
     summary: String(parsed.summary ?? ""),
     draft: typeof parsed.draft === "string" && parsed.draft.trim() ? parsed.draft : null,
+    wants_portfolio: parsed.wants_portfolio === true,
   } as Triage;
 }
 
 // ---------------------------------------------------------------- draft creation
 
-function buildDraftMime(to: string, subject: string, bodyText: string, inReplyTo: string, references: string): string {
+function bufToB64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function buildDraftMime(
+  to: string,
+  subject: string,
+  bodyText: string,
+  inReplyTo: string,
+  references: string,
+  attachments: Attachment[] = [],
+): string {
   const re = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
-  const headers = [
+  const common = [
     `To: ${to}`,
     `Subject: ${re}`,
     inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
     inReplyTo ? `References: ${`${references} ${inReplyTo}`.trim()}` : "",
+  ].filter((l) => l !== "");
+
+  if (!attachments.length) {
+    return b64urlEncode(
+      [...common, `Content-Type: text/plain; charset="UTF-8"`, "", bodyText].join("\r\n"),
+    );
+  }
+
+  const boundary = `ia-${crypto.randomUUID()}`;
+  const parts = [
+    ...common,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
     `Content-Type: text/plain; charset="UTF-8"`,
     "",
     bodyText,
-  ].filter((l) => l !== "").join("\r\n");
-  return b64urlEncode(headers);
+  ];
+  for (const att of attachments) {
+    parts.push(
+      `--${boundary}`,
+      `Content-Type: ${att.mime}; name="${att.name}"`,
+      `Content-Disposition: attachment; filename="${att.name}"`,
+      `Content-Transfer-Encoding: base64`,
+      "",
+      att.b64.match(/.{1,76}/g)!.join("\r\n"),
+    );
+  }
+  parts.push(`--${boundary}--`);
+  return b64urlEncode(parts.join("\r\n"));
+}
+
+// Load up to 3 files from the media-kit storage bucket (user uploads samples
+// there via the dashboard). Cached per invocation.
+async function loadMediaKit(supabase: any): Promise<Attachment[]> {
+  const { data: files, error } = await supabase.storage.from("media-kit").list("", { limit: 10 });
+  if (error || !files?.length) return [];
+  const out: Attachment[] = [];
+  for (const f of files.filter((f: any) => f.name && !f.name.startsWith(".")).slice(0, 3)) {
+    const { data: blob, error: dlErr } = await supabase.storage.from("media-kit").download(f.name);
+    if (dlErr || !blob) continue;
+    const buf = await blob.arrayBuffer();
+    if (buf.byteLength > 8_000_000) continue; // keep drafts well under Gmail limits
+    out.push({
+      name: f.name,
+      mime: f.metadata?.mimetype ?? "application/octet-stream",
+      b64: bufToB64(buf),
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- main
@@ -237,6 +309,7 @@ Deno.serve(async (req: Request) => {
   if (accErr) return new Response(JSON.stringify({ error: accErr.message }), { status: 500 });
 
   const results: any[] = [];
+  let mediaKit: Attachment[] | null = null; // loaded on first portfolio request
 
   for (const account of accounts ?? []) {
     const { data: run } = await supabase
@@ -284,9 +357,15 @@ Deno.serve(async (req: Request) => {
 
         let draftCreated = false;
         if (triage.draft && (triage.category === "urgent" || triage.category === "action_needed")) {
+          let attachments: Attachment[] = [];
+          if (triage.wants_portfolio) {
+            if (mediaKit === null) mediaKit = await loadMediaKit(supabase);
+            attachments = mediaKit;
+          }
           const raw = buildDraftMime(
             from, subject, triage.draft,
             header(msg.payload, "Message-ID"), header(msg.payload, "References"),
+            attachments,
           );
           await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
           draftCreated = true;
