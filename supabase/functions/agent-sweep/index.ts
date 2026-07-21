@@ -413,7 +413,8 @@ Deno.serve(async (req: Request) => {
             await gmailPost(token, "/messages/send", { raw, threadId: msg.threadId });
             autoSent = true;
           } else {
-            await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
+            const draft = await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
+            gmailDraftId = draft.id ?? null;
           }
           draftCreated = true;
           drafted++;
