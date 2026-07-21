@@ -1,0 +1,6 @@
+-- Historical migration marker fetched from the linked development project.
+--
+-- The original statement embedded the legacy cron credential and is deliberately
+-- not reproduced in source. `20260721000003_runtime_bootstrap.sql` installs both
+-- dispatcher jobs after function deployment and resolves the credential from
+-- Supabase Vault at execution time.
