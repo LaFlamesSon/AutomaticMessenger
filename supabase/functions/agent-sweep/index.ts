@@ -5,6 +5,15 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  type Category,
+  deliveryDecision,
+  draftSafetyViolations,
+  finalizePortfolioDraft,
+  type MediaKitCandidate,
+  selectMediaKit,
+} from "../_shared/policy.ts";
+import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
@@ -31,13 +40,13 @@ function llmApiKey(): string {
   return cfg("ia_llm_api_key", "LLM_API_KEY") || cfg("ia_gemini_api_key", "GEMINI_API_KEY");
 }
 
-type Category = "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit";
-
 interface Triage {
   category: Category;
   summary: string;
   draft: string | null;
   wants_portfolio: boolean;
+  missing_required: string[];
+  confidence: number;
 }
 
 interface Attachment {
@@ -73,7 +82,7 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
       grant_type: "refresh_token",
     }),
   });
-  if (!resp.ok) throw new Error(`token refresh failed: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`token_refresh_${resp.status}`);
   return (await resp.json()).access_token;
 }
 
@@ -81,7 +90,7 @@ async function gmailGet(token: string, path: string): Promise<any> {
   const resp = await fetch(`${GMAIL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!resp.ok) throw new Error(`gmail GET ${path}: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`gmail_get_${resp.status}`);
   return resp.json();
 }
 
@@ -91,7 +100,7 @@ async function gmailPost(token: string, path: string, body: unknown): Promise<an
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!resp.ok) throw new Error(`gmail POST ${path}: ${resp.status} ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`gmail_post_${resp.status}`);
   return resp.json();
 }
 
@@ -127,6 +136,9 @@ function header(payload: any, name: string): string {
 
 function buildSystemPrompt(profile: any, edits: { original_draft: string; edited_final: string }[]): string {
   const alwaysAsk = (profile.always_ask ?? []).join(", ");
+  const draftCategories = Array.isArray(profile.draft_categories)
+    ? profile.draft_categories.join(", ")
+    : "urgent, action_needed";
   const styleExamples = edits.length
     ? `\n\nHow this person actually writes — learn from these before/after edits they made to past drafts:\n` +
       edits.map((e, i) => `Example ${i + 1}:\nAI draft: ${e.original_draft}\nTheir edit: ${e.edited_final}`).join("\n\n")
@@ -147,7 +159,7 @@ For the email you receive:
 
 2. Summarize the key point in one sentence.
 
-3. ONLY for urgent and action_needed: write a reply draft that:
+3. ONLY for these user-enabled categories (${draftCategories}): write a reply draft that:
    - Thanks them and shows the user actually read their email (reference one specific detail from it)
    - Asks for whichever of these they haven't already given: ${alwaysAsk}
    - Suggests a short call as the next step
@@ -158,15 +170,15 @@ For the email you receive:
 Hard rules for drafts:
 - Never state prices, availability, or turnaround times
 - Never accept or decline an offer — drafts gather information only
-- If the sender asked to see work samples or a portfolio, mention that a few samples are attached
+- If the sender asked to see work samples or a portfolio, say the user can share relevant samples; the server will state that files are attached only after a verified kit is loaded
 ${profile.custom_rules ? `- ${profile.custom_rules}` : ""}${styleExamples}`;
 }
 
 const OUTPUT_INSTRUCTION = `
 
 OUTPUT FORMAT: Respond with ONLY a JSON object, no other text:
-{"category": "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit", "summary": "<one sentence>", "draft": "<reply text>" or null, "wants_portfolio": true or false}
-wants_portfolio is true ONLY when the sender explicitly asks to see work samples, a portfolio, or example images.`;
+{"category": "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit", "summary": "<one sentence>", "draft": "<reply text>" or null, "wants_portfolio": true or false, "missing_required": ["<required item not supplied>"], "confidence": 0.0}
+confidence must be a number from 0 through 1 representing confidence in the category, facts, and proposed reply. wants_portfolio is true ONLY when the sender explicitly asks to see work samples, a portfolio, or example images. missing_required must contain each configured required question not answered by the email.`;
 
 async function triageEmail(
   systemPrompt: string,
@@ -193,12 +205,12 @@ async function triageEmail(
       ],
     }),
   });
-  if (!resp.ok) throw new Error(`LLM API ${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`llm_${resp.status}`);
   const data = await resp.json();
   let text: string = data.choices?.[0]?.message?.content ?? "";
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   if (!text) {
-    return { category: "spam_or_poor_fit", summary: "Content could not be analyzed.", draft: null, wants_portfolio: false };
+    return { category: "spam_or_poor_fit", summary: "Content could not be analyzed.", draft: null, wants_portfolio: false, missing_required: [], confidence: 0 };
   }
   const parsed = JSON.parse(text);
   const categories = ["urgent", "action_needed", "fyi", "low_priority", "spam_or_poor_fit"];
@@ -207,6 +219,11 @@ async function triageEmail(
     summary: String(parsed.summary ?? ""),
     draft: typeof parsed.draft === "string" && parsed.draft.trim() ? parsed.draft : null,
     wants_portfolio: parsed.wants_portfolio === true,
+    missing_required: Array.isArray(parsed.missing_required)
+      ? parsed.missing_required.filter((item: unknown) => typeof item === "string").slice(0, 10)
+      : [],
+    confidence: typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+      ? Math.max(0, Math.min(1, parsed.confidence)) : 0,
   } as Triage;
 }
 
@@ -230,12 +247,17 @@ function buildDraftMime(
   references: string,
   attachments: Attachment[] = [],
 ): string {
-  const re = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+  const recipient = parseStrictRecipient(to);
+  if (!recipient) throw new Error("invalid_recipient");
+  const cleanSubject = sanitizeHeader(subject, 500);
+  const re = cleanSubject.toLowerCase().startsWith("re:") ? cleanSubject : `Re: ${cleanSubject}`;
+  const replyId = sanitizeMessageIds(inReplyTo).split(" ")[0] ?? "";
+  const referenceIds = sanitizeMessageIds(`${references} ${replyId}`);
   const common = [
-    `To: ${to}`,
+    `To: ${recipient}`,
     `Subject: ${re}`,
-    inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
-    inReplyTo ? `References: ${`${references} ${inReplyTo}`.trim()}` : "",
+    replyId ? `In-Reply-To: ${replyId}` : "",
+    replyId ? `References: ${referenceIds}` : "",
   ].filter((l) => l !== "");
 
   if (!attachments.length) {
@@ -255,10 +277,11 @@ function buildDraftMime(
     bodyText,
   ];
   for (const att of attachments) {
+    const filename = quoteFilename(att.name);
     parts.push(
       `--${boundary}`,
-      `Content-Type: ${att.mime}; name="${att.name}"`,
-      `Content-Disposition: attachment; filename="${att.name}"`,
+      `Content-Type: ${att.mime}; name="${filename}"`,
+      `Content-Disposition: attachment; filename="${filename}"`,
       `Content-Transfer-Encoding: base64`,
       "",
       att.b64.match(/.{1,76}/g)!.join("\r\n"),
@@ -268,38 +291,27 @@ function buildDraftMime(
   return b64urlEncode(parts.join("\r\n"));
 }
 
-// Load up to 3 files from the user's folder in the media-kit bucket
-// (media-kit/{user_id}/...). Cached per account per invocation.
-async function loadMediaKit(supabase: any, userId: string): Promise<Attachment[]> {
-  const { data: files, error } = await supabase.storage.from("media-kit").list(userId, { limit: 10 });
-  if (error || !files?.length) return [];
-  const out: Attachment[] = [];
-  for (const f of files.filter((f: any) => f.name && !f.name.startsWith(".")).slice(0, 3)) {
-    const { data: blob, error: dlErr } = await supabase.storage.from("media-kit").download(`${userId}/${f.name}`);
-    if (dlErr || !blob) continue;
-    const buf = await blob.arrayBuffer();
-    if (buf.byteLength > 8_000_000) continue; // keep drafts well under Gmail limits
-    out.push({
-      name: f.name,
-      mime: f.metadata?.mimetype ?? "application/octet-stream",
-      b64: bufToB64(buf),
-    });
-  }
-  return out;
+async function loadSelectedMediaKit(supabase: any, kit: any): Promise<Attachment[]> {
+  if (!kit?.storage_path || !kit?.original_filename || !kit?.mime_type) return [];
+  const { data: blob, error } = await supabase.storage.from("media-kit").download(kit.storage_path);
+  if (error || !blob) return [];
+  const buf = await blob.arrayBuffer();
+  if (buf.byteLength < 1 || buf.byteLength > 8_000_000 || buf.byteLength !== kit.byte_size) return [];
+  return [{ name: kit.original_filename, mime: kit.mime_type, b64: bufToB64(buf) }];
 }
 
 // ---------------------------------------------------------------- main
 
 // Style learning: when the user sends a draft we wrote (possibly after
 // editing it), capture the before/after pair into ia_draft_edits so future
-// drafts sound more like them. Runs on recent, unsent, uncaptured drafts.
+// drafts sound more like them. Auto-sent replies are never treated as user edits.
 async function learnFromSentDrafts(supabase: any, token: string, account: any): Promise<number> {
   const { data: rows } = await supabase
     .from("ia_processed_emails")
-    .select("id, thread_id, draft_text")
+    .select("id, draft_text, processed_at, gmail_sent_message_id, gmail_draft_message_id")
     .eq("gmail_account_id", account.id)
     .eq("draft_created", true)
-    .eq("auto_sent", false)
+    .or("sent_via.eq.manual_extension,and(sent_via.is.null,auto_sent.eq.false)")
     .eq("edit_captured", false)
     .not("draft_text", "is", null)
     .gte("processed_at", new Date(Date.now() - 7 * 86400_000).toISOString())
@@ -307,9 +319,10 @@ async function learnFromSentDrafts(supabase: any, token: string, account: any): 
   let learned = 0;
   for (const row of rows ?? []) {
     try {
-      const thread = await gmailGet(token, `/threads/${row.thread_id}?format=full`);
-      const sent = (thread.messages ?? []).find((m: any) => (m.labelIds ?? []).includes("SENT"));
-      if (!sent) continue; // draft not sent yet; check again next sweep
+      const exactMessageId = row.gmail_sent_message_id ?? row.gmail_draft_message_id;
+      if (!exactMessageId) continue;
+      const sent = await gmailGet(token, `/messages/${encodeURIComponent(exactMessageId)}?format=full`);
+      if (!(sent.labelIds ?? []).includes("SENT")) continue;
       let sentText = extractBody(sent.payload);
       // strip the quoted reply tail
       sentText = sentText.split(/\r?\nOn .{5,100}wrote:/)[0].split(/\r?\n>/)[0].trim();
@@ -342,20 +355,57 @@ Deno.serve(async (req: Request) => {
   if (!expected || req.headers.get("x-agent-secret") !== expected) {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
-  const { data: accounts, error: accErr } = await supabase
-    .from("ia_gmail_accounts")
-    .select("*, ia_users(id, email)");
-  if (accErr) return new Response(JSON.stringify({ error: accErr.message }), { status: 500 });
+  let requestBody: any = {};
+  try {
+    requestBody = await req.json();
+  } catch { /* scheduled legacy requests may have no body */ }
+  const trigger = requestBody.trigger === "manual" ? "manual" : "scheduled";
+  const requestedUserId = trigger === "manual" ? String(requestBody.user_id ?? "") : null;
+  if (trigger === "manual" && !/^[0-9a-f-]{36}$/i.test(requestedUserId ?? "")) {
+    return new Response(JSON.stringify({ error: "manual sweep requires a valid user_id" }), { status: 400 });
+  }
+
+  let accountQuery = supabase.from("ia_gmail_accounts").select("*, ia_users(id, email)");
+  if (requestedUserId) accountQuery = accountQuery.eq("user_id", requestedUserId);
+  const { data: accounts, error: accErr } = await accountQuery;
+  if (accErr) return new Response(JSON.stringify({ error: "account query failed" }), { status: 500 });
 
   const results: any[] = [];
 
   for (const account of accounts ?? []) {
-    let mediaKit: Attachment[] | null = null; // per-user, loaded on first portfolio request
-    const { data: run } = await supabase
+    const { data: profileRow, error: profileError } = await supabase
+      .from("ia_voice_profiles").select("*").eq("user_id", account.user_id).maybeSingle();
+    if (profileError) {
+      results.push({ account: account.gmail_address, error: "profile unavailable" });
+      continue;
+    }
+    const profile = profileRow ?? {};
+    if (trigger === "scheduled") {
+      if (profile.sweep_enabled === false) continue;
+      const intervalMs = Math.max(15, Number(profile.sweep_interval_minutes ?? 180)) * 60_000;
+      if (account.last_sweep_at && Date.now() - new Date(account.last_sweep_at).getTime() < intervalMs) continue;
+    }
+    const requestId = String(requestBody.request_id ?? crypto.randomUUID()).slice(0, 200);
+    const windowKey = trigger === "manual"
+      ? `manual:${requestId}`
+      : `scheduled:${Math.floor(Date.now() / (Math.max(15, Number(profile.sweep_interval_minutes ?? 180)) * 60_000))}`;
+    const { data: jobClaim, error: claimError } = await supabase.rpc("ia_claim_job", {
+      p_gmail_account_id: account.id, p_job_type: "sweep", p_window_key: windowKey,
+    });
+    if (claimError || !jobClaim) {
+      results.push({ account: account.gmail_address, skipped: true, reason: "already claimed" });
+      continue;
+    }
+    const { data: run, error: runError } = await supabase
       .from("ia_agent_runs")
       .insert({ gmail_account_id: account.id })
       .select()
       .single();
+    if (runError || !run) {
+      await supabase.from("ia_job_claims").update({ status: "error", finished_at: new Date().toISOString() }).eq("id", jobClaim);
+      results.push({ account: account.gmail_address, error: "could not create run" });
+      continue;
+    }
 
     let scanned = 0, drafted = 0;
     const digest: Record<Category, { from: string; subject: string; summary: string; draft_created: boolean }[]> = {
@@ -366,75 +416,161 @@ Deno.serve(async (req: Request) => {
       const token = await refreshAccessToken(account.refresh_token);
       const labelId = await ensureLabel(token);
 
-      const { data: profileRow } = await supabase
-        .from("ia_voice_profiles").select("*").eq("user_id", account.user_id).maybeSingle();
-      const profile = profileRow ?? {};
       const { data: edits } = await supabase
         .from("ia_draft_edits").select("original_draft, edited_final")
         .eq("user_id", account.user_id).order("created_at", { ascending: false }).limit(10);
       const systemPrompt = buildSystemPrompt(profile, edits ?? []);
+      const { data: mediaKits, error: kitError } = await supabase.from("ia_media_kits")
+        .select("id, label, storage_path, original_filename, mime_type, byte_size, brand_names, sender_domains, keywords, is_default, auto_attach")
+        .eq("user_id", account.user_id).eq("status", "active");
+      if (kitError) throw new Error(`media kits: ${kitError.message}`);
+      const { data: senderRules, error: rulesError } = await supabase.from("ia_sender_rules")
+        .select("match_type, match_value, action, priority").eq("user_id", account.user_id)
+        .eq("enabled", true).order("priority", { ascending: true });
+      if (rulesError) throw new Error(`sender rules: ${rulesError.message}`);
 
       const q = encodeURIComponent(`in:inbox is:unread -label:${LABEL_NAME} newer_than:7d`);
       const list = await gmailGet(token, `/messages?q=${q}&maxResults=${MAX_EMAILS_PER_ACCOUNT}`);
 
       for (const ref of list.messages ?? []) {
-        const { data: seen } = await supabase
+        const { data: seen, error: seenError } = await supabase
           .from("ia_processed_emails").select("id")
           .eq("gmail_account_id", account.id).eq("gmail_message_id", ref.id).maybeSingle();
+        if (seenError) throw new Error(seenError.message);
         if (seen) continue;
 
-        const msg = await gmailGet(token, `/messages/${ref.id}?format=full`);
-        scanned++;
-        const from = header(msg.payload, "From");
-        const subject = header(msg.payload, "Subject") || "(no subject)";
-        const senderAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).toLowerCase();
-        if (/^(no[-._]?reply|do[-._]?not[-._]?reply|noreply)/.test(senderAddr.split("@")[0])) {
-          continue; // never reply to no-reply senders; leave unlabeled
-        }
-
-        const triage = await triageEmail(systemPrompt, from, subject, extractBody(msg.payload));
-
-        let draftCreated = false;
-        let autoSent = false;
-        let gmailDraftId: string | null = null;
-        if (triage.draft && (triage.category === "urgent" || triage.category === "action_needed")) {
-          let attachments: Attachment[] = [];
-          if (triage.wants_portfolio) {
-            if (mediaKit === null) mediaKit = await loadMediaKit(supabase, account.user_id);
-            attachments = mediaKit;
-          }
-          const raw = buildDraftMime(
-            from, subject, triage.draft,
-            header(msg.payload, "Message-ID"), header(msg.payload, "References"),
-            attachments,
-          );
-          if (profile.auto_send === true) {
-            // Opt-in only: reply goes out immediately instead of waiting as a draft.
-            await gmailPost(token, "/messages/send", { raw, threadId: msg.threadId });
-            autoSent = true;
-          } else {
-            const draft = await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
-            gmailDraftId = draft.id ?? null;
-          }
-          draftCreated = true;
-          drafted++;
-        }
-
-        await gmailPost(token, `/messages/${ref.id}/modify`, { addLabelIds: [labelId] });
-        await supabase.from("ia_processed_emails").insert({
-          gmail_account_id: account.id,
-          gmail_message_id: ref.id,
-          thread_id: msg.threadId,
-          category: triage.category,
-          summary: triage.summary,
-          draft_created: draftCreated,
-          auto_sent: autoSent,
-          draft_text: draftCreated ? triage.draft : null,
-          gmail_draft_id: gmailDraftId,
-          sender: from,
-          subject,
+        const { data: messageClaim, error: messageClaimError } = await supabase.rpc("ia_claim_message", {
+          p_gmail_account_id: account.id, p_gmail_message_id: ref.id,
         });
-        digest[triage.category].push({ from, subject, summary: triage.summary, draft_created: draftCreated });
+        if (messageClaimError || !messageClaim) continue;
+
+        let providerMutationStarted = false;
+        try {
+          const msg = await gmailGet(token, `/messages/${ref.id}?format=full`);
+          scanned++;
+          const from = header(msg.payload, "From");
+          const subject = header(msg.payload, "Subject") || "(no subject)";
+          const emailBody = extractBody(msg.payload);
+          const senderAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).toLowerCase();
+          const senderDomain = senderAddr.split("@")[1] ?? "";
+          const matchedRules = (senderRules ?? []).filter((rule: any) =>
+            rule.match_type === "email"
+              ? rule.match_value.toLowerCase() === senderAddr
+              : rule.match_value.toLowerCase() === senderDomain
+          );
+
+          let triage: Triage;
+          if (/^(no[-._]?reply|do[-._]?not[-._]?reply|noreply)/.test(senderAddr.split("@")[0])) {
+            triage = { category: "low_priority", summary: "Automated no-reply message.", draft: null, wants_portfolio: false, missing_required: [], confidence: 1 };
+          } else {
+            triage = await triageEmail(systemPrompt, from, subject, emailBody);
+          }
+
+          let selectedKit: any = null;
+          if (triage.wants_portfolio) {
+            selectedKit = selectMediaKit(mediaKits as MediaKitCandidate[] ?? [], senderAddr, subject, emailBody);
+          }
+          let decision = deliveryDecision({
+            category: triage.category,
+            draft: triage.draft,
+            missingRequired: triage.missing_required,
+            profile,
+            selectedKit,
+            wantsPortfolio: triage.wants_portfolio,
+            confidence: triage.confidence,
+          });
+          if (triage.draft && matchedRules.some((rule: any) => rule.action === "always_draft") &&
+            !draftSafetyViolations(triage.draft).length) decision = "draft";
+          if (matchedRules.some((rule: any) => rule.action === "never_draft")) decision = "none";
+          if (decision === "auto_send" && matchedRules.some((rule: any) => rule.action === "require_approval")) decision = "draft";
+          if (triage.draft && draftSafetyViolations(triage.draft).length) decision = "none";
+
+          let draftCreated = false;
+          let autoSent = false;
+          let gmailDraftId: string | null = null;
+          let gmailDraftMessageId: string | null = null;
+          let gmailSentMessageId: string | null = null;
+          let attachments: Attachment[] = [];
+          if (decision !== "none" && selectedKit &&
+            (decision !== "auto_send" || selectedKit.auto_send_eligible === true)) {
+            attachments = await loadSelectedMediaKit(supabase, selectedKit);
+          }
+          if (triage.wants_portfolio && !attachments.length && decision === "auto_send") decision = "draft";
+          const finalDraft = triage.draft && triage.wants_portfolio
+            ? finalizePortfolioDraft(triage.draft, attachments.length > 0) : triage.draft;
+          if (finalDraft && ((finalDraft.trim().match(/\S+/g) ?? []).length > 150 || draftSafetyViolations(finalDraft).length)) {
+            decision = "none";
+          }
+
+          if (finalDraft && decision !== "none") {
+            const raw = buildDraftMime(
+              from, subject, finalDraft,
+              header(msg.payload, "Message-ID"), header(msg.payload, "References"), attachments,
+            );
+            if (decision === "auto_send") {
+              const { data: currentProfile, error: currentProfileError } = await supabase.from("ia_voice_profiles")
+                .select("reply_mode, auto_send, auto_send_confirmed_at, auto_send_policy_version, auto_send_categories, draft_categories, always_ask, custom_rules, settings_version")
+                .eq("user_id", account.user_id).maybeSingle();
+              const policyChanged = currentProfileError || !currentProfile ||
+                Number(currentProfile.settings_version) !== Number(profile.settings_version);
+              const freshDecision = policyChanged ? "draft" : deliveryDecision({
+                category: triage.category, draft: finalDraft, missingRequired: triage.missing_required,
+                profile: currentProfile, selectedKit, wantsPortfolio: triage.wants_portfolio,
+                confidence: triage.confidence,
+              });
+              if (freshDecision !== "auto_send") decision = "draft";
+            }
+            const { data: sendingClaim, error: sendingClaimError } = await supabase.from("ia_message_claims")
+              .update({ status: "sending" }).eq("id", messageClaim).eq("status", "claimed")
+              .select("id").maybeSingle();
+            if (sendingClaimError || !sendingClaim) throw new Error("message_provider_claim_failed");
+            providerMutationStarted = true;
+            if (decision === "auto_send") {
+              const sent = await gmailPost(token, "/messages/send", { raw, threadId: msg.threadId });
+              gmailSentMessageId = sent.id ?? null;
+              const { data: sentClaim, error: sentClaimError } = await supabase.from("ia_message_claims")
+                .update({ status: "sent", gmail_sent_message_id: gmailSentMessageId, finished_at: new Date().toISOString() })
+                .eq("id", messageClaim).eq("status", "sending").select("id").maybeSingle();
+              if (sentClaimError || !sentClaim) throw new Error("message_send_state_failed");
+              autoSent = true;
+            } else {
+              const draft = await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
+              gmailDraftId = draft.id ?? null;
+              gmailDraftMessageId = draft.message?.id ?? null;
+              const { data: draftClaim, error: draftClaimError } = await supabase.from("ia_message_claims")
+                .update({ status: "sent", gmail_draft_id: gmailDraftId, finished_at: new Date().toISOString() })
+                .eq("id", messageClaim).eq("status", "sending").select("id").maybeSingle();
+              if (draftClaimError || !draftClaim) throw new Error("message_draft_state_failed");
+            }
+            draftCreated = true;
+            drafted++;
+          }
+
+          const { error: insertError } = await supabase.from("ia_processed_emails").insert({
+            gmail_account_id: account.id, gmail_message_id: ref.id, thread_id: msg.threadId,
+            category: triage.category, summary: triage.summary, draft_created: draftCreated,
+            auto_sent: autoSent, draft_text: draftCreated ? finalDraft : null,
+            gmail_draft_id: gmailDraftId, sender: from, subject,
+            gmail_draft_message_id: gmailDraftMessageId,
+            delivery_status: autoSent ? "sent" : draftCreated ? "draft" : "none",
+            sent_via: autoSent ? "auto" : null, gmail_sent_message_id: gmailSentMessageId,
+            sent_at: autoSent ? new Date().toISOString() : null,
+            selected_media_kit_id: attachments.length ? selectedKit?.id ?? null : null,
+          });
+          if (insertError) throw new Error(`processed email: ${insertError.message}`);
+          await gmailPost(token, `/messages/${ref.id}/modify`, { addLabelIds: [labelId] });
+          const { error: completeError } = await supabase.from("ia_message_claims")
+            .update({ status: "complete", finished_at: new Date().toISOString() }).eq("id", messageClaim);
+          if (completeError) throw new Error("message_completion_failed");
+          digest[triage.category].push({ from, subject, summary: triage.summary, draft_created: draftCreated });
+        } catch (messageError) {
+          await supabase.from("ia_message_claims").update({
+            status: providerMutationStarted ? "reconcile" : "error",
+            finished_at: new Date().toISOString(),
+            error_code: providerMutationStarted ? "post_provider_reconcile" : "message_failed",
+          }).eq("id", messageClaim);
+          throw messageError;
+        }
       }
 
       const learned = await learnFromSentDrafts(supabase, token, account);
@@ -445,6 +581,7 @@ Deno.serve(async (req: Request) => {
       }).eq("id", run.id);
       await supabase.from("ia_gmail_accounts")
         .update({ last_sweep_at: new Date().toISOString() }).eq("id", account.id);
+      await supabase.from("ia_job_claims").update({ status: "ok", finished_at: new Date().toISOString() }).eq("id", jobClaim);
 
       results.push({
         account: account.gmail_address,
@@ -452,12 +589,14 @@ Deno.serve(async (req: Request) => {
         digest: scanned === 0 ? "All caught up" : digest,
       });
     } catch (err) {
+      console.error(JSON.stringify({ component: "agent-sweep", account_id: account.id, error_type: err instanceof Error ? err.name : "unknown" }));
       await supabase.from("ia_agent_runs").update({
         finished_at: new Date().toISOString(),
         emails_scanned: scanned, drafts_created: drafted,
-        status: "error", error: String(err),
+        status: "error", error: "sweep_failed",
       }).eq("id", run.id);
-      results.push({ account: account.gmail_address, error: String(err) });
+      await supabase.from("ia_job_claims").update({ status: "error", finished_at: new Date().toISOString() }).eq("id", jobClaim);
+      results.push({ account: account.gmail_address, error: "sweep failed" });
     }
   }
 

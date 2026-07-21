@@ -1,113 +1,108 @@
-// Gmail OAuth connect flow.
-// Visit the function URL to start; Google redirects back here with ?code=,
-// and the refresh token is stored in ia_gmail_accounts.
-// Deploy with verify_jwt=false (it must be reachable from a browser).
+// Gmail OAuth callback. Consent must be initiated by authenticated
+// agent-api:gmail_connect_start, which creates a one-time identity-bound state.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { allowedChromeRedirect } from "../_shared/oauth.ts";
 
-const SCOPE = "https://www.googleapis.com/auth/gmail.modify";
-
-function selfUrl(_req: Request): string {
-  // Supabase strips the /functions/v1 prefix from req.url inside the function,
-  // so derive the public URL from SUPABASE_URL instead of the request.
+function selfUrl(): string {
   return `${Deno.env.get("SUPABASE_URL")}/functions/v1/gmail-oauth`;
 }
 
-Deno.serve(async (req: Request) => {
-  const url = new URL(req.url);
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
-  // Config from Supabase Vault, env vars as fallback.
-  const { data: cfgRows } = await supabase.rpc("ia_get_config");
-  const CFG: Record<string, string> = Object.fromEntries(
-    (cfgRows ?? []).map((r: any) => [r.name, r.secret]),
-  );
-  const clientId = CFG["ia_google_client_id"] ?? Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
-  const clientSecret = CFG["ia_google_client_secret"] ?? Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
-  const code = url.searchParams.get("code");
+async function sha256(value: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(bytes)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
-  if (!code) {
-    // Step 1: send the user to Google's consent screen.
-    const consent = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    consent.searchParams.set("client_id", clientId);
-    consent.searchParams.set("redirect_uri", selfUrl(req));
-    consent.searchParams.set("response_type", "code");
-    consent.searchParams.set("scope", SCOPE);
-    consent.searchParams.set("access_type", "offline");
-    consent.searchParams.set("prompt", "consent");
-    return Response.redirect(consent.toString(), 302);
+function html(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[char]!);
+}
+
+function page(title: string, detail: string, status = 200): Response {
+  return new Response(
+    `<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+    <body style="font-family:system-ui;max-width:40rem;margin:4rem auto;line-height:1.6">
+      <h2>${html(title)}</h2><p>${html(detail)}</p><p>You may close this window.</p>
+    </body></html>`,
+    { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
+  );
+}
+
+function completionRedirect(redirectUri: string, status: "connected" | "failed", errorCode?: string): Response {
+  const target = new URL(redirectUri);
+  target.searchParams.set("caughtup_gmail", status);
+  if (errorCode) target.searchParams.set("error", errorCode);
+  return Response.redirect(target.toString(), 302);
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method !== "GET") return page("Connection failed", "GET callback required.", 405);
+  const url = new URL(req.url);
+  const code = url.searchParams.get("code") ?? "";
+  const state = url.searchParams.get("state") ?? "";
+  if (!code || !state || state.length > 200) return page("Connection failed", "Missing or invalid OAuth response.", 400);
+
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data: cfgRows, error: cfgError } = await supabase.rpc("ia_get_config");
+  if (cfgError) return page("Connection failed", "Configuration is unavailable.", 503);
+  const CFG: Record<string, string> = Object.fromEntries((cfgRows ?? []).map((row: any) => [row.name, row.secret]));
+
+  const stateHash = await sha256(state);
+  const now = new Date().toISOString();
+  const { data: claimed, error: stateError } = await supabase.from("ia_oauth_states")
+    .update({ used_at: now }).eq("state_hash", stateHash).is("used_at", null).gt("expires_at", now)
+    .select("id, user_id, redirect_uri").maybeSingle();
+  if (stateError || !claimed) return page("Connection failed", "This connection request expired or was already used.", 409);
+  if (!allowedChromeRedirect(claimed.redirect_uri, CFG["ia_allowed_extension_ids"] ?? "")) {
+    return page("Connection failed", "The extension callback is not allowed.", 400);
   }
 
-  // Step 2: exchange the code for tokens.
   const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: CFG["ia_google_client_id"],
+      client_secret: CFG["ia_google_client_secret"],
       code,
       grant_type: "authorization_code",
-      redirect_uri: selfUrl(req),
+      redirect_uri: selfUrl(),
     }),
   });
-  if (!tokenResp.ok) {
-    return new Response(`Token exchange failed: ${await tokenResp.text()}`, { status: 400 });
-  }
+  if (!tokenResp.ok) return completionRedirect(claimed.redirect_uri, "failed", "code_exchange_failed");
   const tokens = await tokenResp.json();
-  if (!tokens.refresh_token) {
-    return new Response(
-      "Google did not return a refresh token. Remove the app's access at " +
-        "https://myaccount.google.com/permissions and try again.",
-      { status: 400 },
-    );
+  if (!tokens.refresh_token || !tokens.access_token) {
+    return completionRedirect(claimed.redirect_uri, "failed", "offline_access_missing");
   }
 
-  // Identify the mailbox.
   const profileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
   });
-  const { emailAddress } = await profileResp.json();
+  if (!profileResp.ok) return completionRedirect(claimed.redirect_uri, "failed", "gmail_profile_failed");
+  const gmailProfile = await profileResp.json();
+  const gmailAddress = String(gmailProfile.emailAddress ?? "").toLowerCase();
+  if (!gmailAddress) return completionRedirect(claimed.redirect_uri, "failed", "gmail_address_missing");
 
-  const { data: user, error: userErr } = await supabase
-    .from("ia_users")
-    .upsert({ email: emailAddress.toLowerCase() }, { onConflict: "email" })
-    .select()
-    .single();
-  if (userErr) return new Response(`DB error: ${userErr.message}`, { status: 500 });
+  const { data: existing, error: lookupError } = await supabase.from("ia_gmail_accounts")
+    .select("id, user_id").eq("gmail_address", gmailAddress).maybeSingle();
+  if (lookupError) return completionRedirect(claimed.redirect_uri, "failed", "account_lookup_failed");
+  if (existing && existing.user_id !== claimed.user_id) {
+    return completionRedirect(claimed.redirect_uri, "failed", "account_already_connected");
+  }
 
-  const { error: acctErr } = await supabase.from("ia_gmail_accounts").upsert(
-    {
-      user_id: user.id,
-      gmail_address: emailAddress.toLowerCase(),
-      refresh_token: tokens.refresh_token,
-    },
-    { onConflict: "gmail_address" },
-  );
-  if (acctErr) return new Response(`DB error: ${acctErr.message}`, { status: 500 });
+  const accountWrite = existing
+    ? supabase.from("ia_gmail_accounts").update({ refresh_token: tokens.refresh_token, connected_at: now })
+      .eq("id", existing.id).eq("user_id", claimed.user_id)
+    : supabase.from("ia_gmail_accounts").insert({
+      user_id: claimed.user_id, gmail_address: gmailAddress, refresh_token: tokens.refresh_token,
+    });
+  const { error: accountError } = await accountWrite;
+  if (accountError) return completionRedirect(claimed.redirect_uri, "failed", "account_save_failed");
 
-  // Seed a default voice profile so the agent works before any customization.
-  await supabase.from("ia_voice_profiles")
-    .upsert({ user_id: user.id }, { onConflict: "user_id", ignoreDuplicates: true });
+  const { error: profileError } = await supabase.from("ia_voice_profiles")
+    .upsert({ user_id: claimed.user_id }, { onConflict: "user_id", ignoreDuplicates: true });
+  if (profileError) return completionRedirect(claimed.redirect_uri, "failed", "profile_setup_failed");
 
-  // Surface the extension access token so onboarding is copy-paste simple.
-  const { data: freshUser } = await supabase
-    .from("ia_users").select("api_token").eq("id", user.id).single();
-
-  return new Response(
-    `<html><head><meta charset="utf-8"></head>
-    <body style="font-family: system-ui; max-width: 40rem; margin: 4rem auto; line-height: 1.6;">
-      <h2>&#9989; ${emailAddress} connected</h2>
-      <p>The inbox agent will start triaging on its next sweep. Drafts appear in
-      your Gmail drafts folder &mdash; nothing is ever sent automatically.</p>
-      <h3>Your extension access token</h3>
-      <p><code style="background:#f4f2ed;padding:8px 12px;border-radius:8px;display:inline-block;font-size:15px;">${freshUser?.api_token ?? ""}</code></p>
-      <p style="color:#6f7075;font-size:14px;">Paste this into the CaughtUp Chrome
-      extension to see your digest, chat with your agent, and manage settings.
-      Keep it private &mdash; it grants access to your agent.</p>
-    </body></html>`,
-    { headers: { "Content-Type": "text/html; charset=utf-8" } },
-  );
+  return completionRedirect(claimed.redirect_uri, "connected");
 });

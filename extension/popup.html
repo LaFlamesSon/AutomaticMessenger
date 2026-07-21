@@ -1,66 +1,258 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CaughtUp</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span class="mark">✉</span>
+  <header class="app-header">
+    <div class="brand" aria-label="CaughtUp">
+      <span class="mark" aria-hidden="true">&#9993;</span>
       <span class="name">CaughtUp</span>
     </div>
-    <button id="sweepBtn" class="ghost" title="Check inbox now">Sweep now</button>
+    <button id="sweepBtn" class="ghost compact" type="button" title="Check inbox now">Sweep now</button>
   </header>
 
-  <nav>
-    <button class="tab active" data-tab="today">Today</button>
-    <button class="tab" data-tab="chat">Chat</button>
-    <button class="tab" data-tab="settings">Settings</button>
+  <div id="globalStatus" class="global-status hidden" role="status" aria-live="polite"></div>
+
+  <nav id="tabs" class="tabs" role="tablist" aria-label="CaughtUp sections">
+    <button id="tab-today" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="today" tabindex="0" data-tab="today">Today</button>
+    <button id="tab-chat" class="tab" type="button" role="tab" aria-selected="false" aria-controls="chat" tabindex="-1" data-tab="chat">Chat</button>
+    <button id="tab-kits" class="tab" type="button" role="tab" aria-selected="false" aria-controls="kits" tabindex="-1" data-tab="kits">Kits</button>
+    <button id="tab-settings" class="tab" type="button" role="tab" aria-selected="false" aria-controls="settings" tabindex="-1" data-tab="settings">Settings</button>
   </nav>
 
-  <!-- Token setup (shown until connected) -->
-  <section id="setup" class="panel hidden">
-    <h2>Connect your agent</h2>
-    <p class="sub">Paste your access token once. You can find it in your welcome message or ask your admin.</p>
-    <input id="tokenInput" type="password" placeholder="Access token">
-    <button id="saveToken" class="primary">Connect</button>
-    <p id="setupError" class="error hidden">That token didn't work — check it and try again.</p>
-  </section>
+  <main>
+    <section id="setup" class="panel setup hidden" aria-labelledby="setupTitle">
+      <div class="setup-mark" aria-hidden="true">&#10024;</div>
+      <h1 id="setupTitle">Your inbox, handled</h1>
+      <p id="setupCopy" class="sub">Connect Gmail so CaughtUp can prepare replies. Nothing sends automatically unless you turn it on later.</p>
+      <button id="connectGoogle" class="primary" type="button">Continue with Google</button>
+      <p id="setupStatus" class="status-text" role="status" aria-live="polite"></p>
+    </section>
 
-  <!-- Today -->
-  <section id="today" class="panel">
-    <div id="lastRun" class="lastrun"></div>
-    <div id="digest"></div>
-  </section>
+    <section id="today" class="panel" role="tabpanel" aria-labelledby="tab-today" tabindex="0">
+      <div class="panel-heading">
+        <div>
+          <h1>Today</h1>
+          <p id="lastRun" class="meta">Checking your agent&hellip;</p>
+        </div>
+        <span id="modeBadge" class="mode-badge">Review mode</span>
+      </div>
+      <div id="todayStatus" class="state-card" role="status" aria-live="polite">Loading your inbox&hellip;</div>
+      <div id="digest" class="hidden"></div>
+    </section>
 
-  <!-- Chat -->
-  <section id="chat" class="panel hidden">
-    <div id="messages"></div>
-    <form id="chatForm">
-      <input id="chatInput" type="text" placeholder="Teach your agent… e.g. “be more casual”" autocomplete="off">
-      <button type="submit" class="primary">Send</button>
+    <section id="chat" class="panel hidden" role="tabpanel" aria-labelledby="tab-chat" tabindex="0">
+      <div class="panel-heading">
+        <div>
+          <h1>Chat</h1>
+          <p class="meta">Ask about email or teach CaughtUp a preference.</p>
+        </div>
+      </div>
+      <div id="messages" role="log" aria-live="polite" aria-label="Chat messages">
+        <div class="msg agent">What should I help you catch up on?</div>
+      </div>
+      <form id="chatForm">
+        <label class="sr-only" for="chatInput">Message your agent</label>
+        <input id="chatInput" type="text" placeholder="e.g. Be more casual" autocomplete="off" maxlength="4000">
+        <button id="chatSend" type="submit" class="primary compact">Send</button>
+      </form>
+      <p id="chatStatus" class="status-text" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="kits" class="panel hidden" role="tabpanel" aria-labelledby="tab-kits" tabindex="0">
+      <div class="panel-heading">
+        <div>
+          <h1>Media kits</h1>
+          <p class="meta">CaughtUp attaches one relevant kit, or none when the match is unclear.</p>
+        </div>
+        <button id="showKitForm" type="button" class="ghost compact" aria-expanded="false" aria-controls="kitForm">Add kit</button>
+      </div>
+
+      <form id="kitForm" class="form-card hidden">
+        <label for="kitFile">PDF or image <span class="required">required</span></label>
+        <input id="kitFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" required>
+        <label for="kitLabel">Label <span class="required">required</span></label>
+        <input id="kitLabel" type="text" maxlength="80" placeholder="Beauty portfolio" required>
+        <label for="kitDescription">Best for</label>
+        <input id="kitDescription" type="text" maxlength="240" placeholder="Skincare and beauty partnerships">
+        <label for="kitBrands">Brand names <span class="optional">optional</span></label>
+        <input id="kitBrands" type="text" maxlength="400" placeholder="Glow Co, Northstar Beauty">
+        <label for="kitDomains">Brand domains <span class="optional">optional</span></label>
+        <input id="kitDomains" type="text" maxlength="400" placeholder="brand.com, agency.co" aria-describedby="kitDomainsHint">
+        <p id="kitDomainsHint" class="hint">Comma-separated. Exact domains take priority.</p>
+        <label for="kitKeywords">Keywords <span class="optional">optional</span></label>
+        <input id="kitKeywords" type="text" maxlength="400" placeholder="skincare, tutorial, beauty">
+        <label class="check-row" for="kitDefault">
+          <input id="kitDefault" type="checkbox">
+          <span>Use as fallback when there is no exact match</span>
+        </label>
+        <label class="check-row" for="kitAutoAttach">
+          <input id="kitAutoAttach" type="checkbox">
+          <span>Allow this kit on eligible Auto-send replies</span>
+        </label>
+        <div class="button-row">
+          <button id="cancelKit" type="button" class="ghost">Cancel</button>
+          <button id="uploadKit" type="submit" class="primary compact">Upload kit</button>
+        </div>
+        <progress id="kitProgress" class="hidden" max="100" value="0">0%</progress>
+        <p id="kitFormStatus" class="status-text" role="status" aria-live="polite"></p>
+      </form>
+
+      <div id="kitsStatus" class="state-card" role="status" aria-live="polite">Loading kits&hellip;</div>
+      <div id="kitList" class="kit-list hidden"></div>
+    </section>
+
+    <section id="settings" class="panel hidden" role="tabpanel" aria-labelledby="tab-settings" tabindex="0">
+      <div class="panel-heading">
+        <div>
+          <h1>Settings</h1>
+          <p id="connectedEmail" class="meta">Your agent preferences</p>
+        </div>
+      </div>
+      <div id="settingsStatus" class="state-card" role="status" aria-live="polite">Loading settings&hellip;</div>
+
+      <form id="settingsForm" class="hidden">
+        <fieldset>
+          <legend>How replies work</legend>
+          <label class="choice-card" for="modeReview">
+            <input id="modeReview" name="replyMode" type="radio" value="draft_only" checked>
+            <span><strong>Review before sending</strong><small>CaughtUp saves drafts for you to approve.</small></span>
+          </label>
+          <label class="choice-card warning-choice" for="modeAuto">
+            <input id="modeAuto" name="replyMode" type="radio" value="auto_send">
+            <span><strong>Auto-send eligible replies</strong><small>Requires confirmation and keeps safety rules on.</small></span>
+          </label>
+        </fieldset>
+
+        <details>
+          <summary>Reply preferences</summary>
+          <div class="details-body">
+            <fieldset>
+              <legend>Prepare drafts for</legend>
+              <label class="check-row"><input type="checkbox" name="draftCategory" value="urgent"><span>Urgent</span></label>
+              <label class="check-row"><input type="checkbox" name="draftCategory" value="action_needed"><span>Action needed</span></label>
+              <label class="check-row"><input type="checkbox" name="draftCategory" value="fyi"><span>FYI</span></label>
+            </fieldset>
+            <fieldset id="autoCategories">
+              <legend>Auto-send may apply to</legend>
+              <label class="check-row"><input type="checkbox" name="autoCategory" value="urgent"><span>Urgent</span></label>
+              <label class="check-row"><input type="checkbox" name="autoCategory" value="action_needed"><span>Action needed</span></label>
+              <p class="hint">Required questions or uncertain matches always fall back to a draft.</p>
+            </fieldset>
+            <fieldset>
+              <legend>Ask when missing</legend>
+              <div id="requiredQuestions"></div>
+            </fieldset>
+          </div>
+        </details>
+
+        <details>
+          <summary>Voice and standing rules</summary>
+          <div class="details-body">
+            <label for="f_display_name">Name</label><input id="f_display_name" maxlength="120">
+            <label for="f_occupation">What you do</label><input id="f_occupation" maxlength="240">
+            <label for="f_services">Services</label><input id="f_services" maxlength="500">
+            <label for="f_tone">Voice and tone</label><input id="f_tone" maxlength="500">
+            <label for="f_signoff">Sign-off</label><input id="f_signoff" maxlength="80">
+            <label for="f_custom_rules">Standing rules</label><textarea id="f_custom_rules" rows="4" maxlength="4000"></textarea>
+            <p class="hint">Standing rules can make behavior stricter, but cannot bypass safety limits. While any free-text rule is active, replies stay in Review.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Schedule and daily summary</summary>
+          <div class="details-body">
+            <p class="setting-line"><strong>Inbox checks</strong><span>Every 3 hours + Sweep now</span></p>
+            <label class="check-row" for="f_digest_enabled"><input id="f_digest_enabled" type="checkbox"><span>Email me a daily summary</span></label>
+            <label for="f_digest_local_time">Summary time</label><input id="f_digest_local_time" type="time">
+            <label for="f_timezone">Time zone</label><input id="f_timezone" maxlength="80" list="timezoneOptions" autocomplete="off">
+            <datalist id="timezoneOptions">
+              <option value="America/Los_Angeles"></option>
+              <option value="America/Denver"></option>
+              <option value="America/Chicago"></option>
+              <option value="America/New_York"></option>
+              <option value="Europe/London"></option>
+              <option value="UTC"></option>
+            </datalist>
+          </div>
+        </details>
+
+        <details>
+          <summary>What CaughtUp learned</summary>
+          <div class="details-body">
+            <p id="learningSummary" class="setting-line">Learning status unavailable.</p>
+            <button id="resetLearning" type="button" class="ghost danger">Reset learned writing style</button>
+            <p id="learningStatus" class="status-text" role="status" aria-live="polite"></p>
+          </div>
+        </details>
+
+        <button id="saveProfile" class="primary" type="submit">Save settings</button>
+        <p id="saveMsg" class="status-text" role="status" aria-live="polite"></p>
+      </form>
+
+      <hr>
+      <p class="hint signout-note">Signing out removes this browser session only. Scheduled CaughtUp and Gmail work continues.</p>
+      <button id="signOut" class="ghost danger" type="button">Sign out</button>
+    </section>
+  </main>
+
+  <dialog id="sendDialog" aria-labelledby="sendDialogTitle">
+    <form method="dialog" class="dialog-card">
+      <h2 id="sendDialogTitle">Send this reply?</h2>
+      <dl class="preview-meta">
+        <div><dt>To</dt><dd id="previewRecipient"></dd></div>
+        <div><dt>Cc</dt><dd id="previewCc"></dd></div>
+        <div><dt>Bcc</dt><dd id="previewBcc"></dd></div>
+        <div><dt>Subject</dt><dd id="previewSubject"></dd></div>
+      </dl>
+      <div id="previewBody" class="draft-preview" tabindex="0"></div>
+      <div class="attachment-preview">
+        <h3>Attachments</h3>
+        <ul id="previewAttachments"></ul>
+      </div>
+      <p class="hint">This sends the existing Gmail draft once. It cannot be undone.</p>
+      <p id="sendDialogStatus" class="status-text" role="status" aria-live="assertive"></p>
+      <div class="button-row">
+        <button id="cancelSend" type="submit" value="cancel" class="ghost">Keep draft</button>
+        <button id="confirmSend" type="button" class="primary compact">Send reply</button>
+      </div>
     </form>
-  </section>
+  </dialog>
 
-  <!-- Settings -->
-  <section id="settings" class="panel hidden">
-    <label>Name <input id="f_display_name"></label>
-    <label>What you do <input id="f_occupation"></label>
-    <label>Services <input id="f_services"></label>
-    <label>Voice / tone <input id="f_tone"></label>
-    <label>Sign-off <input id="f_signoff"></label>
-    <label>Standing rules <textarea id="f_custom_rules" rows="3"></textarea></label>
-    <label class="toggle">
-      <input id="f_auto_send" type="checkbox">
-      <span><strong>Auto-send replies</strong> — send immediately instead of saving drafts. Off = you always review first.</span>
-    </label>
-    <button id="saveProfile" class="primary">Save</button>
-    <p id="saveMsg" class="ok hidden">Saved ✓</p>
-    <hr>
-    <button id="disconnect" class="ghost danger">Disconnect</button>
-  </section>
+  <dialog id="autoSendDialog" aria-labelledby="autoSendTitle">
+    <form method="dialog" class="dialog-card">
+      <h2 id="autoSendTitle">Turn on Auto-send?</h2>
+      <p id="autoSendCopy">Eligible replies may be sent without review. CaughtUp will still draft when required details are missing or a decision is uncertain.</p>
+      <ul id="autoSendSafeguards" class="safeguards"></ul>
+      <p id="autoSendStatus" class="status-text" role="status" aria-live="assertive"></p>
+      <div class="button-row">
+        <button id="cancelAutoSend" type="submit" value="cancel" class="ghost">Stay in Review</button>
+        <button id="confirmAutoSend" type="button" class="primary compact">I understand, turn it on</button>
+      </div>
+    </form>
+  </dialog>
 
+  <dialog id="kitEditDialog" aria-labelledby="kitEditTitle">
+    <form id="kitEditForm" class="dialog-card">
+      <h2 id="kitEditTitle">Edit media kit</h2>
+      <label for="editKitLabel">Label</label><input id="editKitLabel" maxlength="80" required>
+      <label for="editKitDescription">Best for</label><input id="editKitDescription" maxlength="240">
+      <label for="editKitBrands">Brand names</label><input id="editKitBrands" maxlength="400">
+      <label for="editKitDomains">Brand domains</label><input id="editKitDomains" maxlength="400">
+      <label for="editKitKeywords">Keywords</label><input id="editKitKeywords" maxlength="400">
+      <p id="kitEditStatus" class="status-text" role="status" aria-live="assertive"></p>
+      <div class="button-row">
+        <button id="cancelKitEdit" type="button" class="ghost">Cancel</button>
+        <button id="saveKitEdit" type="submit" class="primary compact">Save kit</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="core.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

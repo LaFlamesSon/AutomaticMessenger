@@ -3,6 +3,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { localScheduleWindow } from "../_shared/policy.ts";
 
 let CFG: Record<string, string> = {};
 
@@ -22,7 +23,7 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
       grant_type: "refresh_token",
     }),
   });
-  if (!resp.ok) throw new Error(`token refresh failed: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(`token_refresh_${resp.status}`);
   return (await resp.json()).access_token;
 }
 
@@ -44,11 +45,37 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
-  const { data: accounts } = await supabase.from("ia_gmail_accounts").select("*");
+  const { data: accounts, error: accountsError } = await supabase.from("ia_gmail_accounts").select("*");
+  if (accountsError) {
+    return new Response(JSON.stringify({ error: "account query failed" }), {
+      status: 500, headers: { "Content-Type": "application/json" },
+    });
+  }
   const results: any[] = [];
 
   for (const account of accounts ?? []) {
+    let jobClaimId: string | null = null;
+    let digestSendStarted = false;
     try {
+      const { data: profile, error: profileError } = await supabase.from("ia_voice_profiles")
+        .select("digest_enabled, digest_local_time, timezone, last_digest_at")
+        .eq("user_id", account.user_id).maybeSingle();
+      if (profileError) throw new Error(`profile: ${profileError.message}`);
+      if (profile?.digest_enabled === false) {
+        results.push({ account: account.gmail_address, sent: false, reason: "digest disabled" });
+        continue;
+      }
+      const timezone = profile?.timezone ?? "America/Los_Angeles";
+      const local = localScheduleWindow(new Date(), timezone);
+      const [hour, minute] = String(profile?.digest_local_time ?? "08:00").slice(0, 5).split(":").map(Number);
+      const targetMinutes = hour * 60 + minute;
+      const lastLocalDate = profile?.last_digest_at
+        ? localScheduleWindow(new Date(profile.last_digest_at), timezone).date
+        : null;
+      if (local.minutes < targetMinutes || lastLocalDate === local.date) {
+        results.push({ account: account.gmail_address, sent: false, reason: "not due" });
+        continue;
+      }
       const since = new Date(Date.now() - 86400_000).toISOString();
       const { data: rows } = await supabase
         .from("ia_processed_emails")
@@ -61,6 +88,15 @@ Deno.serve(async (req: Request) => {
         results.push({ account: account.gmail_address, sent: false, reason: "nothing to report" });
         continue;
       }
+
+      const { data: claim, error: claimError } = await supabase.rpc("ia_claim_job", {
+        p_gmail_account_id: account.id, p_job_type: "digest", p_window_key: local.date,
+      });
+      if (claimError || !claim) {
+        results.push({ account: account.gmail_address, sent: false, reason: "already claimed" });
+        continue;
+      }
+      jobClaimId = claim;
 
       const byCat: Record<string, any[]> = {};
       for (const r of rows) (byCat[r.category] ??= []).push(r);
@@ -100,6 +136,11 @@ Deno.serve(async (req: Request) => {
         "",
         lines.join("\r\n"),
       ].join("\r\n"));
+      const { data: sendingClaim, error: sendingClaimError } = await supabase.from("ia_job_claims")
+        .update({ status: "sending" }).eq("id", claim).eq("status", "claimed")
+        .select("id").maybeSingle();
+      if (sendingClaimError || !sendingClaim) throw new Error("digest_send_claim_failed");
+      digestSendStarted = true;
       const send = await fetch(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
         {
@@ -108,10 +149,27 @@ Deno.serve(async (req: Request) => {
           body: JSON.stringify({ raw }),
         },
       );
-      if (!send.ok) throw new Error(`gmail send: ${send.status} ${await send.text()}`);
+      if (!send.ok) throw new Error(`gmail_send_${send.status}`);
+      const finishedAt = new Date().toISOString();
+      const { data: sentClaim, error: sentClaimError } = await supabase.from("ia_job_claims")
+        .update({ status: "sent", finished_at: finishedAt }).eq("id", claim).eq("status", "sending")
+        .select("id").maybeSingle();
+      if (sentClaimError || !sentClaim) throw new Error("digest_send_state_failed");
+      const { error: profileUpdateError } = await supabase.from("ia_voice_profiles")
+        .update({ last_digest_at: finishedAt, updated_at: finishedAt }).eq("user_id", account.user_id);
+      if (profileUpdateError) throw new Error(`digest state: ${profileUpdateError.message}`);
+      const { error: completeError } = await supabase.from("ia_job_claims")
+        .update({ status: "ok", finished_at: finishedAt }).eq("id", claim).eq("status", "sent");
+      if (completeError) throw new Error("digest_completion_failed");
       results.push({ account: account.gmail_address, sent: true, needsYou, handled });
     } catch (err) {
-      results.push({ account: account.gmail_address, sent: false, error: String(err) });
+      console.error(JSON.stringify({ component: "daily-digest", account_id: account.id, error_type: err instanceof Error ? err.name : "unknown" }));
+      if (jobClaimId) {
+        await supabase.from("ia_job_claims").update({
+          status: digestSendStarted ? "reconcile" : "error", finished_at: new Date().toISOString(),
+        }).eq("id", jobClaimId);
+      }
+      results.push({ account: account.gmail_address, sent: false, error: "digest failed" });
     }
   }
 

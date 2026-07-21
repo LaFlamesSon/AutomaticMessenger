@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
   "name": "CaughtUp — AI Inbox Agent",
-  "version": "0.1.0",
-  "description": "Your inbox, already handled. Triage digests, drafts in your voice, and a chat to fine-tune your agent.",
+  "version": "0.2.0",
+  "description": "Review or automate safe Gmail replies, teach your agent, and manage labeled media kits.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "CaughtUp"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "identity"],
   "host_permissions": ["https://xkrpxvswdkreglmefuot.supabase.co/*"],
   "icons": {
     "16": "icons/icon16.png",

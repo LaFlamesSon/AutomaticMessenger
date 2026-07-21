@@ -1,114 +1,60 @@
-# Deploying the Inbox Agent to Supabase (Phase 0)
+# CaughtUp Supabase deployment
 
-Target project: the fresh Supabase project (`xkrpxvswdkreglmefuot`).
+The existing Supabase project is CaughtUp's active development backend. Iterate
+in place while the product is pre-release: keep Auto-send disabled, make additive
+schema changes through named migrations, deploy contract-coupled functions as one
+set, and verify the unpacked extension after every rollout. Never copy secrets,
+tokens, or email content into source, logs, chat, or the context vault.
 
-## 0. One-time prerequisites (the "gaps" only you can fill)
+## Required configuration
 
-| Secret | Where to get it |
-|---|---|
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud Console → OAuth client, type **Web application**. Add the gmail-oauth function URL (step 2) as an **Authorized redirect URI**. Enable the Gmail API and add yourself as a test user. |
-| `GEMINI_API_KEY` | aistudio.google.com/apikey — free, no card required. The free tier (1,500 requests/day) covers personal-inbox volume many times over. |
+Store runtime secrets in Supabase Vault using `ia_*` names. Required values include
+the Google OAuth client ID/secret, LLM endpoint/model/key, `ia_agent_cron_secret`,
+and `ia_allowed_extension_ids`. The last value is one exact Chrome extension ID or
+a comma-separated set of explicitly approved IDs. The API fails closed if it is
+absent. Add the exact callback returned by `chrome.identity.getRedirectURL()` to
+the Supabase Auth redirect allowlist. Google OAuth must authorize the deployed
+`gmail-oauth` function URL.
 
-**Optional — use a different LLM provider** (any OpenAI-compatible API). Set these three secrets instead of `GEMINI_API_KEY`:
+## Safe deployment sequence
 
-| Provider | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_KEY` |
-|---|---|---|---|
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | platform.deepseek.com key |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | platform.openai.com key |
-| Groq (free tier) | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` | console.groq.com key |
-| `AGENT_CRON_SECRET` | Any long random string (e.g. `openssl rand -hex 32`). Shared between the cron job and the function. |
+1. Back up the target database and capture currently deployed function versions.
+2. Run the local gates:
+   `node --test supabase/tests/policy.test.ts supabase/tests/source-contract.test.mjs`,
+   Deno type-check all Edge Functions, and `git diff --check -- supabase`.
+3. Pause the existing sweep and digest jobs, back up the current project, then
+   apply all named migrations to the existing development project. Verify every `ia_*` table
+   has RLS enabled and no grants or policies for `anon`/`authenticated`.
+4. Deploy `agent-api`, `agent-sweep`, `daily-digest`, and `gmail-oauth` together.
+   Mixed old/new versions are not contract-compatible. Deploy only committed source
+   and verify the deployed version before continuing.
+5. Exercise authenticated extension onboarding. Gmail consent starts only through
+   the authenticated `gmail_connect_start` action; do not browse directly to the
+   callback. Confirm `profile_get` reports the owned `gmail_address` separately
+   from the application-auth email.
+6. With Auto-send disabled, run the two-user isolation suite with controlled test
+   identities in the current project. Manual sweeps must go through authenticated `agent-api:sweep`, which
+   supplies the verified user ID. Do not call the all-account worker with a cron
+   secret and do not perform real sends without a separately approved allowlisted
+   test plan.
+7. Only after all coupled functions are deployed and verified, explicitly install
+   dispatcher jobs with the correct environment origin:
 
-## 1. Apply the schema
+   ```sql
+   select public.ia_install_dispatch_cron('https://YOURPROJECTREF.supabase.co');
+   ```
 
-Easiest: connect the project to the Claude Supabase integration (claude.ai →
-Settings → Connectors → Supabase → grant the new project) and Claude applies
-`migrations/20260719000001_inbox_agent_init.sql` for you. Or use the CLI:
+   The helper accepts only a Supabase project origin, or HTTP for approved local
+   development hosts. It removes legacy `caughtup-daily-digest`,
+   `inbox-agent-daily-digest`, and `inbox-agent-sweep` jobs, then installs five-minute
+   dispatchers whose `x-agent-secret` is resolved from Vault at runtime. Merely
+   applying migrations never changes active cron jobs.
+8. Re-run deployed verification and the unpacked-extension checks. Keep real sends
+   and Auto-send disabled until their controlled acceptance cases are deliberately
+   exercised.
 
-```bash
-supabase link --project-ref xkrpxvswdkreglmefuot
-supabase db push
-```
+## Rollback
 
-## 2. Deploy the functions
-
-```bash
-supabase functions deploy agent-sweep --no-verify-jwt
-supabase functions deploy gmail-oauth --no-verify-jwt
-```
-
-(`--no-verify-jwt`: gmail-oauth must be browser-reachable; agent-sweep is
-protected by the `x-agent-secret` header instead.)
-
-## 3. Set the function secrets
-
-```bash
-supabase secrets set \
-  GOOGLE_CLIENT_ID=... \
-  GOOGLE_CLIENT_SECRET=... \
-  GEMINI_API_KEY=... \
-  AGENT_CRON_SECRET=...
-```
-
-(`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically.)
-
-## 4. Connect your Gmail
-
-Open in a browser:
-
-```
-https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/gmail-oauth
-```
-
-Log in with the Gmail account, approve, see "connected".
-
-## 5. Test one sweep manually
-
-```bash
-curl -s -X POST \
-  -H "x-agent-secret: $AGENT_CRON_SECRET" \
-  https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/agent-sweep | jq
-```
-
-You should see a digest grouped by category (urgent first) and, for
-urgent/action-needed emails, drafts waiting in your Gmail drafts folder — plus
-the `AI-Processed` label on everything triaged.
-
-## 6. Schedule it (every 10 minutes)
-
-Run in the SQL editor — replace `YOUR_SECRET`:
-
-```sql
-create extension if not exists pg_cron;
-create extension if not exists pg_net;
-
-select cron.schedule(
-  'inbox-agent-sweep',
-  '*/10 * * * *',
-  $$
-  select net.http_post(
-    url := 'https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/agent-sweep',
-    headers := jsonb_build_object('x-agent-secret', 'YOUR_SECRET')
-  );
-  $$
-);
-```
-
-## 7. Customize your voice (optional but recommended)
-
-```sql
-update ia_voice_profiles set
-  display_name = 'Yafet',
-  occupation = 'a freelance brand designer',
-  services = 'logo design, brand identity, packaging',
-  custom_rules = ''  -- e.g. 'Never suggest calls on Fridays'
-where user_id = (select id from ia_users limit 1);
-```
-
-Style memory: whenever you edit a draft before sending, save the before/after
-into `ia_draft_edits` — the agent includes your last 10 edits as "this is how I
-actually write" examples. (Automating this capture is a Phase 1 extension task.)
-
-## Phase 0 gate
-
-You stop reading your inbox manually because the drafts + digest are enough.
-When that's true, move to Phase 1 (Chrome extension) per PLAN.md.
+Disable dispatch jobs first, restore the captured function versions as one set,
+and use a reviewed named rollback migration where schema rollback is safe. Never
+perform ad-hoc production DDL or overwrite refresh/API tokens during rollback.
