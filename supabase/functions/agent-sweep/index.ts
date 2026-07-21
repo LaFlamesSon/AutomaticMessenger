@@ -361,12 +361,20 @@ Deno.serve(async (req: Request) => {
   } catch { /* scheduled legacy requests may have no body */ }
   const trigger = requestBody.trigger === "manual" ? "manual" : "scheduled";
   const requestedUserId = trigger === "manual" ? String(requestBody.user_id ?? "") : null;
+  const requestedAccountId = trigger === "manual" ? String(requestBody.gmail_account_id ?? "") : "";
+  const requestedMessageId = trigger === "manual" ? String(requestBody.gmail_message_id ?? "") : "";
   if (trigger === "manual" && !/^[0-9a-f-]{36}$/i.test(requestedUserId ?? "")) {
     return new Response(JSON.stringify({ error: "manual sweep requires a valid user_id" }), { status: 400 });
+  }
+  const targeted = Boolean(requestedAccountId || requestedMessageId);
+  if (targeted &&
+    (!/^[0-9a-f-]{36}$/i.test(requestedAccountId) || !/^[a-zA-Z0-9_-]{5,200}$/.test(requestedMessageId))) {
+    return new Response(JSON.stringify({ error: "targeted manual sweep requires valid Gmail account and message IDs" }), { status: 400 });
   }
 
   let accountQuery = supabase.from("ia_gmail_accounts").select("*, ia_users(id, email)");
   if (requestedUserId) accountQuery = accountQuery.eq("user_id", requestedUserId);
+  if (targeted) accountQuery = accountQuery.eq("id", requestedAccountId);
   const { data: accounts, error: accErr } = await accountQuery;
   if (accErr) return new Response(JSON.stringify({ error: "account query failed" }), { status: 500 });
 
@@ -429,10 +437,16 @@ Deno.serve(async (req: Request) => {
         .eq("enabled", true).order("priority", { ascending: true });
       if (rulesError) throw new Error(`sender rules: ${rulesError.message}`);
 
-      const q = encodeURIComponent(`in:inbox is:unread -label:${LABEL_NAME} newer_than:7d`);
-      const list = await gmailGet(token, `/messages?q=${q}&maxResults=${MAX_EMAILS_PER_ACCOUNT}`);
+      let messageRefs: { id: string }[];
+      if (targeted) {
+        messageRefs = [{ id: requestedMessageId }];
+      } else {
+        const q = encodeURIComponent(`in:inbox is:unread -label:${LABEL_NAME} newer_than:7d`);
+        const list = await gmailGet(token, `/messages?q=${q}&maxResults=${MAX_EMAILS_PER_ACCOUNT}`);
+        messageRefs = list.messages ?? [];
+      }
 
-      for (const ref of list.messages ?? []) {
+      for (const ref of messageRefs) {
         const { data: seen, error: seenError } = await supabase
           .from("ia_processed_emails").select("id")
           .eq("gmail_account_id", account.id).eq("gmail_message_id", ref.id).maybeSingle();

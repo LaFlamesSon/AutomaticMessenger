@@ -28,6 +28,14 @@ test("manual sweep passes trusted authenticated ownership to the worker", async 
   assert.match(sweep, /manual sweep requires a valid user_id/);
 });
 
+test("targeted manual sweeps isolate one owned Gmail message", async () => {
+  const sweep = await read("functions/agent-sweep/index.ts");
+  assert.match(sweep, /targeted manual sweep requires valid Gmail account and message IDs/);
+  assert.match(sweep, /accountQuery = accountQuery\.eq\("id", requestedAccountId\)/);
+  assert.match(sweep, /messageRefs = \[\{ id: requestedMessageId \}\]/);
+  assert.doesNotMatch(sweep, /requestedMessageId.*trigger === "scheduled"/);
+});
+
 test("auto-send requires a dedicated confirmation and safe policy", async () => {
   const api = await read("functions/agent-api/index.ts");
   const sweep = await read("functions/agent-sweep/index.ts");
