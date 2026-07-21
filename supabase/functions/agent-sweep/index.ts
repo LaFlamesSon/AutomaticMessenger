@@ -159,13 +159,13 @@ For the email you receive:
 
 2. Summarize the key point in one sentence.
 
-3. ONLY for these user-enabled categories (${draftCategories}): write a reply draft that:
+3. For every email categorized as one of these user-enabled categories (${draftCategories}), draft MUST be a non-empty reply. The reply must:
    - Thanks them and shows the user actually read their email (reference one specific detail from it)
    - Asks for whichever of these they haven't already given: ${alwaysAsk}
    - Suggests a short call as the next step
    - Is under 150 words
    - Signs off with "${profile.signoff}," followed by ${profile.display_name || "the user's name"}
-   For every other category, draft must be null.
+   Return draft: null ONLY when the category is not in that enabled list.
 
 Hard rules for drafts:
 - Never state prices, availability, or turnaround times
