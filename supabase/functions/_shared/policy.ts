@@ -252,7 +252,7 @@ export function applyContactPreference(draft: string, preference: CalendarPrefer
   if (preference.contact_mode === "phone" && preference.phone_number) contact = `You can reach me at ${preference.phone_number}.`;
   if (preference.contact_mode === "scheduled_call" && preference.booking_url) contact = `You can choose a call time here: ${preference.booking_url}`;
   if (preference.contact_mode === "scheduled_call" && !preference.booking_url && slots.length) {
-    contact = `I can offer a 30-minute call at ${slots.map((slot) => slot.label).join(" or ")}. Let me know which works.`;
+    contact = `I can offer a 30-minute call at ${slots.map((slot) => slot.label).join(" or ")}; let me know which works.`;
   }
   if (!contact) return base;
   const signoff = base.match(/(?:^|\n)(?:best|thanks|thank you|sincerely|regards|warmly|cheers|kind regards)[,!]?\s*(?:\n|$)/i);
