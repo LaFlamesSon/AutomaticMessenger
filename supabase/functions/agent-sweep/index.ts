@@ -157,7 +157,7 @@ function buildSystemPrompt(
     ? "Do not suggest a call, meeting, booking, schedule, phone contact, or contact link. Continue by email only."
     : contact.contact_mode === "phone"
     ? "Do not invent or write a phone number. The server will add the configured phone contact method after validation."
-    : "Do not invent availability, times, booking status, or links. The server will add a verified booking link or open slots after validation.";
+    : "Write the complete reply except for the scheduling sentence, and do not return draft: null. Do not invent availability, times, booking status, or links. The server will append a verified booking link or open slots after validation.";
 
   return `You are drafting email replies on behalf of ${profile.display_name || "the user"}, ${profile.occupation}${profile.services ? ` who does ${profile.services}` : ""}. Voice: ${profile.tone}
 

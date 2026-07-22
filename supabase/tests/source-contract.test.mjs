@@ -134,6 +134,7 @@ test("contact prompt and final draft use only refreshed server-owned calendar st
   const sweep = await read("functions/agent-sweep/index.ts");
   assert.match(sweep, /server-owned contact policy/);
   assert.match(sweep, /Do not invent availability, times, booking status, or links/);
+  assert.match(sweep, /Write the complete reply except for the scheduling sentence, and do not return draft: null/);
   assert.match(sweep, /freshCalendarRow/);
   assert.match(sweep, /findVerifiedOpenSlots\(freshCalendar, freshBookings/);
   assert.match(sweep, /applyContactPreference\(portfolioDraft, freshCalendar, freshSlots\)/);
