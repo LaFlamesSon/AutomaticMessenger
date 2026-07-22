@@ -252,6 +252,7 @@ export function applyContactPreference(draft: string, preference: CalendarPrefer
   if (preference.contact_mode === "phone" && preference.phone_number) contact = `You can reach me at ${preference.phone_number}.`;
   if (preference.contact_mode === "scheduled_call" && preference.booking_url) contact = `You can choose a call time here: ${preference.booking_url}`;
   if (preference.contact_mode === "scheduled_call" && !preference.booking_url && slots.length) {
+    // Keep the server-owned suffix one sentence so applying the policy again is idempotent.
     contact = `I can offer a 30-minute call at ${slots.map((slot) => slot.label).join(" or ")}; let me know which works.`;
   }
   if (!contact) return base;

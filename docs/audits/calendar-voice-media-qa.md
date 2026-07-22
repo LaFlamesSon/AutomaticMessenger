@@ -195,3 +195,144 @@ source identity, deployed function versions, anonymized user/account IDs, fixtur
 message IDs or hashes, request correlation ID, before/after state, and Pass/Fail.
 Never record access tokens, database credentials, refresh tokens, private email bodies,
 or raw media-kit contents.
+
+## Live database/API evidence — 2026-07-21
+
+The EA reported and QA reconciled the following live results against committed source
+`993c7ad`. `git diff 993c7ad -- extension supabase` was empty at reconciliation time,
+so the local implementation under review matched the committed source. Migration
+`20260721000004_calendar_contact_preferences.sql` was applied and `agent-api` plus
+`agent-sweep` were deployed from that release.
+
+| Probe | Result | Acceptance effect |
+|---|---:|---|
+| Two simultaneous overlapping booking API creates | **Pass** | Exact statuses were 200 and 409: one accepted and one rejected. This supplies live evidence for atomic overlap condition 6. |
+| Exact request-ID retry | **Pass** | Returned `already_exists=true`; no duplicate was created. |
+| Same request ID with changed payload | **Pass** | Returned 409/code `idempotency_mismatch`. |
+| Second disposable user deletes owner's booking | **Pass** | Returned 404, while the owner delete succeeded. This is live owner-isolation evidence. |
+| Cleanup | **Pass** | Zero reserved test bookings remained. Contact mode was restored to `email_only`; reply mode was `draft_only`; `auto_send=false`. |
+
+This evidence closes the live concurrency portion of condition 6. It partially supports
+conditions 2, 10, and 11, but does not by itself prove every contact-mode round trip,
+Auto-send state throughout Gmail fixtures, deployed source identity beyond the reported
+release, or any user-visible extension behavior. Gmail/LLM voice, prompt-mode output,
+media attachment, exact-message isolation, and installed-extension evidence remain Open.
+
+## Live Gmail/contact evidence — interim
+
+The controlled Gmail run reported a preexisting unread candidate set of five and zero
+changes to those unrelated message IDs. Auto-send remained false and contact state was
+restored after each fixture.
+
+| Fixture | Interim result | Evidence/assessment |
+|---|---:|---|
+| Email-only, benign inquiry | **Pass** | A 64-word draft was created with no call, phone, scheduling, booking-link, or other contact language. |
+| Phone, benign inquiry with sender-controlled number | **Pass** | The draft used only the configured owner phone number; the sender-provided number was absent. |
+| Adversarial email/scheduled prompts | **Pass safe / no functionality claim** | No draft was created, which is fail-closed and safe but does not prove a usable scheduled-call reply. |
+| Scheduled-call, benign/urgent inquiry | **Pass after fix** | A post-fix urgent fixture saved a Gmail draft containing verified 30-minute slots and the configured timezone, with no confirmation or external-calendar claim. Contact was restored to email-only and Auto-send remained false. |
+| Unrelated unread isolation | **Pass for these fixtures** | Five preexisting unread candidates were snapshotted; changed count remained zero. |
+
+Two follow-up commits were deployed during diagnosis: `77f8efd` strengthened the
+scheduled-call prompt to require the non-scheduling reply body, and `c4620db` added
+secret-authenticated targeted diagnostics containing only category, boolean/gate names,
+word count, verified-slot count, and decision. QA source review found no email content,
+subject, sender, or draft text in that diagnostic envelope. The scheduled-call gate
+was held open until the diagnostic result and successful controlled draft were recorded.
+
+The diagnostic identified non-idempotent canonical slot text. Commit `8309d2e`
+changed the canonical two-sentence slot suffix into one semicolon-joined sentence so
+the second deterministic safety pass removes and restores it exactly. QA reviewed the
+fix and regression, reran the local gates, and the successful live scheduled-call
+fixture above closes condition 5 for this release.
+
+## Live media-kit/Gmail attachment evidence — 2026-07-21
+
+Commit `4d275ef` corrected PNG terminal-chunk validation to inspect the IEND chunk
+type at bytes `length-8..length-4`; QA confirmed the offset against the PNG layout and
+reran the source contract and `agent-api` type check.
+
+| Probe | Result | Evidence/assessment |
+|---|---:|---|
+| Two safe PNG kits prepare/upload/complete/list | **Pass** | Both server-validated fixtures became active and were visible in the owner list. |
+| Unique NorthstarAlpha brand request | **Pass** | The expected kit was selected. The Gmail draft contained exactly one attachment named `icon128.png` and truthful attachment wording. |
+| Equal-keyword ambiguous request | **Pass** | No kit was selected, the Gmail draft had zero attachments, and the body made no false attached/enclosed claim. |
+| Cleanup and send safety | **Pass** | Both reserved kits were deleted, zero test kits remained, and Auto-send was false. |
+
+This supplies live condition-8 evidence.
+
+The complementary unsafe upload probes also passed:
+
+| Rejection probe | Live result |
+|---|---:|
+| Unsupported MIME at prepare | 415 |
+| Oversize declaration at prepare | 413 |
+| Wrong magic bytes at completion | 422 |
+| Declared/actual size mismatch at completion | 422 |
+| Incomplete upload completion | 409 |
+| Foreign-owner completion | 404 |
+
+Cleanup left zero active or pending reserved test kits. Together with the two safe
+prepare/upload/complete fixtures, this closes condition 7 for the exercised PNG path.
+
+## Live measurable voice adaptation — 2026-07-21
+
+The controlled experiment used three clean baseline drafts, two exactly associated
+edited-and-sent training drafts, and three matched post-learning drafts. The two sent
+edits produced exactly two learned before/after pairs.
+
+| Predeclared/measurable trait | Before | After | Result |
+|---|---:|---:|---:|
+| Em-dash greeting | 0/3 | 3/3 | Directional adaptation |
+| Phrase `Appreciate the clear brief` | 0/3 | 3/3 | Directional adaptation |
+| At least three paragraphs | 1/3 | 3/3 | Directional adaptation |
+| Average word count | 48.7 | 31.0 | Concision adaptation |
+
+All six comparison drafts had zero price, unverified availability, commitment, or
+email-only contact violations, and Auto-send remained false. The matched set moved on
+four measurable traits—exceeding the two-trait threshold—while preserving the hard
+rules. This closes condition 9 for this controlled experiment.
+
+## Installed extension runtime — 2026-07-21
+
+The unpacked repository `extension/` was loaded in an isolated Microsoft Edge Chromium
+profile after Chrome 150 refused command-line unpacked-extension loading in a clean
+profile. CDP runtime inspection reported manifest version `0.3.0` and asserted:
+
+- exact tabs `Today | Chat | Kits | Calendar | Settings`;
+- selecting Calendar set the tab selected state and made its panel visible;
+- contact modes `email_only`, `scheduled_call`, and `phone`;
+- seven weekday availability controls;
+- explicit disclosure that internal bookings are not synchronized with Google or
+  other external calendars.
+
+QA visually inspected `docs/audits/caughtup-calendar-runtime.png`. The installed
+runtime rendered the Calendar and internal-booking surfaces with the external-calendar
+limitation visible and no obvious clipping in the extension content column. This
+isolated profile was intentionally unauthenticated, so it displayed loading states and
+did not itself execute signed-in Calendar CRUD. That CRUD, ownership, concurrency, and
+error semantics were instead exercised through the deployed authenticated API/database
+tests above. Condition 1 passes; authenticated popup-to-API CRUD remains a documented
+coverage gap and must not be described as visually end-to-end tested.
+
+## Final acceptance disposition
+
+| # | Condition | Final status | Decisive evidence |
+|---:|---|---:|---|
+| 1 | Five accessible tabs and Calendar panel | **Pass** | Installed Edge/Chromium runtime + CDP assertions + screenshot. |
+| 2 | Owner-scoped contact round trip | **Pass** | Deployed API mode changes/restoration plus foreign-owner 404 isolation; installed signed-in popup interaction was not run. |
+| 3 | Email-only suppresses contact/scheduling language | **Pass** | Benign live draft clean; adversarial prompts fail closed; deterministic regressions pass. |
+| 4 | Phone uses only configured valid method | **Pass** | Live draft contained only the configured number and rejected the sender-controlled number. |
+| 5 | Scheduled-call uses verified slots/link and never confirms | **Pass** | Live urgent draft contained verified 30-minute timezone-labeled slots and no confirmation/external-calendar claim. |
+| 6 | Overlap rejection is atomic | **Pass** | Concurrent live creates returned exactly 200/409; idempotency and ownership probes passed. |
+| 7 | Media upload validation | **Pass** | Safe PNG completion plus live 415/413/422/409/404 rejection matrix. |
+| 8 | Unique attachment / ambiguity no guess | **Pass** | Live unique one-attachment Gmail draft and ambiguous zero-attachment truthful draft. |
+| 9 | Measurable voice adaptation | **Pass** | Two exact learned pairs; matched 3-before/3-after set moved on four traits with zero policy violations. |
+| 10 | Auto-send off during tests | **Pass** | Reported false throughout contact, booking, Gmail, voice, and media runs; restored profile was draft-only. |
+| 11 | Regression checks and deployed release verified | **Pass** | Final local 57/57 Node, 17/17 Deno, all active Edge checks, JS/manifest/diff checks; migration and follow-up function commits deployed and exercised live. |
+| 12 | Unrelated unread/worktree preserved | **Pass** | Five preexisting unread candidates had zero changes; reserved rows/kits/bookings were cleaned; unrelated dirty worktree entries remained present. |
+
+**QA verdict:** the twelve scoped acceptance conditions pass with no known release
+blocker. Evidence is split deliberately across installed unauthenticated UI runtime,
+authenticated deployed API/database probes, and controlled Gmail/LLM fixtures. The
+remaining non-blocking coverage gap is a signed-in click-through of Calendar CRUD in
+the installed popup itself.
