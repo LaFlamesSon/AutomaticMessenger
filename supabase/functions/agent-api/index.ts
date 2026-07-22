@@ -209,7 +209,7 @@ function hasMagicBytes(bytes: Uint8Array, mime: string): boolean {
   if (/<script\b|<html\b|javascript:/i.test(ascii.slice(0, 4096))) return false;
   if (mime === "application/pdf") return ascii.startsWith("%PDF-") && /%%EOF\s*$/.test(ascii.slice(-1024));
   if (mime === "image/png") return bytes.length >= 20 && bytes.slice(0, 8).every((b, i) => b === [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a][i]) &&
-    bytes.slice(-12, -8).every((b, i) => b === [0x49,0x45,0x4e,0x44][i]);
+    bytes.slice(-8, -4).every((b, i) => b === [0x49,0x45,0x4e,0x44][i]);
   if (mime === "image/jpeg") return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9;
   if (mime === "image/webp") return bytes.length >= 20 && ascii.slice(0, 4) === "RIFF" && ascii.slice(8, 12) === "WEBP" &&
     new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true) + 8 === bytes.length;

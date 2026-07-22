@@ -175,6 +175,12 @@ test("kit listing and labels remain owner scoped", async () => {
   assert.match(api, /cleanup_required/);
 });
 
+test("server-side PNG validation checks the terminal IEND chunk type", async () => {
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(api, /bytes\.slice\(-8, -4\).*0x49,0x45,0x4e,0x44/);
+  assert.doesNotMatch(api, /bytes\.slice\(-12, -8\).*0x49,0x45,0x4e,0x44/);
+});
+
 test("OAuth redirects require an exact configured extension allowlist", async () => {
   const api = await read("functions/agent-api/index.ts");
   const oauth = await read("functions/gmail-oauth/index.ts");
