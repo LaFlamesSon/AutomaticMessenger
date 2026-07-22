@@ -41,8 +41,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 15 | Exact/batch Gmail triage, safe drafting, contact policy, kit selection, voice learning |
-| `agent-api` | 6 | Extension API, preview/send, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 16 | Exact/batch Gmail triage, safe drafting, contact policy, kit selection, voice learning |
+| `agent-api` | 7 | Extension API, preview/send, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
