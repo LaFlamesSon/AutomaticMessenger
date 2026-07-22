@@ -4,10 +4,11 @@ const API = "https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/agent-api";
 const SUPABASE_AUTH = "https://xkrpxvswdkreglmefuot.supabase.co/auth/v1/authorize";
 const Core = globalThis.CaughtUpCore;
 const $ = (id) => document.getElementById(id);
-const PANELS = ["today", "chat", "kits", "settings"];
+const PANELS = ["today", "chat", "kits", "calendar", "settings"];
 const PROFILE_FIELDS = ["display_name", "occupation", "services", "tone", "signoff", "custom_rules"];
 const MANUAL_SEND_KEYS_STORAGE = "caughtup_manual_send_keys";
 const MANUAL_SWEEP_ID_STORAGE = "caughtup_manual_sweep_request_id";
+const BOOKING_REQUEST_STORAGE = "caughtup_booking_request";
 
 let session = null;
 let currentProfile = null;
@@ -17,6 +18,10 @@ let manualSendKeys = {};
 let manualSweepRequestId = null;
 let autoSendChallenge = null;
 let kitsLoaded = false;
+let calendarLoaded = false;
+let currentCalendar = null;
+let currentBookings = [];
+let pendingBookingRequest = null;
 let settingsLoaded = false;
 let appEmail = "";
 let gmailAddress = "";
@@ -54,6 +59,9 @@ function safeApiMessage(data, status) {
   if (code === "already_in_progress") {
     return { code, message: "An inbox sweep is already in progress. Check its status here." };
   }
+  if (code === "version_conflict") return { code, message: "These preferences changed elsewhere. Reload and try again." };
+  if (code === "booking_conflict") return { code, message: "That time overlaps an existing CaughtUp booking." };
+  if (code === "outside_availability") return { code, message: "Choose a time inside your saved weekly availability." };
   if (code === "reconcile_required") {
     return { code, message: "Gmail may have sent this reply. CaughtUp is reconciling its status." };
   }
@@ -223,6 +231,7 @@ function activateTab(name, focus = true) {
   });
   PANELS.forEach((panel) => $(panel).classList.toggle("hidden", panel !== name));
   if (name === "kits" && !kitsLoaded) loadKits();
+  if (name === "calendar" && !calendarLoaded) loadCalendar();
   if (name === "settings" && !settingsLoaded) loadProfile();
 }
 
@@ -307,7 +316,9 @@ $("signOut").addEventListener("click", async () => {
   currentProfile = null;
   manualSendKeys = {};
   manualSweepRequestId = null;
+  pendingBookingRequest = null;
   kitsLoaded = false;
+  calendarLoaded = false;
   settingsLoaded = false;
   appEmail = "";
   gmailAddress = "";
@@ -315,6 +326,7 @@ $("signOut").addEventListener("click", async () => {
     chrome.storage.local.remove("caughtup_session"),
     chrome.storage.local.remove(MANUAL_SEND_KEYS_STORAGE),
     chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE),
+    chrome.storage.local.remove(BOOKING_REQUEST_STORAGE),
     chrome.storage.sync.remove("token"),
   ]);
   showSetup(true, "", "app");
@@ -613,6 +625,246 @@ $("chatForm").addEventListener("submit", async (event) => {
     $("chatInput").focus();
   }
 });
+
+function applyCalendarReviewFallback(result) {
+  if (result?.auto_send_disabled !== true && result?.reply_mode !== "draft_only") return "";
+  if (currentProfile) currentProfile.reply_mode = "draft_only";
+  updateModeBadge("draft_only");
+  settingsLoaded = false;
+  return " Replies are now in Review mode.";
+}
+
+function buildAvailabilityRows() {
+  const container = $("availabilityRows");
+  Core.WEEKDAYS.forEach((dayName, day) => {
+    const row = create("div", "availability-row");
+    const enabledLabel = create("label", "check-row");
+    const enabled = create("input");
+    enabled.type = "checkbox";
+    enabled.id = `availability-${day}-enabled`;
+    enabled.dataset.day = String(day);
+    const name = create("span", "", dayName.slice(0, 3));
+    enabledLabel.htmlFor = enabled.id;
+    enabledLabel.append(enabled, name);
+    const start = create("input");
+    start.type = "time";
+    start.id = `availability-${day}-start`;
+    start.value = "09:00";
+    start.setAttribute("aria-label", `${dayName} start time`);
+    const end = create("input");
+    end.type = "time";
+    end.id = `availability-${day}-end`;
+    end.value = "17:00";
+    end.setAttribute("aria-label", `${dayName} end time`);
+    enabled.addEventListener("change", () => {
+      start.disabled = !enabled.checked || enabled.disabled;
+      end.disabled = !enabled.checked || enabled.disabled;
+      start.required = enabled.checked && !enabled.disabled;
+      end.required = enabled.checked && !enabled.disabled;
+    });
+    row.append(enabledLabel, start, end);
+    container.appendChild(row);
+  });
+}
+
+function updateCalendarMode() {
+  const mode = document.querySelector('input[name="contactMode"]:checked')?.value || "email_only";
+  const phoneMode = mode === "phone";
+  const scheduledMode = mode === "scheduled_call";
+  $("phoneOptions").classList.toggle("hidden", !phoneMode);
+  $("phoneOptions").setAttribute("aria-hidden", String(!phoneMode));
+  $("calendarPhone").disabled = !phoneMode;
+  $("calendarPhone").required = phoneMode;
+  $("scheduledOptions").classList.toggle("hidden", !scheduledMode);
+  $("scheduledOptions").setAttribute("aria-hidden", String(!scheduledMode));
+  $("calendarBookingUrl").disabled = !scheduledMode;
+  $("calendarTimezone").disabled = !scheduledMode;
+  const availabilityFieldset = $("availabilityRows").closest("fieldset");
+  availabilityFieldset.disabled = !scheduledMode;
+  document.querySelectorAll("[data-day]").forEach((enabled) => {
+    const day = enabled.dataset.day;
+    $(`availability-${day}-start`).disabled = !scheduledMode || !enabled.checked;
+    $(`availability-${day}-end`).disabled = !scheduledMode || !enabled.checked;
+    $(`availability-${day}-start`).required = scheduledMode && enabled.checked;
+    $(`availability-${day}-end`).required = scheduledMode && enabled.checked;
+  });
+  const canCreateBooking = scheduledMode && currentCalendar?.contact_mode === "scheduled_call";
+  $("bookingForm").classList.toggle("hidden", !canCreateBooking);
+  $("bookingForm").querySelectorAll("input, select, button").forEach((control) => { control.disabled = !canCreateBooking; });
+  $("bookingCreateNote").classList.toggle("hidden", canCreateBooking);
+}
+
+document.querySelectorAll('input[name="contactMode"]').forEach((input) => input.addEventListener("change", updateCalendarMode));
+
+function fillCalendar(raw, bookings = currentBookings) {
+  currentCalendar = Core.normalizeCalendar(raw);
+  if (new Set(currentCalendar.weekly_availability.map((item) => item.day)).size !== currentCalendar.weekly_availability.length) {
+    throw new Core.ApiError("Calendar data has more than one window for a day. Reload after the server normalizes it.", 422, "invalid_calendar");
+  }
+  currentBookings = Array.isArray(bookings) ? bookings : [];
+  const modeInput = document.querySelector(`input[name="contactMode"][value="${currentCalendar.contact_mode}"]`);
+  if (modeInput) modeInput.checked = true;
+  $("calendarPhone").value = currentCalendar.phone_number;
+  $("calendarBookingUrl").value = currentCalendar.booking_url;
+  $("calendarTimezone").value = currentCalendar.timezone;
+  Core.WEEKDAYS.forEach((_, day) => {
+    const window = currentCalendar.weekly_availability.find((item) => item.day === day);
+    const enabled = $(`availability-${day}-enabled`);
+    enabled.checked = Boolean(window);
+    $(`availability-${day}-start`).value = window?.start || "09:00";
+    $(`availability-${day}-end`).value = window?.end || "17:00";
+  });
+  updateCalendarMode();
+  renderBookings(currentBookings);
+}
+
+async function loadCalendar() {
+  stateCard("calendarStatus", "Loading contact preferences...");
+  $("calendarForm").classList.add("hidden");
+  try {
+    const result = await api("calendar_get");
+    fillCalendar(result.calendar || {}, result.bookings || []);
+    $("calendarStatus").classList.add("hidden");
+    $("calendarForm").classList.remove("hidden");
+    calendarLoaded = true;
+  } catch (error) {
+    stateCard("calendarStatus", Core.safeErrorMessage(error), "error", loadCalendar);
+  }
+}
+
+function collectCalendarFields() {
+  const mode = document.querySelector('input[name="contactMode"]:checked')?.value || "email_only";
+  const availability = [];
+  if (mode === "scheduled_call") {
+    document.querySelectorAll("[data-day]").forEach((enabled) => {
+      if (!enabled.checked) return;
+      const day = Number(enabled.dataset.day);
+      availability.push({ day, start: $(`availability-${day}-start`).value, end: $(`availability-${day}-end`).value });
+    });
+  }
+  const fields = {
+    contact_mode: mode,
+    phone_number: mode === "phone" ? $("calendarPhone").value.trim() : null,
+    booking_url: mode === "scheduled_call" ? $("calendarBookingUrl").value.trim() || null : null,
+    timezone: $("calendarTimezone").value.trim() || currentCalendar?.timezone || "UTC",
+    weekly_availability: availability,
+  };
+  const validation = Core.validateCalendarSettings(fields);
+  if (!validation.ok) throw new Core.ApiError(validation.message, 400, "invalid_calendar");
+  return fields;
+}
+
+$("calendarForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentCalendar) return;
+  const button = $("saveCalendar");
+  let fields;
+  try {
+    fields = collectCalendarFields();
+  } catch (error) {
+    setStatus("calendarSaveStatus", Core.safeErrorMessage(error), "error");
+    return;
+  }
+  setBusy(button, true, "Saving...");
+  setStatus("calendarSaveStatus", "");
+  try {
+    const result = await api("calendar_set", { fields, expected_settings_version: currentCalendar.settings_version });
+    fillCalendar(result.calendar || fields);
+    const reviewNote = applyCalendarReviewFallback(result);
+    setStatus("calendarSaveStatus", `Contact preferences saved.${reviewNote}`, "success");
+  } catch (error) {
+    setStatus("calendarSaveStatus", Core.safeErrorMessage(error), "error");
+    if (error.code === "version_conflict") {
+      calendarLoaded = false;
+      await loadCalendar();
+      setStatus("calendarSaveStatus", "Preferences changed elsewhere. Review the latest values before saving again.", "error");
+    }
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+function renderBookings(bookings) {
+  const list = $("bookingList");
+  list.replaceChildren();
+  if (!bookings.length) {
+    stateCard("bookingsStatus", "No internal bookings yet.");
+    list.classList.add("hidden");
+    return;
+  }
+  $("bookingsStatus").classList.add("hidden");
+  bookings.forEach((booking) => {
+    const card = create("article", "booking-card");
+    const head = create("div", "booking-head");
+    const identity = create("div");
+    identity.append(
+      create("div", "booking-title", booking.title || "Untitled booking"),
+      create("div", "booking-time", Core.formatBookingRange(booking, currentCalendar.timezone)),
+    );
+    const status = create("span", `badge ${booking.status === "booked" ? "sent" : "draft"}`, booking.status === "booked" ? "Booked" : "Held");
+    head.append(identity, status);
+    const remove = create("button", "ghost danger", "Delete");
+    remove.type = "button";
+    remove.addEventListener("click", () => deleteBooking(booking, remove));
+    card.append(head, remove);
+    list.appendChild(card);
+  });
+  list.classList.remove("hidden");
+}
+
+async function clearPendingBookingRequest() {
+  pendingBookingRequest = null;
+  try { await chrome.storage.local.remove(BOOKING_REQUEST_STORAGE); } catch { /* server remains authoritative */ }
+}
+
+$("bookingForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("createBooking");
+  const title = $("bookingTitle").value.trim();
+  const startAt = Core.zonedLocalToIso($("bookingStart").value, currentCalendar?.timezone);
+  const endAt = Core.zonedLocalToIso($("bookingEnd").value, currentCalendar?.timezone);
+  if (!title || !startAt || !endAt || startAt >= endAt) {
+    setStatus("bookingFormStatus", "Enter a title and a valid start time before the end time.", "error");
+    return;
+  }
+  const kind = $("bookingKind").value;
+  const fingerprint = JSON.stringify({ title, start_at: startAt, end_at: endAt, kind });
+  const validPendingRequest = pendingBookingRequest?.fingerprint === fingerprint &&
+    /^booking-[a-zA-Z0-9-]{8,200}$/.test(String(pendingBookingRequest?.request_id || ""));
+  if (!validPendingRequest) {
+    pendingBookingRequest = { fingerprint, request_id: `booking-${globalThis.crypto?.randomUUID?.() || Date.now()}` };
+    try { await chrome.storage.local.set({ [BOOKING_REQUEST_STORAGE]: pendingBookingRequest }); } catch { /* stable for this popup session */ }
+  }
+  setBusy(button, true, "Adding...");
+  setStatus("bookingFormStatus", "");
+  try {
+    const result = await api("booking_create", { title, start_at: startAt, end_at: endAt, kind, request_id: pendingBookingRequest.request_id });
+    await clearPendingBookingRequest();
+    $("bookingForm").reset();
+    applyCalendarReviewFallback(result);
+    await loadCalendar();
+    setStatus("bookingFormStatus", result.already_exists ? "Booking already existed; no duplicate was created." : "Internal booking added. Replies are in Review mode.", "success");
+  } catch (error) {
+    if (["booking_conflict", "outside_availability", "invalid"].includes(error.code)) await clearPendingBookingRequest();
+    setStatus("bookingFormStatus", `${Core.safeErrorMessage(error)}${pendingBookingRequest ? " Retry here to safely check the same request." : ""}`, "error");
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+async function deleteBooking(booking, button) {
+  if (!confirm(`Delete the internal booking "${booking.title || "Untitled booking"}"?`)) return;
+  setBusy(button, true, "Deleting...");
+  try {
+    const result = await api("booking_delete", { id: booking.id });
+    applyCalendarReviewFallback(result);
+    await loadCalendar();
+    setStatus("bookingActionStatus", "Internal booking deleted. Replies are in Review mode.", "success");
+  } catch (error) {
+    setStatus("bookingActionStatus", Core.safeErrorMessage(error), "error");
+    setBusy(button, false);
+  }
+}
 
 function showKitForm(show) {
   $("kitForm").classList.toggle("hidden", !show);
@@ -1021,6 +1273,7 @@ function setupDialogSafety(dialog, cancelButtonId) {
 setupDialogSafety($("sendDialog"), "cancelSend");
 setupDialogSafety($("autoSendDialog"), "cancelAutoSend");
 buildRequiredQuestionControls();
+buildAvailabilityRows();
 
 (async function init() {
   try {
@@ -1028,7 +1281,7 @@ buildRequiredQuestionControls();
       showSetup(true);
       return;
     }
-    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE]);
+    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE]);
     session = local.caughtup_session || null;
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
@@ -1039,6 +1292,9 @@ buildRequiredQuestionControls();
       $("sweepBtn").dataset.label = "Check sweep status";
       $("sweepBtn").textContent = "Check sweep status";
     }
+    pendingBookingRequest = local[BOOKING_REQUEST_STORAGE] && typeof local[BOOKING_REQUEST_STORAGE] === "object"
+      ? local[BOOKING_REQUEST_STORAGE]
+      : null;
     if (!session) {
       showSetup(true);
       return;

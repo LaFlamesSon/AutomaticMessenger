@@ -107,8 +107,37 @@ test("extension-facing action contract is present", async () => {
     "auto_send_confirm", "auto_send_disable", "draft_get", "send_draft", "sweep",
     "media_kit_list", "media_kit_upload_prepare", "media_kit_upload_complete",
     "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_start",
+    "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ]) assert.match(api, new RegExp(`case "${action}"`));
   assert.match(api, /body\.action === "auth_refresh"/);
+});
+
+test("calendar preferences and booking mutations are owner scoped and force Review atomically", async () => {
+  const migration = await read("migrations/20260721000004_calendar_contact_preferences.sql");
+  const api = await read("functions/agent-api/index.ts");
+  for (const table of ["ia_calendar_preferences", "ia_bookings"]) {
+    assert.match(migration, new RegExp(`create table if not exists ${table}`));
+    assert.match(migration, new RegExp(`alter table ${table} enable row level security`));
+  }
+  assert.match(migration, /ia_bookings_no_overlap exclude using gist/);
+  assert.match(migration, /set search_path = ''/);
+  assert.doesNotMatch(migration, /set search_path = public/);
+  assert.match(migration, /reply_mode = 'draft_only', auto_send = false/);
+  assert.ok((migration.match(/settings_version = profile\.settings_version \+ 1/g) ?? []).length >= 3);
+  assert.match(api, /p_user_id: user\.id/);
+  assert.match(api, /code: "booking_conflict"/);
+  assert.match(api, /code: "idempotency_mismatch"/);
+  assert.match(api, /code: "outside_availability"/);
+});
+
+test("contact prompt and final draft use only refreshed server-owned calendar state", async () => {
+  const sweep = await read("functions/agent-sweep/index.ts");
+  assert.match(sweep, /server-owned contact policy/);
+  assert.match(sweep, /Do not invent availability, times, booking status, or links/);
+  assert.match(sweep, /freshCalendarRow/);
+  assert.match(sweep, /findVerifiedOpenSlots\(freshCalendar, freshBookings/);
+  assert.match(sweep, /applyContactPreference\(portfolioDraft, freshCalendar, freshSlots\)/);
+  assert.doesNotMatch(sweep, /external calendar|Google Calendar is synchronized/i);
 });
 
 test("irreversible provider mutations use terminal reconciliation states", async () => {

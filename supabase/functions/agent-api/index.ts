@@ -3,7 +3,10 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { CATEGORIES, normalizedStringList } from "../_shared/policy.ts";
+import {
+  bookingWithinAvailability, CATEGORIES, normalizeWeeklyAvailability,
+  normalizedStringList, type WeeklyAvailabilityEntry,
+} from "../_shared/policy.ts";
 import { parseStrictRecipient, payloadHeader, payloadText, sanitizeHeader } from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
 
@@ -60,6 +63,37 @@ function cleanTimezone(value: unknown): string {
     throw new InputError("timezone must be a valid IANA timezone");
   }
   return timezone;
+}
+
+function cleanPhone(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const phone = cleanString(value, "phone_number", 16);
+  if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new InputError("phone_number must be E.164");
+  return phone;
+}
+
+function cleanBookingUrl(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const raw = cleanString(value, "booking_url", 500);
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new InputError("booking_url must be a valid HTTPS URL"); }
+  if (url.protocol !== "https:" || url.username || url.password) throw new InputError("booking_url must be a valid HTTPS URL");
+  return url.toString();
+}
+
+function cleanAvailability(value: unknown): WeeklyAvailabilityEntry[] {
+  try { return normalizeWeeklyAvailability(value); }
+  catch (error) { throw new InputError(error instanceof Error ? error.message : "invalid weekly_availability"); }
+}
+
+function cleanOffsetTimestamp(value: unknown, name: string): Date {
+  const raw = cleanString(value, name, 40);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(raw)) {
+    throw new InputError(`${name} must be ISO-8601 with Z or an explicit offset`);
+  }
+  const parsed = new Date(raw);
+  if (!Number.isFinite(parsed.getTime())) throw new InputError(`${name} is invalid`);
+  return parsed;
 }
 
 function cleanList(value: unknown, maxItems: number, maxLength: number): string[] {
@@ -129,6 +163,41 @@ async function ownedAccountIds(supabase: any, userId: string): Promise<string[]>
   const { data, error } = await supabase.from("ia_gmail_accounts").select("id").eq("user_id", userId);
   if (error) throw new Error(error.message);
   return (data ?? []).map((row: any) => row.id);
+}
+
+async function ensureCalendarPreference(supabase: any, userId: string): Promise<any> {
+  const { data: current, error } = await supabase.from("ia_calendar_preferences").select("*")
+    .eq("user_id", userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (current) return current;
+  const { data: profile } = await supabase.from("ia_voice_profiles").select("timezone").eq("user_id", userId).maybeSingle();
+  const timezone = typeof profile?.timezone === "string" ? profile.timezone : "America/Los_Angeles";
+  const { data: created, error: createError } = await supabase.from("ia_calendar_preferences")
+    .upsert({ user_id: userId, timezone }, { onConflict: "user_id", ignoreDuplicates: true }).select("*").maybeSingle();
+  if (createError) throw new Error(createError.message);
+  if (created) return created;
+  const { data: raced, error: racedError } = await supabase.from("ia_calendar_preferences").select("*")
+    .eq("user_id", userId).single();
+  if (racedError) throw new Error(racedError.message);
+  return raced;
+}
+
+function calendarEnvelope(row: any): any {
+  return {
+    contact_mode: row.contact_mode,
+    phone_number: row.phone_number ?? null,
+    booking_url: row.booking_url ?? null,
+    timezone: row.timezone,
+    weekly_availability: row.weekly_availability ?? [],
+    settings_version: Number(row.settings_version),
+  };
+}
+
+async function currentReplyState(supabase: any, userId: string): Promise<{ reply_mode: string; auto_send_disabled: boolean }> {
+  const { data, error } = await supabase.from("ia_voice_profiles").select("reply_mode, auto_send")
+    .eq("user_id", userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return { reply_mode: data?.reply_mode ?? "draft_only", auto_send_disabled: data?.auto_send !== true };
 }
 
 function isRestrictiveRule(rule: string): boolean {
@@ -621,6 +690,116 @@ Deno.serve(async (req: Request) => {
         consent.searchParams.set("prompt", "consent");
         consent.searchParams.set("state", state);
         return json({ authorization_url: consent.toString(), expires_at: expiresAt });
+      }
+
+      case "calendar_get": {
+        const preference = await ensureCalendarPreference(supabase, user.id);
+        const { data: bookings, error } = await supabase.from("ia_bookings")
+          .select("id, title, start_at, end_at, status")
+          .eq("user_id", user.id).gte("end_at", new Date().toISOString())
+          .order("start_at", { ascending: true }).limit(200);
+        if (error) throw new Error(error.message);
+        return json({ calendar: calendarEnvelope(preference), bookings: bookings ?? [] });
+      }
+
+      case "calendar_set": {
+        const current = await ensureCalendarPreference(supabase, user.id);
+        const fields = body.fields ?? {};
+        if (!fields || typeof fields !== "object" || !["contact_mode", "phone_number", "booking_url", "timezone", "weekly_availability"].some((field) => field in fields)) {
+          return json({ error: "no calendar fields supplied", code: "invalid_request" }, 400);
+        }
+        const expectedVersion = Number(body.expected_settings_version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+          return json({ error: "expected_settings_version is required", code: "invalid_request" }, 400);
+        }
+        const contactMode = "contact_mode" in fields
+          ? cleanString(fields.contact_mode, "contact_mode", 30) : current.contact_mode;
+        if (!["email_only", "scheduled_call", "phone"].includes(contactMode)) {
+          return json({ error: "unsupported contact_mode", code: "invalid_request" }, 400);
+        }
+        const phoneNumber = "phone_number" in fields ? cleanPhone(fields.phone_number) : current.phone_number;
+        const bookingUrl = "booking_url" in fields ? cleanBookingUrl(fields.booking_url) : current.booking_url;
+        const timezone = "timezone" in fields ? cleanTimezone(fields.timezone) : current.timezone;
+        const availability = "weekly_availability" in fields
+          ? cleanAvailability(fields.weekly_availability) : cleanAvailability(current.weekly_availability ?? []);
+        if (contactMode === "phone" && !phoneNumber) {
+          return json({ error: "phone mode requires phone_number", code: "invalid_request" }, 422);
+        }
+        if (contactMode === "scheduled_call" && !bookingUrl && !availability.length) {
+          return json({ error: "scheduled_call requires booking_url or weekly_availability", code: "invalid_request" }, 422);
+        }
+        const { data: updated, error } = await supabase.rpc("ia_set_calendar_preferences", {
+          p_user_id: user.id, p_expected_version: expectedVersion,
+          p_contact_mode: contactMode, p_phone_number: phoneNumber,
+          p_booking_url: bookingUrl, p_timezone: timezone,
+          p_weekly_availability: availability,
+        }).maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!updated) return json({ error: "calendar settings changed elsewhere", code: "version_conflict" }, 409);
+        return json({ ok: true, calendar: calendarEnvelope(updated), ...await currentReplyState(supabase, user.id) });
+      }
+
+      case "booking_create": {
+        const title = sanitizeHeader(cleanString(body.title ?? "", "title", 120), 120);
+        if (!title) return json({ error: "title is required", code: "invalid_request" }, 400);
+        const requestId = cleanString(body.request_id ?? "", "request_id", 200);
+        if (requestId.length < 8) return json({ error: "request_id must be at least 8 characters", code: "invalid_request" }, 400);
+        const kind = body.kind === undefined ? "hold" : cleanString(body.kind, "kind", 20);
+        if (!["hold", "booking"].includes(kind)) return json({ error: "kind must be hold or booking", code: "invalid_request" }, 400);
+        const start = cleanOffsetTimestamp(body.start_at, "start_at");
+        const end = cleanOffsetTimestamp(body.end_at, "end_at");
+        const duration = end.getTime() - start.getTime();
+        if (duration < 5 * 60_000 || duration > 8 * 60 * 60_000) {
+          return json({ error: "booking must be 5 minutes to 8 hours", code: "invalid_request" }, 422);
+        }
+        const requestedStatus = kind === "booking" ? "booked" : "held";
+        const { data: existingRequest, error: existingRequestError } = await supabase.from("ia_bookings")
+          .select("id, title, start_at, end_at, status").eq("user_id", user.id)
+          .eq("request_id", requestId).maybeSingle();
+        if (existingRequestError) throw new Error(existingRequestError.message);
+        if (existingRequest) {
+          const samePayload = existingRequest.title === title &&
+            new Date(existingRequest.start_at).toISOString() === start.toISOString() &&
+            new Date(existingRequest.end_at).toISOString() === end.toISOString() &&
+            existingRequest.status === requestedStatus;
+          if (!samePayload) return json({ error: "request_id was already used for a different booking", code: "idempotency_mismatch" }, 409);
+          return json({ ok: true, booking: existingRequest, already_exists: true,
+            ...await currentReplyState(supabase, user.id) });
+        }
+        if (start.getTime() < Date.now()) {
+          return json({ error: "booking must be future-dated", code: "invalid_request" }, 422);
+        }
+        const preference = await ensureCalendarPreference(supabase, user.id);
+        const availability = cleanAvailability(preference.weekly_availability ?? []);
+        if (!bookingWithinAvailability(start, end, preference.timezone, availability)) {
+          return json({ error: "booking is outside configured availability", code: "outside_availability" }, 422);
+        }
+        const { data: booking, error } = await supabase.rpc("ia_create_booking", {
+          p_user_id: user.id, p_title: title, p_start_at: start.toISOString(),
+          p_end_at: end.toISOString(), p_request_id: requestId,
+          p_status: requestedStatus,
+        }).maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!booking) return json({ error: "booking overlaps an existing hold or booking", code: "booking_conflict" }, 409);
+        if ((booking as any).idempotency_mismatch === true) {
+          return json({ error: "request_id was already used for a different booking", code: "idempotency_mismatch" }, 409);
+        }
+        const bookingRow = booking as any;
+        const safeBooking = { id: bookingRow.id, title: bookingRow.title, start_at: bookingRow.start_at,
+          end_at: bookingRow.end_at, status: bookingRow.status };
+        return json({ ok: true, booking: safeBooking, already_exists: bookingRow.already_exists === true,
+          ...await currentReplyState(supabase, user.id) });
+      }
+
+      case "booking_delete": {
+        const bookingId = cleanString(body.id ?? "", "id", 100);
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(bookingId)) return json({ error: "not found" }, 404);
+        const { data: deleted, error } = await supabase.rpc("ia_delete_booking", {
+          p_user_id: user.id, p_booking_id: bookingId,
+        });
+        if (error) throw new Error(error.message);
+        if (!deleted) return json({ error: "not found" }, 404);
+        return json({ ok: true, ...await currentReplyState(supabase, user.id) });
       }
 
       case "media_kit_list": {

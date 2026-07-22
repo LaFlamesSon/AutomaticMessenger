@@ -47,6 +47,58 @@ test("brand and keyword tags are bounded, deduplicated, and timezone is IANA-val
   assert.equal(Core.isValidTimezone("Not/A_Timezone"), false);
 });
 
+test("calendar contact fields use strict phone, HTTPS URL, and mode validation", () => {
+  assert.equal(Core.isValidPhone("+14155552671"), true);
+  assert.equal(Core.isValidPhone("415-555-2671"), false);
+  assert.equal(Core.isValidBookingUrl("https://cal.example.com/name"), true);
+  assert.equal(Core.isValidBookingUrl("http://cal.example.com/name"), false);
+  assert.equal(Core.isValidBookingUrl("https://user:pass@cal.example.com"), false);
+  assert.equal(Core.validateCalendarSettings({
+    contact_mode: "phone", phone_number: "", booking_url: null,
+    timezone: "America/Los_Angeles", weekly_availability: [],
+  }).ok, false);
+  assert.equal(Core.validateCalendarSettings({
+    contact_mode: "scheduled_call", booking_url: null, timezone: "UTC",
+    weekly_availability: [
+      { day: 1, start: "09:00", end: "10:00" },
+      { day: 1, start: "11:00", end: "12:00" },
+    ],
+  }).ok, false);
+  assert.equal(Core.validateCalendarSettings({
+    contact_mode: "scheduled_call", phone_number: null, booking_url: null,
+    timezone: "America/Los_Angeles", weekly_availability: [],
+  }).ok, false);
+});
+
+test("weekly availability normalizes valid same-day windows", () => {
+  assert.deepEqual(Core.normalizeWeeklyAvailability([
+    { day: 5, start: "13:00", end: "17:00" },
+    { day: 1, start: "09:00", end: "12:00" },
+    { day: 8, start: "09:00", end: "10:00" },
+    { day: 2, start: "18:00", end: "10:00" },
+  ]), [
+    { day: 1, start: "09:00", end: "12:00" },
+    { day: 5, start: "13:00", end: "17:00" },
+  ]);
+  assert.equal(Core.validateCalendarSettings({
+    contact_mode: "scheduled_call", booking_url: null, timezone: "UTC",
+    weekly_availability: [
+      { day: 1, start: "09:00", end: "12:00" },
+      { day: 1, start: "11:00", end: "13:00" },
+    ],
+  }).ok, false);
+  assert.deepEqual(Core.normalizeWeeklyAvailability([{ day: 1, start: "09:00extra", end: "12:00" }]), []);
+});
+
+test("booking local times convert using the configured IANA timezone", () => {
+  assert.equal(Core.zonedLocalToIso("2026-07-21T09:00", "America/Los_Angeles"), "2026-07-21T16:00:00.000Z");
+  assert.equal(Core.zonedLocalToIso("2026-03-08T02:30", "America/Los_Angeles"), null);
+  assert.match(Core.formatBookingRange({
+    start_at: "2026-07-21T16:00:00.000Z",
+    end_at: "2026-07-21T16:30:00.000Z",
+  }, "America/Los_Angeles"), /9:00.*9:30/);
+});
+
 test("authentication headers use only a short-lived session", () => {
   assert.deepEqual(Core.authHeaders({ access_token: "session-token" }), {
     "Content-Type": "application/json",

@@ -11,13 +11,16 @@ const script = fs.readFileSync(path.join(extensionDir, "popup.js"), "utf8");
 const css = fs.readFileSync(path.join(extensionDir, "popup.css"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
 
-test("popup exposes exactly the four approved tabs and matching panels", () => {
+test("popup exposes exactly the five approved tabs and matching accessible panels", () => {
   const tabs = [...html.matchAll(/role="tab"[^>]+data-tab="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(tabs, ["today", "chat", "kits", "settings"]);
+  assert.deepEqual(tabs, ["today", "chat", "kits", "calendar", "settings"]);
   tabs.forEach((id) => {
     assert.match(html, new RegExp(`id="${id}"[^>]+role="tabpanel"`));
     assert.match(html, new RegExp(`aria-controls="${id}"`));
   });
+  assert.match(script, /ArrowRight/);
+  assert.match(script, /ArrowLeft/);
+  assert.match(script, /if \(name === "calendar" && !calendarLoaded\) loadCalendar\(\)/);
 });
 
 test("popup IDs are unique", () => {
@@ -89,8 +92,45 @@ test("client targets the audited API actions", () => {
     "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list",
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
     "media_kit_delete", "learning_reset", "gmail_connect_start",
-    "auth_refresh",
+    "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ].forEach((action) => assert.ok(script.includes(`"${action}"`), `missing ${action}`));
+});
+
+test("Calendar conditionally exposes validated contact and availability controls", () => {
+  assert.match(html, /id="contactEmailOnly"[^>]+value="email_only"/);
+  assert.match(html, /id="contactScheduledCall"[^>]+value="scheduled_call"/);
+  assert.match(html, /id="contactPhone"[^>]+value="phone"/);
+  assert.match(html, /id="calendarPhone"[^>]+type="tel"/);
+  assert.match(html, /id="calendarBookingUrl"[^>]+type="url"/);
+  assert.match(html, /id="availabilityRows"/);
+  assert.match(html, /Set one time window per day/);
+  assert.match(script, /Core\.validateCalendarSettings\(fields\)/);
+  assert.match(script, /calendarPhone"\)\.required = phoneMode/);
+  assert.match(script, /availability-\$\{day\}-start`\)\.required = scheduledMode && enabled\.checked/);
+  assert.match(script, /classList\.toggle\("hidden", !scheduledMode\)/);
+});
+
+test("Calendar discloses internal-only conflict protection and Review fallback", () => {
+  assert.match(html, /prevents conflicts between bookings saved here/);
+  assert.match(html, /not yet synced with Google Calendar or other external calendars/);
+  assert.match(html, /returns replies to Review mode/);
+  assert.match(script, /applyCalendarReviewFallback\(result\)/);
+  assert.match(script, /updateModeBadge\("draft_only"\)/);
+  assert.match(script, /auto_send_disabled !== true/);
+});
+
+test("internal bookings are timezone-aware, idempotent, and deletions are confirmed", () => {
+  assert.match(html, /id="bookingStart" type="datetime-local"/);
+  assert.match(html, /id="bookingEnd" type="datetime-local"/);
+  assert.match(script, /Core\.zonedLocalToIso/);
+  assert.match(script, /BOOKING_REQUEST_STORAGE/);
+  assert.match(script, /request_id: pendingBookingRequest\.request_id/);
+  assert.match(script, /\^booking-\[a-zA-Z0-9-\]/);
+  assert.match(script, /confirm\(`Delete the internal booking/);
+  assert.match(html, /Existing bookings remain manageable in every mode/);
+  assert.match(html, /id="bookingActionStatus"[^>]+aria-live="polite"/);
+  assert.doesNotMatch(script, /internalBookings"\)\.classList\.toggle\("hidden"/);
+  assert.match(script, /canCreateBooking = scheduledMode && currentCalendar\?\.contact_mode === "scheduled_call"/);
 });
 
 test("Google onboarding uses extension-owned redirect and never token paste", () => {
@@ -129,7 +169,7 @@ test("standing rules visibly force Review mode", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.version, "0.3.0");
 });
 
 test("focus and reduced-motion styles are present", () => {

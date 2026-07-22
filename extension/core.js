@@ -21,6 +21,8 @@
   ];
   const MEDIA_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
   const MAX_MEDIA_BYTES = 8_000_000;
+  const CONTACT_MODES = ["email_only", "scheduled_call", "phone"];
+  const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
   class ApiError extends Error {
     constructor(message, status = 0, code = "request_failed") {
@@ -103,6 +105,107 @@
     } catch {
       return false;
     }
+  }
+
+  function isValidPhone(value) {
+    return /^\+[1-9]\d{7,14}$/.test(String(value || "").trim());
+  }
+
+  function isValidBookingUrl(value) {
+    const text = String(value || "").trim();
+    if (!text || text.length > 500) return false;
+    try {
+      const url = new URL(text);
+      return url.protocol === "https:" && Boolean(url.hostname) && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeWeeklyAvailability(value) {
+    if (!Array.isArray(value)) return [];
+    const windows = [];
+    for (const item of value) {
+      const day = Number(item?.day);
+      const start = String(item?.start || "");
+      const end = String(item?.end || "");
+      if (!Number.isInteger(day) || day < 0 || day > 6) continue;
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(end) || start >= end) continue;
+      windows.push({ day, start, end });
+    }
+    return windows.sort((a, b) => a.day - b.day || a.start.localeCompare(b.start));
+  }
+
+  function normalizeCalendar(raw = {}) {
+    const mode = CONTACT_MODES.includes(raw.contact_mode) ? raw.contact_mode : "email_only";
+    return {
+      contact_mode: mode,
+      phone_number: typeof raw.phone_number === "string" ? raw.phone_number : "",
+      booking_url: typeof raw.booking_url === "string" ? raw.booking_url : "",
+      timezone: isValidTimezone(raw.timezone) ? raw.timezone : (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
+      weekly_availability: normalizeWeeklyAvailability(raw.weekly_availability),
+      settings_version: Number.isFinite(Number(raw.settings_version)) ? Number(raw.settings_version) : null,
+    };
+  }
+
+  function validateCalendarSettings(calendar) {
+    if (!CONTACT_MODES.includes(calendar?.contact_mode)) return { ok: false, message: "Choose how brands should contact you." };
+    if (!isValidTimezone(calendar?.timezone)) return { ok: false, message: "Enter a valid IANA time zone, such as America/Los_Angeles." };
+    if (calendar.contact_mode === "phone" && !isValidPhone(calendar.phone_number)) {
+      return { ok: false, message: "Enter a phone number in international format, such as +14155552671." };
+    }
+    if (calendar.booking_url && !isValidBookingUrl(calendar.booking_url)) {
+      return { ok: false, message: "Booking links must be valid HTTPS URLs." };
+    }
+    const availability = normalizeWeeklyAvailability(calendar.weekly_availability);
+    if (availability.length !== (calendar.weekly_availability || []).length) {
+      return { ok: false, message: "Each available day needs a start time before its end time." };
+    }
+    for (let index = 1; index < availability.length; index += 1) {
+      const previous = availability[index - 1];
+      const current = availability[index];
+      if (previous.day === current.day) {
+        return { ok: false, message: "CaughtUp currently supports one availability window per day." };
+      }
+    }
+    if (calendar.contact_mode === "scheduled_call" && !calendar.booking_url && !availability.length) {
+      return { ok: false, message: "Add a booking link or at least one available time for scheduled calls." };
+    }
+    return { ok: true, message: "" };
+  }
+
+  function zonedLocalToIso(value, timeZone) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(value || ""));
+    if (!match || !isValidTimezone(timeZone)) return null;
+    const desired = match.slice(1).map(Number);
+    const desiredUtc = Date.UTC(desired[0], desired[1] - 1, desired[2], desired[3], desired[4]);
+    if (new Date(desiredUtc).getUTCFullYear() !== desired[0] || new Date(desiredUtc).getUTCMonth() !== desired[1] - 1 || new Date(desiredUtc).getUTCDate() !== desired[2]) return null;
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone, hour12: false, hourCycle: "h23", year: "numeric", month: "2-digit",
+      day: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
+    let instant = desiredUtc;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
+      const observed = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour) % 24, Number(parts.minute));
+      const adjustment = desiredUtc - observed;
+      instant += adjustment;
+      if (adjustment === 0) break;
+    }
+    const finalParts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
+    const actual = [finalParts.year, finalParts.month, finalParts.day, String(Number(finalParts.hour) % 24).padStart(2, "0"), finalParts.minute];
+    const expected = desired.map((part) => String(part).padStart(2, "0"));
+    expected[0] = String(desired[0]);
+    return actual.every((part, index) => part === expected[index]) ? new Date(instant).toISOString() : null;
+  }
+
+  function formatBookingRange(booking, timeZone) {
+    const start = new Date(booking?.start_at);
+    const end = new Date(booking?.end_at);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || !isValidTimezone(timeZone)) return "Time unavailable";
+    const date = new Intl.DateTimeFormat(undefined, { timeZone, weekday: "short", month: "short", day: "numeric" }).format(start);
+    const times = new Intl.DateTimeFormat(undefined, { timeZone, hour: "numeric", minute: "2-digit" });
+    return `${date}, ${times.format(start)} - ${times.format(end)}`;
   }
 
   function formatBytes(value) {
@@ -194,12 +297,21 @@
     REQUIRED_QUESTIONS,
     MEDIA_TYPES,
     MAX_MEDIA_BYTES,
+    CONTACT_MODES,
+    WEEKDAYS,
     normalizeProfile,
     deliveryState,
     validateMediaFile,
     normalizeDomains,
     normalizeTags,
     isValidTimezone,
+    isValidPhone,
+    isValidBookingUrl,
+    normalizeWeeklyAvailability,
+    normalizeCalendar,
+    validateCalendarSettings,
+    zonedLocalToIso,
+    formatBookingRange,
     formatBytes,
     safeErrorMessage,
     authHeaders,

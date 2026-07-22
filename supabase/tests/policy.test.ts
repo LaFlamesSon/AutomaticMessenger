@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyContactPreference,
+  bookingWithinAvailability,
+  contactSafetyViolations,
   deliveryDecision,
   draftSafetyViolations,
+  findVerifiedOpenSlots,
   finalizePortfolioDraft,
   localScheduleWindow,
+  normalizeWeeklyAvailability,
+  safeCalendarPreference,
   normalizedStringList,
   selectMediaKit,
 } from "../functions/_shared/policy.ts";
@@ -105,6 +111,56 @@ test("untrusted brand content can suggest Review but never unattended attachment
 test("timezone schedule windows are deterministic", () => {
   const window = localScheduleWindow(new Date("2026-07-20T15:05:00Z"), "America/Los_Angeles");
   assert.deepEqual(window, { date: "2026-07-20", minutes: 485 });
+});
+
+test("weekly availability is normalized to one non-overlapping window per day", () => {
+  assert.deepEqual(normalizeWeeklyAvailability([{ day: 2, start: "13:00", end: "17:00" }, { day: 1, start: "09:00", end: "12:00" }]),
+    [{ day: 1, start: "09:00", end: "12:00" }, { day: 2, start: "13:00", end: "17:00" }]);
+  assert.throws(() => normalizeWeeklyAvailability([{ day: 1, start: "09:00", end: "12:00" }, { day: 1, start: "13:00", end: "14:00" }]), /one window per day/);
+});
+
+test("booking validation uses configured local availability", () => {
+  const availability = [{ day: 1, start: "09:00", end: "12:00" }];
+  assert.equal(bookingWithinAvailability(new Date("2026-07-20T16:00:00Z"), new Date("2026-07-20T16:30:00Z"), "America/Los_Angeles", availability), true);
+  assert.equal(bookingWithinAvailability(new Date("2026-07-20T15:00:00Z"), new Date("2026-07-20T15:30:00Z"), "America/Los_Angeles", availability), false);
+});
+
+test("verified slots skip busy time and nonexistent DST intervals", () => {
+  const preference = { contact_mode: "scheduled_call" as const, timezone: "America/Los_Angeles", booking_url: null,
+    weekly_availability: [{ day: 1, start: "09:00", end: "11:00" }] };
+  const slots = findVerifiedOpenSlots(preference, [{ start_at: "2026-07-20T16:00:00Z", end_at: "2026-07-20T16:30:00Z" }], new Date("2026-07-20T15:00:00Z"));
+  assert.equal(slots[0].start_at, "2026-07-20T16:30:00.000Z");
+  const dst = findVerifiedOpenSlots({ ...preference, weekly_availability: [{ day: 0, start: "02:00", end: "03:00" }] }, [], new Date("2027-03-13T12:00:00Z"));
+  assert.ok(dst.every((slot) => new Date(slot.end_at) > new Date(slot.start_at)));
+  assert.ok(dst.every((slot) => !slot.start_at.startsWith("2027-03-14")));
+});
+
+test("contact postprocessing is idempotent, preserves voice layout, and blocks bypasses", () => {
+  const emailOnly = { contact_mode: "email_only" as const, timezone: "UTC", weekly_availability: [] };
+  const hostile = "Thanks for the project details. What time works? Is there a good time to chat? Let's connect next week. Would Tuesday work for you? Would 3 PM suit you? Are you free Tuesday? Can we speak tomorrow? Could we discuss this verbally? Send me times that suit you. Let us jump on a quick one. We can hop on Zoom. Let us chat live. Join my video conference. Visit https://evil.example or call +1 212 555 0100.\n\nBest,\nYafet";
+  const cleaned = applyContactPreference(hostile, emailOnly, []);
+  assert.doesNotMatch(cleaned, /what time works|Tuesday work|3 PM suit|you free|we speak|verbally|send me times|jump on|hop on|Zoom|chat live|video conference|evil|212|call/i);
+  assert.match(cleaned, /\n\nBest,\nYafet$/);
+  assert.equal(applyContactPreference(cleaned, emailOnly, []), cleaned);
+
+  const phone = { ...emailOnly, contact_mode: "phone" as const, phone_number: "+12125550199" };
+  const withPhone = applyContactPreference("Thanks for the detail.\n\nWarmly,\nYafet", phone, []);
+  assert.match(withPhone, /detail\.\n\nYou can reach me at \+12125550199\.\n\nWarmly,/);
+  assert.equal(applyContactPreference(withPhone, phone, []), withPhone);
+  assert.deepEqual(contactSafetyViolations(withPhone, phone, []), []);
+  const syncClaim = "My Google Calendar is synchronized, so there will be no conflicts.\n\nBest,\nYafet";
+  assert.doesNotMatch(applyContactPreference(syncClaim, emailOnly, []), /Google Calendar|synchron|no conflicts/i);
+  assert.deepEqual(contactSafetyViolations(syncClaim, emailOnly, []), ["external_calendar_claim", "unverified_contact_method"]);
+  for (const claim of ["These times are clear on my calendar.", "I checked my calendar and Tuesday is open.", "My calendar is up to date.", "There will not be a conflict with other events."]) {
+    assert.doesNotMatch(applyContactPreference(`${claim}\n\nBest,\nYafet`, phone, []), /calendar|conflict/i);
+    assert.ok(contactSafetyViolations(claim, phone, []).includes("external_calendar_claim"));
+  }
+});
+
+test("invalid stored calendar values fail closed to email only", () => {
+  assert.deepEqual(safeCalendarPreference({ contact_mode: "phone", phone_number: "555-0100", timezone: "UTC", weekly_availability: [] }, "UTC"),
+    { contact_mode: "email_only", phone_number: null, booking_url: null, timezone: "UTC", weekly_availability: [] });
+  assert.equal(safeCalendarPreference({ contact_mode: "scheduled_call", booking_url: "https://user:pass@evil.example", timezone: "UTC", weekly_availability: [] }).contact_mode, "email_only");
 });
 
 test("MIME input helpers reject header injection and invalid recipients", () => {

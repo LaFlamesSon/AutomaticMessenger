@@ -54,7 +54,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   border-bottom: 3px solid transparent;
   color: var(--soft);
   background: transparent;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 700;
 }
 .tab:hover { color: var(--ink); background: #faf9f6; }
@@ -96,7 +96,8 @@ button {
 .button-row .primary { width: auto; }
 
 label { display: block; margin: 10px 0 4px; font-weight: 700; }
-input[type="text"], input[type="time"], input:not([type]), textarea {
+input[type="text"], input[type="time"], input[type="tel"], input[type="url"],
+input[type="datetime-local"], input:not([type]), select, textarea {
   width: 100%;
   min-height: 38px;
   padding: 8px 10px;
@@ -105,6 +106,7 @@ input[type="text"], input[type="time"], input:not([type]), textarea {
   color: var(--ink);
   background: #fff;
 }
+select { width: 100%; }
 textarea { resize: vertical; }
 input[readonly] { color: var(--soft); background: #efede8; }
 input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); border-radius: 8px; background: #fff; }
@@ -181,6 +183,23 @@ progress { width: 100%; margin-top: 10px; accent-color: var(--accent); }
 .tag { padding: 2px 7px; border-radius: 99px; color: var(--soft); background: #efede8; font-size: 10.5px; }
 .kit-actions { display: flex; gap: 6px; margin-top: 9px; }
 .kit-actions button { min-height: 28px; padding: 3px 9px; font-size: 11.5px; }
+
+.conditional-card { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.availability { margin-top: 13px; }
+.availability-row { display: grid; grid-template-columns: minmax(84px, 1fr) 92px 92px; align-items: center; gap: 7px; margin: 7px 0; }
+.availability-row .check-row { margin: 0; }
+.availability-row label { margin: 0; }
+.availability-row input[type="time"] { min-width: 0; }
+.policy-note { margin: 10px 0; padding: 8px 10px; border-left: 3px solid var(--accent); color: var(--soft); background: var(--accent-soft); font-size: 11.5px; }
+.booking-section h2 { margin-bottom: 2px; }
+.booking-section .form-card { margin-top: 10px; }
+.time-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.booking-list { display: flex; flex-direction: column; gap: 8px; }
+.booking-card { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.booking-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.booking-title { font-weight: 750; overflow-wrap: anywhere; }
+.booking-time { margin-top: 3px; color: var(--soft); font-size: 12px; }
+.booking-card .ghost { min-height: 28px; padding: 3px 9px; font-size: 11.5px; }
 
 fieldset { min-width: 0; margin: 0 0 12px; padding: 0; border: 0; }
 legend { margin-bottom: 6px; font-weight: 750; }

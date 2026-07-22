@@ -6,12 +6,18 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
+  applyContactPreference,
+  type CalendarPreference,
   type Category,
+  contactSafetyViolations,
   deliveryDecision,
   draftSafetyViolations,
+  findVerifiedOpenSlots,
   finalizePortfolioDraft,
   type MediaKitCandidate,
   selectMediaKit,
+  safeCalendarPreference,
+  type VerifiedOpenSlot,
 } from "../_shared/policy.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
 
@@ -134,7 +140,11 @@ function header(payload: any, name: string): string {
 
 // ---------------------------------------------------------------- the agent prompt
 
-function buildSystemPrompt(profile: any, edits: { original_draft: string; edited_final: string }[]): string {
+function buildSystemPrompt(
+  profile: any,
+  edits: { original_draft: string; edited_final: string }[],
+  contact: CalendarPreference,
+): string {
   const alwaysAsk = (profile.always_ask ?? []).join(", ");
   const draftCategories = Array.isArray(profile.draft_categories)
     ? profile.draft_categories.join(", ")
@@ -143,6 +153,11 @@ function buildSystemPrompt(profile: any, edits: { original_draft: string; edited
     ? `\n\nHow this person actually writes — learn from these before/after edits they made to past drafts:\n` +
       edits.map((e, i) => `Example ${i + 1}:\nAI draft: ${e.original_draft}\nTheir edit: ${e.edited_final}`).join("\n\n")
     : "";
+  const contactInstruction = contact.contact_mode === "email_only"
+    ? "Do not suggest a call, meeting, booking, schedule, phone contact, or contact link. Continue by email only."
+    : contact.contact_mode === "phone"
+    ? "Do not invent or write a phone number. The server will add the configured phone contact method after validation."
+    : "Do not invent availability, times, booking status, or links. The server will add a verified booking link or open slots after validation.";
 
   return `You are drafting email replies on behalf of ${profile.display_name || "the user"}, ${profile.occupation}${profile.services ? ` who does ${profile.services}` : ""}. Voice: ${profile.tone}
 
@@ -162,7 +177,7 @@ For the email you receive:
 3. For every email categorized as one of these user-enabled categories (${draftCategories}), draft MUST be a non-empty reply. The reply must:
    - Thanks them and shows the user actually read their email (reference one specific detail from it)
    - Asks for whichever of these they haven't already given: ${alwaysAsk}
-   - Suggests a short call as the next step
+   - Follows this server-owned contact policy: ${contactInstruction}
    - Is under 150 words
    - Signs off with "${profile.signoff}," followed by ${profile.display_name || "the user's name"}
    Return draft: null ONLY when the category is not in that enabled list.
@@ -427,7 +442,17 @@ Deno.serve(async (req: Request) => {
       const { data: edits } = await supabase
         .from("ia_draft_edits").select("original_draft, edited_final")
         .eq("user_id", account.user_id).order("created_at", { ascending: false }).limit(10);
-      const systemPrompt = buildSystemPrompt(profile, edits ?? []);
+      const { data: calendarRow, error: calendarError } = await supabase.from("ia_calendar_preferences")
+        .select("contact_mode, phone_number, booking_url, timezone, weekly_availability")
+        .eq("user_id", account.user_id).maybeSingle();
+      if (calendarError) throw new Error("calendar preferences unavailable");
+      const calendar: CalendarPreference = safeCalendarPreference(calendarRow, profile.timezone ?? "America/Los_Angeles");
+      const { data: calendarBookings, error: calendarBookingsError } = await supabase.from("ia_bookings")
+        .select("start_at, end_at").eq("user_id", account.user_id)
+        .gte("end_at", new Date().toISOString()).order("start_at", { ascending: true }).limit(500);
+      if (calendarBookingsError) throw new Error("calendar bookings unavailable");
+      const verifiedSlots = findVerifiedOpenSlots(calendar, calendarBookings ?? []);
+      const systemPrompt = buildSystemPrompt(profile, edits ?? [], calendar);
       const { data: mediaKits, error: kitError } = await supabase.from("ia_media_kits")
         .select("id, label, storage_path, original_filename, mime_type, byte_size, brand_names, sender_domains, keywords, is_default, auto_attach")
         .eq("user_id", account.user_id).eq("status", "active");
@@ -510,8 +535,27 @@ Deno.serve(async (req: Request) => {
             attachments = await loadSelectedMediaKit(supabase, selectedKit);
           }
           if (triage.wants_portfolio && !attachments.length && decision === "auto_send") decision = "draft";
-          const finalDraft = triage.draft && triage.wants_portfolio
+          const portfolioDraft = triage.draft && triage.wants_portfolio
             ? finalizePortfolioDraft(triage.draft, attachments.length > 0) : triage.draft;
+          let finalDraft = portfolioDraft ? applyContactPreference(portfolioDraft, calendar, verifiedSlots) : portfolioDraft;
+          if (portfolioDraft && finalDraft && decision !== "none") {
+            // Contact/slot content is refreshed at the last safe boundary from
+            // owner-scoped server state; sender text never supplies these values.
+            const { data: freshCalendarRow, error: freshCalendarError } = await supabase.from("ia_calendar_preferences")
+              .select("contact_mode, phone_number, booking_url, timezone, weekly_availability")
+              .eq("user_id", account.user_id).maybeSingle();
+            const freshCalendar: CalendarPreference = safeCalendarPreference(
+              freshCalendarError ? null : freshCalendarRow,
+              profile.timezone ?? "America/Los_Angeles",
+            );
+            const { data: freshBookings, error: freshBookingsError } = await supabase.from("ia_bookings")
+              .select("start_at, end_at").eq("user_id", account.user_id)
+              .gte("end_at", new Date().toISOString()).order("start_at", { ascending: true }).limit(500);
+            const freshSlots: VerifiedOpenSlot[] = freshBookingsError ? []
+              : findVerifiedOpenSlots(freshCalendar, freshBookings ?? []);
+            finalDraft = applyContactPreference(portfolioDraft, freshCalendar, freshSlots);
+            if (contactSafetyViolations(finalDraft, freshCalendar, freshSlots).length) decision = "none";
+          }
           if (finalDraft && ((finalDraft.trim().match(/\S+/g) ?? []).length > 150 || draftSafetyViolations(finalDraft).length)) {
             decision = "none";
           }

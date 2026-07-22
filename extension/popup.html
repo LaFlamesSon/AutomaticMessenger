@@ -21,6 +21,7 @@
     <button id="tab-today" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="today" tabindex="0" data-tab="today">Today</button>
     <button id="tab-chat" class="tab" type="button" role="tab" aria-selected="false" aria-controls="chat" tabindex="-1" data-tab="chat">Chat</button>
     <button id="tab-kits" class="tab" type="button" role="tab" aria-selected="false" aria-controls="kits" tabindex="-1" data-tab="kits">Kits</button>
+    <button id="tab-calendar" class="tab" type="button" role="tab" aria-selected="false" aria-controls="calendar" tabindex="-1" data-tab="calendar">Calendar</button>
     <button id="tab-settings" class="tab" type="button" role="tab" aria-selected="false" aria-controls="settings" tabindex="-1" data-tab="settings">Settings</button>
   </nav>
 
@@ -104,6 +105,84 @@
 
       <div id="kitsStatus" class="state-card" role="status" aria-live="polite">Loading kits&hellip;</div>
       <div id="kitList" class="kit-list hidden"></div>
+    </section>
+
+    <section id="calendar" class="panel hidden" role="tabpanel" aria-labelledby="tab-calendar" tabindex="0">
+      <div class="panel-heading">
+        <div>
+          <h1>Calendar</h1>
+          <p class="meta">Choose how brands can continue the conversation.</p>
+        </div>
+      </div>
+      <div id="calendarStatus" class="state-card" role="status" aria-live="polite">Loading contact preferences&hellip;</div>
+
+      <form id="calendarForm" class="hidden">
+        <fieldset>
+          <legend>Preferred contact</legend>
+          <label class="choice-card" for="contactEmailOnly">
+            <input id="contactEmailOnly" name="contactMode" type="radio" value="email_only" checked>
+            <span><strong>Email only</strong><small>Replies will not suggest calls or phone contact.</small></span>
+          </label>
+          <label class="choice-card" for="contactScheduledCall">
+            <input id="contactScheduledCall" name="contactMode" type="radio" value="scheduled_call">
+            <span><strong>Scheduled call</strong><small>Offer your link or verified open times.</small></span>
+          </label>
+          <label class="choice-card" for="contactPhone">
+            <input id="contactPhone" name="contactMode" type="radio" value="phone">
+            <span><strong>Phone</strong><small>Offer only the number you configure.</small></span>
+          </label>
+        </fieldset>
+
+        <div id="phoneOptions" class="conditional-card hidden" aria-hidden="true">
+          <label for="calendarPhone">Phone number <span class="required">required</span></label>
+          <input id="calendarPhone" type="tel" inputmode="tel" autocomplete="tel" maxlength="16" placeholder="+14155552671" disabled>
+          <p class="hint">Use international E.164 format: +, country code, then number.</p>
+        </div>
+
+        <div id="scheduledOptions" class="conditional-card hidden" aria-hidden="true">
+          <label for="calendarBookingUrl">Booking link <span class="optional">optional</span></label>
+          <input id="calendarBookingUrl" type="url" inputmode="url" autocomplete="url" maxlength="500" placeholder="https://cal.example.com/your-name" disabled>
+          <p class="hint">HTTPS only. Add a link, weekly availability, or both.</p>
+
+          <label for="calendarTimezone">Availability time zone</label>
+          <input id="calendarTimezone" maxlength="80" list="timezoneOptions" autocomplete="off" disabled>
+
+          <fieldset class="availability" disabled>
+            <legend>Weekly availability</legend>
+            <p class="hint">Set one time window per day. CaughtUp may propose these times, but never claims a meeting is booked.</p>
+            <div id="availabilityRows"></div>
+          </fieldset>
+        </div>
+
+        <p class="policy-note">Changing contact or scheduling preferences returns replies to Review mode.</p>
+        <button id="saveCalendar" class="primary" type="submit">Save contact preferences</button>
+        <p id="calendarSaveStatus" class="status-text" role="status" aria-live="polite"></p>
+      </form>
+
+      <section id="internalBookings" class="booking-section" aria-labelledby="bookingsTitle">
+        <hr>
+        <h2 id="bookingsTitle">Internal bookings</h2>
+        <p class="hint">CaughtUp prevents conflicts between bookings saved here. It is not yet synced with Google Calendar or other external calendars.</p>
+        <p id="bookingCreateNote" class="hint">Save Scheduled call as your contact mode to add a booking. Existing bookings remain manageable in every mode.</p>
+        <form id="bookingForm" class="form-card hidden">
+          <label for="bookingTitle">Title <span class="required">required</span></label>
+          <input id="bookingTitle" type="text" maxlength="120" placeholder="Intro call with Acme" required>
+          <label for="bookingKind">Status</label>
+          <select id="bookingKind">
+            <option value="hold">Hold</option>
+            <option value="booking">Booked</option>
+          </select>
+          <div class="time-grid">
+            <div><label for="bookingStart">Starts</label><input id="bookingStart" type="datetime-local" required></div>
+            <div><label for="bookingEnd">Ends</label><input id="bookingEnd" type="datetime-local" required></div>
+          </div>
+          <button id="createBooking" type="submit" class="primary">Add internal booking</button>
+          <p id="bookingFormStatus" class="status-text" role="status" aria-live="polite"></p>
+        </form>
+        <div id="bookingsStatus" class="state-card" role="status" aria-live="polite">Loading bookings&hellip;</div>
+        <div id="bookingList" class="booking-list hidden"></div>
+        <p id="bookingActionStatus" class="status-text" role="status" aria-live="polite"></p>
+      </section>
     </section>
 
     <section id="settings" class="panel hidden" role="tabpanel" aria-labelledby="tab-settings" tabindex="0">
