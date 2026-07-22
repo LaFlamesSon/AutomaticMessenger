@@ -431,6 +431,7 @@ Deno.serve(async (req: Request) => {
     }
 
     let scanned = 0, drafted = 0;
+    const targetedDiagnostics: Record<string, unknown>[] = [];
     const digest: Record<Category, { from: string; subject: string; summary: string; draft_created: boolean }[]> = {
       urgent: [], action_needed: [], fyi: [], low_priority: [], spam_or_poor_fit: [],
     };
@@ -509,6 +510,7 @@ Deno.serve(async (req: Request) => {
           if (triage.wants_portfolio) {
             selectedKit = selectMediaKit(mediaKits as MediaKitCandidate[] ?? [], senderAddr, subject, emailBody);
           }
+          const triageSafety = triage.draft ? draftSafetyViolations(triage.draft) : [];
           let decision = deliveryDecision({
             category: triage.category,
             draft: triage.draft,
@@ -522,7 +524,7 @@ Deno.serve(async (req: Request) => {
             !draftSafetyViolations(triage.draft).length) decision = "draft";
           if (matchedRules.some((rule: any) => rule.action === "never_draft")) decision = "none";
           if (decision === "auto_send" && matchedRules.some((rule: any) => rule.action === "require_approval")) decision = "draft";
-          if (triage.draft && draftSafetyViolations(triage.draft).length) decision = "none";
+          if (triageSafety.length) decision = "none";
 
           let draftCreated = false;
           let autoSent = false;
@@ -538,6 +540,7 @@ Deno.serve(async (req: Request) => {
           const portfolioDraft = triage.draft && triage.wants_portfolio
             ? finalizePortfolioDraft(triage.draft, attachments.length > 0) : triage.draft;
           let finalDraft = portfolioDraft ? applyContactPreference(portfolioDraft, calendar, verifiedSlots) : portfolioDraft;
+          let contactViolations: string[] = [];
           if (portfolioDraft && finalDraft && decision !== "none") {
             // Contact/slot content is refreshed at the last safe boundary from
             // owner-scoped server state; sender text never supplies these values.
@@ -554,11 +557,24 @@ Deno.serve(async (req: Request) => {
             const freshSlots: VerifiedOpenSlot[] = freshBookingsError ? []
               : findVerifiedOpenSlots(freshCalendar, freshBookings ?? []);
             finalDraft = applyContactPreference(portfolioDraft, freshCalendar, freshSlots);
-            if (contactSafetyViolations(finalDraft, freshCalendar, freshSlots).length) decision = "none";
+            contactViolations = contactSafetyViolations(finalDraft, freshCalendar, freshSlots);
+            if (contactViolations.length) decision = "none";
           }
-          if (finalDraft && ((finalDraft.trim().match(/\S+/g) ?? []).length > 150 || draftSafetyViolations(finalDraft).length)) {
+          const finalWordCount = finalDraft ? (finalDraft.trim().match(/\S+/g) ?? []).length : 0;
+          const finalSafety = finalDraft ? draftSafetyViolations(finalDraft) : [];
+          if (finalDraft && (finalWordCount > 150 || finalSafety.length)) {
             decision = "none";
           }
+          if (targeted) targetedDiagnostics.push({
+            category: triage.category,
+            model_draft_present: Boolean(triage.draft),
+            triage_safety: triageSafety,
+            contact_safety: contactViolations,
+            final_safety: finalSafety,
+            final_word_count: finalWordCount,
+            verified_slot_count: verifiedSlots.length,
+            decision,
+          });
 
           if (finalDraft && decision !== "none") {
             const raw = buildDraftMime(
@@ -645,6 +661,7 @@ Deno.serve(async (req: Request) => {
         account: account.gmail_address,
         scanned, drafted, style_examples_learned: learned,
         digest: scanned === 0 ? "All caught up" : digest,
+        diagnostics: targeted ? targetedDiagnostics : undefined,
       });
     } catch (err) {
       console.error(JSON.stringify({ component: "agent-sweep", account_id: account.id, error_type: err instanceof Error ? err.name : "unknown" }));

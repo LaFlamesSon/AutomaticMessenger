@@ -34,6 +34,9 @@ test("targeted manual sweeps isolate one owned Gmail message", async () => {
   assert.match(sweep, /accountQuery = accountQuery\.eq\("id", requestedAccountId\)/);
   assert.match(sweep, /messageRefs = \[\{ id: requestedMessageId \}\]/);
   assert.doesNotMatch(sweep, /requestedMessageId.*trigger === "scheduled"/);
+  assert.match(sweep, /diagnostics: targeted \? targetedDiagnostics : undefined/);
+  const diagnostics = sweep.match(/targetedDiagnostics\.push\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+  assert.doesNotMatch(diagnostics, /draft_text|emailBody|subject|sender/);
 });
 
 test("enabled reply categories require a non-empty model draft", async () => {
