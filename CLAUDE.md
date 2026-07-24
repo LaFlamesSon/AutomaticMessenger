@@ -6,7 +6,7 @@ safety posture; prefer it over stale conversation history.
 ## Product
 
 CaughtUp is a Gmail inbox agent delivered as a Chrome MV3 extension. It can
-triage unread mail, prepare reviewable replies in the user's learned voice,
+triage recent unprocessed Inbox mail, prepare reviewable replies in the user's learned voice,
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
@@ -22,7 +22,10 @@ bookings; it does not claim or provide Google Calendar synchronization.
 - A draft may offer server-verified open slots, but never claim a meeting is
   confirmed, booked, or reserved.
 - Calendar/contact changes force Review mode and increment settings version.
-- Broad legacy unread mail is not a test fixture. Live QA uses exact Gmail IDs.
+- Broad legacy Inbox mail is not a test fixture. Live QA uses exact Gmail IDs.
+- Normal sweeps include unread and owner-read Inbox messages from the last
+  seven days, but skip a candidate when its thread has a later owner SENT
+  message or draft.
 
 ## Architecture
 
@@ -41,7 +44,7 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 16 | Exact/batch Gmail triage, safe drafting, contact policy, kit selection, voice learning |
+| `agent-sweep` | 17 | Exact/batch Gmail triage, owner-handled thread exclusion, safe drafting, contact policy, kit selection, voice learning |
 | `agent-api` | 7 | Extension API, preview/send, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
