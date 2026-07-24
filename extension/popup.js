@@ -62,6 +62,12 @@ function safeApiMessage(data, status) {
   if (code === "version_conflict") return { code, message: "These preferences changed elsewhere. Reload and try again." };
   if (code === "booking_conflict") return { code, message: "That time overlaps an existing CaughtUp booking." };
   if (code === "outside_availability") return { code, message: "Choose a time inside your saved weekly availability." };
+  if (code === "gmail_provider_unavailable") {
+    return { code, message: "Google did not return reusable Gmail access. Continue with the Gmail connection step." };
+  }
+  if (code === "gmail_already_connected") {
+    return { code, message: "That Gmail inbox is already connected to another CaughtUp account." };
+  }
   if (code === "reconcile_required") {
     return { code, message: "Gmail may have sent this reply. CaughtUp is reconciling its status." };
   }
@@ -269,10 +275,14 @@ $("connectGoogle").addEventListener("click", async () => {
   setStatus("setupStatus", "");
   try {
     const redirectUrl = chrome.identity.getRedirectURL("caughtup");
+    let providerTokens = null;
     if (!session) {
       const authorize = new URL(SUPABASE_AUTH);
       authorize.searchParams.set("provider", "google");
       authorize.searchParams.set("redirect_to", redirectUrl);
+      authorize.searchParams.set("scopes", "openid email profile https://www.googleapis.com/auth/gmail.modify");
+      authorize.searchParams.set("access_type", "offline");
+      authorize.searchParams.set("prompt", "consent");
       const callbackUrl = new URL(await launchAuthFlow(authorize.toString()));
       const auth = new URLSearchParams(callbackUrl.hash.replace(/^#/, ""));
       if (callbackUrl.searchParams.get("error") || auth.get("error")) {
@@ -285,10 +295,29 @@ $("connectGoogle").addEventListener("click", async () => {
         refresh_token: auth.get("refresh_token") || null,
         expires_at: auth.get("expires_at") || null,
       };
+      const providerAccessToken = auth.get("provider_token");
+      const providerRefreshToken = auth.get("provider_refresh_token");
+      if (providerAccessToken && providerRefreshToken) {
+        providerTokens = {
+          provider_access_token: providerAccessToken,
+          provider_refresh_token: providerRefreshToken,
+        };
+      }
       await chrome.storage.local.set({ caughtup_session: session });
     }
     let profile = await api("profile_get");
     applyIdentity(profile);
+    if (profile.gmail_connected !== true && providerTokens) {
+      try {
+        await api("gmail_connect_provider", providerTokens);
+        providerTokens = null;
+        profile = await api("profile_get");
+        applyIdentity(profile);
+      } catch (error) {
+        providerTokens = null;
+        if (error?.code !== "gmail_provider_unavailable") throw error;
+      }
+    }
     if (profile.gmail_connected !== true) {
       setBusy(button, true, "Connecting Gmail…");
       const gmailStart = await api("gmail_connect_start", { redirect_url: redirectUrl });

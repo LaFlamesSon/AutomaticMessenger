@@ -202,24 +202,29 @@ async function triageEmail(
   subject: string,
   body: string,
 ): Promise<Triage> {
+  const model = llmModel();
+  const request: Record<string, unknown> = {
+    model,
+    max_tokens: 1024,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemPrompt + OUTPUT_INSTRUCTION },
+      {
+        role: "user",
+        content: `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 6000)}`,
+      },
+    ],
+  };
+  // DeepSeek V4 defaults to thinking mode; JSON triage needs a direct,
+  // non-thinking response. Other OpenAI-compatible providers stay untouched.
+  if (/^deepseek-v4-(?:flash|pro)$/.test(model)) request.thinking = { type: "disabled" };
   const resp = await fetch(`${llmBaseUrl()}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${llmApiKey()}`,
     },
-    body: JSON.stringify({
-      model: llmModel(),
-      max_tokens: 1024,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt + OUTPUT_INSTRUCTION },
-        {
-          role: "user",
-          content: `From: ${from}\nSubject: ${subject}\n\n${body.slice(0, 6000)}`,
-        },
-      ],
-    }),
+    body: JSON.stringify(request),
   });
   if (!resp.ok) throw new Error(`llm_${resp.status}`);
   const data = await resp.json();

@@ -91,7 +91,7 @@ test("client targets the audited API actions", () => {
     "digest", "chat", "draft_get", "send_draft", "sweep", "profile_get", "profile_set",
     "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list",
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
-    "media_kit_delete", "learning_reset", "gmail_connect_start",
+    "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ].forEach((action) => assert.ok(script.includes(`"${action}"`), `missing ${action}`));
 });
@@ -133,11 +133,19 @@ test("internal bookings are timezone-aware, idempotent, and deletions are confir
   assert.match(script, /canCreateBooking = scheduledMode && currentCalendar\?\.contact_mode === "scheduled_call"/);
 });
 
-test("Google onboarding uses extension-owned redirect and never token paste", () => {
+test("Google onboarding requests identity and Gmail in one launch with a safe fallback", () => {
   assert.match(script, /chrome\.identity\.getRedirectURL/);
   assert.match(script, /SUPABASE_AUTH/);
+  assert.match(script, /openid email profile https:\/\/www\.googleapis\.com\/auth\/gmail\.modify/);
+  assert.match(script, /authorize\.searchParams\.set\("access_type", "offline"\)/);
+  assert.match(script, /authorize\.searchParams\.set\("prompt", "consent"\)/);
+  assert.match(script, /auth\.get\("provider_token"\)/);
+  assert.match(script, /auth\.get\("provider_refresh_token"\)/);
+  assert.match(script, /api\("gmail_connect_provider", providerTokens\)/);
   assert.match(script, /"gmail_connect_start"/);
   assert.match(script, /caughtup_gmail/);
+  const persistedSession = script.match(/session = \{[\s\S]*?\};\s+const providerAccessToken/)?.[0] ?? "";
+  assert.doesNotMatch(persistedSession, /provider_token|provider_refresh_token/);
   assert.doesNotMatch(html, /tokenInput|Paste your access token/i);
   assert.doesNotMatch(script, /x-api-token/);
 });
@@ -169,7 +177,7 @@ test("standing rules visibly force Review mode", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.0");
+  assert.equal(manifest.version, "0.3.1");
 });
 
 test("focus and reduced-motion styles are present", () => {

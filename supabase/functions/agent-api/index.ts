@@ -41,6 +41,12 @@ function cleanString(value: unknown, name: string, max: number): string {
   return clean;
 }
 
+function cleanProviderToken(value: unknown, name: string): string {
+  const token = cleanString(value, name, 8192);
+  if (token.length < 20 || /\s/.test(token)) throw new InputError(`${name} is invalid`);
+  return token;
+}
+
 function cleanCategories(value: unknown, name: string): string[] {
   const values = cleanList(value, CATEGORIES.length, 30);
   if (values.some((item) => !CATEGORIES.includes(item as any))) {
@@ -232,6 +238,14 @@ async function gmailAccessToken(refreshToken: string, cfg: Record<string, string
   return (await response.json()).access_token ?? null;
 }
 
+function llmRequestBody(model: string, maxTokens: number, messages: any[]): Record<string, unknown> {
+  const request: Record<string, unknown> = {
+    model, max_tokens: maxTokens, response_format: { type: "json_object" }, messages,
+  };
+  if (/^deepseek-v4-(?:flash|pro)$/.test(model)) request.thinking = { type: "disabled" };
+  return request;
+}
+
 function addressList(value: string): string[] | null {
   if (!value) return [];
   const parsed = value.split(",").map((entry) => parseStrictRecipient(entry));
@@ -365,10 +379,11 @@ Deno.serve(async (req: Request) => {
         const llmResp = await fetch(`${CFG["ia_llm_base_url"]}/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${CFG["ia_llm_api_key"]}` },
-          body: JSON.stringify({
-            model: CFG["ia_llm_model"], max_tokens: 800, response_format: { type: "json_object" },
-            messages: [{ role: "system", content: system }, ...(history ?? []).reverse()],
-          }),
+          body: JSON.stringify(llmRequestBody(
+            CFG["ia_llm_model"],
+            800,
+            [{ role: "system", content: system }, ...(history ?? []).reverse()],
+          )),
         });
         if (!llmResp.ok) return json({ error: `LLM ${llmResp.status}` }, 502);
         const llmData = await llmResp.json();
@@ -667,6 +682,58 @@ Deno.serve(async (req: Request) => {
         });
         const payload = await resp.json().catch(() => ({ error: "sweep returned invalid JSON" }));
         return json(payload, resp.status);
+      }
+
+      case "gmail_connect_provider": {
+        const providerAccessToken = cleanProviderToken(body.provider_access_token, "provider_access_token");
+        const providerRefreshToken = cleanProviderToken(body.provider_refresh_token, "provider_refresh_token");
+        const profileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+          headers: { Authorization: `Bearer ${providerAccessToken}` },
+          signal: AbortSignal.timeout(10_000),
+        }).catch(() => null);
+        if (!profileResp || !profileResp.ok) {
+          return json({ error: "Gmail authorization could not be confirmed", code: "gmail_provider_unavailable" }, 422);
+        }
+        const gmailProfile = await profileResp.json();
+        const gmailAddress = String(gmailProfile.emailAddress ?? "").trim().toLowerCase();
+        if (!gmailAddress || gmailAddress.length > 320) {
+          return json({ error: "Gmail account address is unavailable", code: "gmail_provider_unavailable" }, 422);
+        }
+        const refreshedAccessToken = await gmailAccessToken(providerRefreshToken, CFG).catch(() => null);
+        if (!refreshedAccessToken) {
+          return json({ error: "Reusable Gmail authorization is unavailable", code: "gmail_provider_unavailable" }, 422);
+        }
+        const refreshedProfileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+          headers: { Authorization: `Bearer ${refreshedAccessToken}` },
+          signal: AbortSignal.timeout(10_000),
+        }).catch(() => null);
+        if (!refreshedProfileResp || !refreshedProfileResp.ok) {
+          return json({ error: "Reusable Gmail authorization could not be confirmed", code: "gmail_provider_unavailable" }, 422);
+        }
+        const refreshedProfile = await refreshedProfileResp.json();
+        const refreshedAddress = String(refreshedProfile.emailAddress ?? "").trim().toLowerCase();
+        if (refreshedAddress !== gmailAddress) {
+          return json({ error: "Google authorization accounts did not match", code: "gmail_provider_unavailable" }, 422);
+        }
+        const { data: existing, error: lookupError } = await supabase.from("ia_gmail_accounts")
+          .select("id, user_id").eq("gmail_address", gmailAddress).maybeSingle();
+        if (lookupError) throw new Error(lookupError.message);
+        if (existing && existing.user_id !== user.id) {
+          return json({ error: "This Gmail account is already connected", code: "gmail_already_connected" }, 409);
+        }
+        const now = new Date().toISOString();
+        const accountWrite = existing
+          ? supabase.from("ia_gmail_accounts")
+            .update({ refresh_token: providerRefreshToken, connected_at: now })
+            .eq("id", existing.id).eq("user_id", user.id)
+          : supabase.from("ia_gmail_accounts").insert({
+            user_id: user.id,
+            gmail_address: gmailAddress,
+            refresh_token: providerRefreshToken,
+          });
+        const { error: accountError } = await accountWrite;
+        if (accountError) throw new Error(accountError.message);
+        return json({ connected: true, gmail_address: gmailAddress });
       }
 
       case "gmail_connect_start": {

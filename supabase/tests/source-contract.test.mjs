@@ -120,7 +120,7 @@ test("extension-facing action contract is present", async () => {
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare",
     "auto_send_confirm", "auto_send_disable", "draft_get", "send_draft", "sweep",
     "media_kit_list", "media_kit_upload_prepare", "media_kit_upload_complete",
-    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_start",
+    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ]) assert.match(api, new RegExp(`case "${action}"`));
   assert.match(api, /body\.action === "auth_refresh"/);
@@ -197,6 +197,30 @@ test("OAuth redirects require an exact configured extension allowlist", async ()
   const oauth = await read("functions/gmail-oauth/index.ts");
   assert.match(api, /allowedChromeRedirect\(redirectUri, CFG\["ia_allowed_extension_ids"\]/);
   assert.match(oauth, /allowedChromeRedirect\(claimed\.redirect_uri, CFG\["ia_allowed_extension_ids"\]/);
+});
+
+test("combined Google handoff validates Gmail ownership before storing a refresh token", async () => {
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(api, /case "gmail_connect_provider"/);
+  assert.match(api, /cleanProviderToken\(body\.provider_access_token/);
+  assert.match(api, /cleanProviderToken\(body\.provider_refresh_token/);
+  assert.match(api, /gmail\/v1\/users\/me\/profile/);
+  assert.match(api, /gmailAccessToken\(providerRefreshToken, CFG\)/);
+  assert.match(api, /refreshedAddress !== gmailAddress/);
+  assert.match(api, /existing && existing\.user_id !== user\.id/);
+  assert.match(api, /code: "gmail_already_connected"/);
+  assert.match(api, /refresh_token: providerRefreshToken/);
+  assert.doesNotMatch(api, /return json\(\{[^}]*provider_(?:access|refresh)_token/s);
+});
+
+test("DeepSeek V4 JSON calls explicitly disable thinking without changing other providers", async () => {
+  const sweep = await read("functions/agent-sweep/index.ts");
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(sweep, /\^deepseek-v4-\(\?:flash\|pro\)\$/);
+  assert.match(sweep, /request\.thinking = \{ type: "disabled" \}/);
+  assert.match(api, /\^deepseek-v4-\(\?:flash\|pro\)\$/);
+  assert.match(api, /request\.thinking = \{ type: "disabled" \}/);
+  assert.doesNotMatch(sweep, /thinking:\s*\{\s*type:\s*"disabled"\s*\}[\s\S]*model:\s*llmModel/);
 });
 
 test("fresh runtime migration owns config and secret-at-runtime cron dispatch", async () => {
