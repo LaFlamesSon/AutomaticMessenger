@@ -39,6 +39,17 @@ test("targeted manual sweeps isolate one owned Gmail message", async () => {
   assert.doesNotMatch(diagnostics, /draft_text|emailBody|subject|sender/);
 });
 
+test("normal sweeps include owner-read mail and exclude threads already handled by the owner", async () => {
+  const sweep = await read("functions/agent-sweep/index.ts");
+  const gmail = await read("functions/_shared/gmail.ts");
+  assert.match(sweep, /`in:inbox -label:\$\{LABEL_NAME\} newer_than:7d`/);
+  assert.doesNotMatch(sweep, /in:inbox is:unread/);
+  assert.match(sweep, /\/threads\/\$\{encodeURIComponent\(msg\.threadId\)\}\?format=metadata/);
+  assert.match(sweep, /hasLaterOwnerAction\(msg, thread\.messages \?\? \[\]\)/);
+  assert.match(sweep, /error_code: "owner_handled"/);
+  assert.match(gmail, /labels\.has\("SENT"\) \|\| labels\.has\("DRAFT"\)/);
+});
+
 test("enabled reply categories require a non-empty model draft", async () => {
   const sweep = await read("functions/agent-sweep/index.ts");
   assert.match(sweep, /draft MUST be a non-empty reply/);

@@ -16,6 +16,25 @@ import {
 } from "../functions/_shared/policy.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../functions/_shared/mime.ts";
 import { allowedChromeRedirect } from "../functions/_shared/oauth.ts";
+import { hasLaterOwnerAction } from "../functions/_shared/gmail.ts";
+
+test("sweep eligibility includes unread and owner-read mail but excludes later owner handling", () => {
+  const unread = { id: "incoming-1", internalDate: "1000", labelIds: ["INBOX", "UNREAD"] };
+  const ownerRead = { ...unread, labelIds: ["INBOX"] };
+  assert.equal(hasLaterOwnerAction(unread, [unread]), false);
+  assert.equal(hasLaterOwnerAction(ownerRead, [ownerRead]), false);
+
+  const earlierOwnerReply = { id: "sent-0", internalDate: "500", labelIds: ["SENT"] };
+  assert.equal(hasLaterOwnerAction(ownerRead, [earlierOwnerReply, ownerRead]), false);
+
+  const laterOwnerReply = { id: "sent-2", internalDate: "1500", labelIds: ["SENT"] };
+  const laterOwnerDraft = { id: "draft-2", internalDate: "1500", labelIds: ["DRAFT"] };
+  assert.equal(hasLaterOwnerAction(ownerRead, [ownerRead, laterOwnerReply]), true);
+  assert.equal(hasLaterOwnerAction(ownerRead, [ownerRead, laterOwnerDraft]), true);
+
+  const inboundFollowUp = { id: "incoming-3", internalDate: "2000", labelIds: ["INBOX"] };
+  assert.equal(hasLaterOwnerAction(inboundFollowUp, [ownerRead, laterOwnerReply, inboundFollowUp]), false);
+});
 
 test("Review is the default and confirmed auto-send is narrow", () => {
   const base = { draft_categories: ["urgent", "action_needed"] };

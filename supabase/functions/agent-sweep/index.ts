@@ -20,6 +20,7 @@ import {
   type VerifiedOpenSlot,
 } from "../_shared/policy.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
+import { hasLaterOwnerAction } from "../_shared/gmail.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
@@ -467,7 +468,7 @@ Deno.serve(async (req: Request) => {
       if (targeted) {
         messageRefs = [{ id: requestedMessageId }];
       } else {
-        const q = encodeURIComponent(`in:inbox is:unread -label:${LABEL_NAME} newer_than:7d`);
+        const q = encodeURIComponent(`in:inbox -label:${LABEL_NAME} newer_than:7d`);
         const list = await gmailGet(token, `/messages?q=${q}&maxResults=${MAX_EMAILS_PER_ACCOUNT}`);
         messageRefs = list.messages ?? [];
       }
@@ -488,6 +489,21 @@ Deno.serve(async (req: Request) => {
         try {
           const msg = await gmailGet(token, `/messages/${ref.id}?format=full`);
           scanned++;
+          const thread = await gmailGet(token, `/threads/${encodeURIComponent(msg.threadId)}?format=metadata`);
+          if (hasLaterOwnerAction(msg, thread.messages ?? [])) {
+            // A later SENT message or owner draft means the person already handled
+            // this inbound email. Label it once so it cannot consume future sweep slots.
+            await gmailPost(token, `/messages/${ref.id}/modify`, { addLabelIds: [labelId] });
+            const { error: handledError } = await supabase.from("ia_message_claims")
+              .update({
+                status: "complete",
+                finished_at: new Date().toISOString(),
+                error_code: "owner_handled",
+              })
+              .eq("id", messageClaim).eq("status", "claimed");
+            if (handledError) throw new Error("message_owner_handled_state_failed");
+            continue;
+          }
           const from = header(msg.payload, "From");
           const subject = header(msg.payload, "Subject") || "(no subject)";
           const emailBody = extractBody(msg.payload);
