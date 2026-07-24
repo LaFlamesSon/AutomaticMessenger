@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.0** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.1** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -33,8 +33,12 @@ bookings; it does not claim or provide Google Calendar synchronization.
 - Server: Deno Edge Functions + Postgres + Storage + Vault.
 - LLM: OpenAI-compatible provider configured by Vault keys
   `ia_llm_base_url`, `ia_llm_model`, and `ia_llm_api_key`.
-- Extension auth: Supabase Google sign-in and a verified Supabase JWT to
-  `agent-api`. The legacy per-user API token remains for controlled diagnostics.
+- Extension auth: a new session requests Supabase Google identity and
+  `gmail.modify` in one Google launch. Transient provider tokens are validated
+  and matched server-side, never persisted by the extension, and the prior
+  separate Gmail consent remains only as a recovery path. A verified Supabase
+  JWT authenticates `agent-api`; the legacy per-user API token remains for
+  controlled diagnostics.
 - Gmail worker auth: `x-agent-secret`; secrets are read through
   `ia_get_config()` from Supabase Vault.
 - Media kits: private Storage objects plus owner-scoped metadata. Matching uses
@@ -44,8 +48,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 17 | Exact/batch Gmail triage, owner-handled thread exclusion, safe drafting, contact policy, kit selection, voice learning |
-| `agent-api` | 7 | Extension API, preview/send, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 18 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, safe drafting, contact policy, kit selection, voice learning |
+| `agent-api` | 8 | Extension API, combined Google provider-token handoff, preview/send, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -70,6 +74,13 @@ double-booking guard; API idempotency and owner checks sit above it.
 
 - Scheduled sweep cron is paused during iterative live QA.
 - Auto-send remains off after every test.
+- Runtime model `deepseek-v4-flash` returned valid JSON after the retired
+  `deepseek-chat` name caused HTTP 400 failures.
+- The current unpacked-extension callback is allowed by both Supabase Auth and
+  the encrypted backend allowlist. A real manual extension sweep completed
+  after reinstall: a valid sponsorship fixture became `action_needed` and
+  produced a safe Gmail draft; a vague fixture became `spam_or_poor_fit`
+  without a draft.
 - Concurrent overlapping booking attempts produced one success and one 409;
   idempotent retry and cross-owner deletion checks passed.
 - Live reply experiments passed email-only, phone, and scheduled-call rules.
@@ -89,10 +100,12 @@ double-booking guard; API idempotency and owner checks sit above it.
 
 ## Next product work
 
-1. Reload the unpacked extension from this repository path in the user's normal
-   Chrome profile and perform one signed-in Calendar save/create/delete pass.
-2. Add real Google Calendar integration only with explicit OAuth scope and
+1. Upload at least one labeled media kit on the current account, then run one
+   exact sponsor fixture to verify unique selection and Gmail attachment.
+2. Perform one signed-in Calendar save/create/delete pass in the user's normal
+   Chrome profile.
+3. Add real Google Calendar integration only with explicit OAuth scope and
    truthful external conflict checks.
-3. Configure/activate Stripe, host the marketing site, and prepare Web Store
+4. Configure/activate Stripe, host the marketing site, and prepare Web Store
    packaging when product behavior is accepted.
-4. Rotate any credentials previously exposed in chat or local logs.
+5. Rotate any credentials previously exposed in chat or local logs.

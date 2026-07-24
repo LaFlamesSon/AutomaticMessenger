@@ -76,5 +76,22 @@ confusing partial identities during real multi-computer onboarding.
   policy tests pass. Both changed Edge Functions pass `deno check`, and the
   extension script passes Node syntax checking.
 
-Deployment, encrypted configuration update, exact-message Gmail verification,
-and a user-visible fresh-session OAuth run remain to be recorded.
+## Closed-loop result
+
+| Condition | Result | Evidence |
+|---|---|---|
+| Supported model and valid JSON | Pass | Vault now selects `deepseek-v4-flash`; a live non-thinking JSON request returned HTTP 200 and valid content. |
+| Provider-specific non-thinking mode | Pass | Both triage and chat add `thinking: disabled` only for DeepSeek V4 Flash/Pro; source-contract tests pass. |
+| One-launch OAuth request | Pass | The current extension callback redirected through Supabase to Google with identity, `gmail.modify`, offline access, and consent. |
+| Provider tokens not persisted | Pass | The extension stores only the Supabase session and clears transient provider tokens after the authenticated completion request. |
+| Backend validation and ownership | Pass | The backend validates both the supplied access token and refreshed access, requires the Gmail addresses to match, and rejects cross-user ownership. |
+| Recovery path | Pass | Existing state-bound `gmail_connect_start` remains available when Google omits reusable provider authorization. |
+| Existing account compatibility | Pass | The reinstalled extension authenticated and subsequently initiated a successful manual sweep on the existing Gmail account. |
+| Brand fixture behavior | Pass with attachment prerequisite open | Exact fixture `3a79f1721c` was safely classified `spam_or_poor_fit` with no draft. A second valid sponsorship fixture was classified `action_needed` and produced a Gmail draft during the user's subsequent manual extension sweep. The account has no active media kits, so attachment selection remains open until one is uploaded. |
+| No unintended send | Pass | Both live fixtures remained in Review mode; `auto_sent=false`, profile `auto_send=false`, and no send was performed. |
+| Local/deployed parity | Pass | 60/60 Node tests, 18/18 Deno tests, Edge type checks, committed source `5c067c0`, deployed `agent-api` v8 and `agent-sweep` v18. |
+
+The second manual run scanned 25 eligible messages because it was initiated from
+the extension's normal Sweep control while this acceptance check was finishing;
+it was not the exact-ID diagnostic invocation. It completed with three drafts
+and no automatic sends. Scheduled cron remained paused.
