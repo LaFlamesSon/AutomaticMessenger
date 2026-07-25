@@ -42,3 +42,34 @@ export function payloadText(payload: any): string {
   return (walk(payload, "text/plain") ?? walk(payload, "text/html")?.replace(/<[^>]+>/g, " ") ?? "")
     .replace(/\u0000/g, "").slice(0, 100_000);
 }
+
+export interface StableDraftAttachment {
+  filename: string;
+  mime_type: string;
+  byte_size: number;
+  content_sha256: string;
+}
+
+export function stableDraftPreview(input: {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+  attachments: StableDraftAttachment[];
+}): Record<string, unknown> {
+  const addresses = (values: string[]) => values.map((value) => sanitizeHeader(value, 320).toLowerCase());
+  return {
+    to: addresses(input.to),
+    cc: addresses(input.cc),
+    bcc: addresses(input.bcc),
+    subject: sanitizeHeader(input.subject, 500),
+    body: String(input.body ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
+    attachments: input.attachments.map((attachment) => ({
+      filename: sanitizeHeader(attachment.filename, 180),
+      mime_type: sanitizeHeader(attachment.mime_type, 100).toLowerCase(),
+      byte_size: Number(attachment.byte_size),
+      content_sha256: String(attachment.content_sha256),
+    })),
+  };
+}

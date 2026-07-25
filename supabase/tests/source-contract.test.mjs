@@ -170,7 +170,10 @@ test("irreversible provider mutations use terminal reconciliation states", async
 
 test("manual send uses a full live-draft preview fingerprint before claiming", async () => {
   const api = await read("functions/agent-api/index.ts");
-  assert.match(api, /stablePayload\(payload\)/);
+  assert.match(api, /stableDraftPreview\(\{/);
+  assert.match(api, /attachmentContent\(accessToken, messageId, part\)/);
+  assert.match(api, /content_sha256: await sha256\(content\.data\)/);
+  assert.doesNotMatch(api, /attachmentId: String\(part\?\.body\?\.attachmentId/);
   assert.match(api, /\bto, cc, bcc\b/);
   assert.match(api, /attachments: flattened/);
   assert.ok(api.indexOf("currentDraft.preview_version !== previewVersion") < api.indexOf('from("ia_send_attempts").insert'));
@@ -257,7 +260,19 @@ test("one active job claim blocks different window keys and only stale claimed w
 test("style learning requires an exact Gmail message association", async () => {
   const sweep = await read("functions/agent-sweep/index.ts");
   assert.match(sweep, /gmail_sent_message_id \?\? row\.gmail_draft_message_id/);
+  assert.match(sweep, /\.eq\("sent_via", "manual_extension"\).*\.order\("processed_at", \{ ascending: false \}\)/s);
+  assert.match(sweep, /\.is\("sent_via", null\).*\.order\("processed_at", \{ ascending: false \}\)/s);
   assert.doesNotMatch(sweep, /sort\(\(a: any, b: any\).*internalDate/);
+});
+
+test("safe deterministic recovery is Review-only and preserves injection defenses", async () => {
+  const sweep = await read("functions/agent-sweep/index.ts");
+  assert.match(sweep, /legitimateInquiryFallbackAllowed\(subject, emailBody\)/);
+  assert.match(sweep, /safeInformationDraft\(profile, portfolioRequested \|\| triage\.wants_portfolio\)/);
+  assert.match(sweep, /"manual review"/);
+  assert.match(sweep, /confidence: Math\.min\(triage\.confidence, 0\.89\)/);
+  assert.match(sweep, /explicitPortfolioRequest\(subject, emailBody\)/);
+  assert.match(sweep, /enforceConfiguredSignoff\(finalDraft, profile\)/);
 });
 
 test("legacy media-kit seeder is inert", async () => {

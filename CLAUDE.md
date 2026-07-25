@@ -92,6 +92,16 @@ double-booking guard; API idempotency and owner checks sit above it.
   email-only postprocessing all worked without any automatic send. Direct
   meeting requests without an explicit email fallback produced no draft in two
   runs, and one of ten drafts omitted the exact configured signoff.
+- A 100-case exact-message stress run against `yafet2132@gmail.com` produced
+  61 first-attempt passes; one transient failure passed its exact retry. FYI,
+  spam, injection, read-mail, owner-handled, duplicate, long-natural-mail,
+  configured-style, and extension API safety checks were strong. Persistent
+  failures were concentrated in legitimate sponsor/sample/meeting recall,
+  safe regeneration after a draft repeats the sender's budget, recent edit
+  learning starvation, and unstable preview hashes on attachment-bearing
+  drafts. The separate extension suite passed 29/29 live API checks and 34/34
+  local UI-contract checks. Full evidence is in
+  `docs/audits/yafet-100-dynamic-stress-20260724.md`.
 - Two exact sent-edit examples produced measurable subsequent voice changes
   without price, availability, commitment, or contact-policy violations.
 
@@ -106,15 +116,23 @@ double-booking guard; API idempotency and owner checks sit above it.
 
 ## Next product work
 
-1. Make legitimate call/meeting requests deterministically produce an
-   information-gathering email reply when the saved contact mode is
-   `email_only`; add the C12/C16/C18 cases as regressions.
-2. Enforce the configured signoff server-side instead of relying only on the
+1. Add deterministic recall/fallback handling for legitimate sponsor,
+   portfolio/media-kit, and meeting requests; include the 100-case failures as
+   regressions without weakening spam or injection defenses.
+2. When a model draft violates price/availability/commitment policy,
+   regenerate or deterministically sanitize a safe information-gathering draft
+   instead of silently producing no draft.
+3. Fix `learnFromSentDrafts()` starvation by prioritizing eligible recent sent
+   rows and completing/skipping stale unsent rows without losing real edits.
+4. Make attachment-bearing draft preview hashes depend only on stable,
+   user-visible send content so unchanged drafts do not fail with
+   `draft_changed`.
+5. Enforce the configured signoff server-side instead of relying only on the
    model prompt.
-3. Perform one signed-in Calendar save/create/delete pass in the user's normal
+6. Perform one signed-in five-tab popup and Calendar pass in the user's normal
    Chrome profile.
-4. Add real Google Calendar integration only with explicit OAuth scope and
+7. Add real Google Calendar integration only with explicit OAuth scope and
    truthful external conflict checks.
-5. Configure/activate Stripe, host the marketing site, and prepare Web Store
+8. Configure/activate Stripe, host the marketing site, and prepare Web Store
    packaging when product behavior is accepted.
-6. Rotate any credentials previously exposed in chat or local logs.
+9. Rotate any credentials previously exposed in chat or local logs.

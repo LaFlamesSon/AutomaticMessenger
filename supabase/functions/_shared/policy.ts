@@ -26,6 +26,11 @@ export interface CalendarPreference {
 }
 export interface VerifiedOpenSlot { start_at: string; end_at: string; label: string }
 
+export interface DraftIdentity {
+  display_name?: string | null;
+  signoff?: string | null;
+}
+
 const HARD_DRAFT_PATTERNS: [string, RegExp][] = [
   ["price", /(?:\$|€|£)\s?\d|\b(?:my|our|the)\s+(?:price|cost|rate|fee)\s+(?:is|will be|would be|would come to)\b/i],
   ["availability", /\b(?:i am|i'm|we are|we're)\s+available\b|\b(?:i|we)\s+can\s+(?:start|begin)\b/i],
@@ -52,9 +57,51 @@ export function draftSafetyViolations(draft: string): string[] {
   return HARD_DRAFT_PATTERNS.filter(([, pattern]) => pattern.test(draft)).map(([name]) => name);
 }
 
+const PORTFOLIO_NOUN = String.raw`(?:media\s+kit|portfolio|work\s+(?:samples?|examples?)|relevant\s+samples?|samples?|examples?|example\s+(?:images?|work)|case\s+stud(?:y|ies))`;
+const PORTFOLIO_REQUEST = new RegExp(
+  String.raw`(?:\b(?:attach|send|share|include|provide|review|see)\b[^.!?\n]{0,100}\b${PORTFOLIO_NOUN}\b|\b${PORTFOLIO_NOUN}\b[^.!?\n]{0,100}\b(?:attach|send|share|include|provide|review|see)\b)`,
+  "iu",
+);
+const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|project|deliverables?|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
+const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|schedule|book)\b)|(?:\binterested\s+in\b)/i;
+const HOSTILE_INBOUND = /\b(?:ignore|bypass|override|disregard)\b[^.!?\n]{0,80}\b(?:instruction|rule|safety|approval|policy|prompt)\b|\b(?:system|developer)\s*(?:message|instruction)?\s*:|\b(?:email|these?)\s+instructions?\b[^.!?\n]{0,80}\b(?:outrank|override|replace)\b|\b(?:turn|enable)\b[^.!?\n]{0,40}\bauto[- ]?send\b|\b(?:correct\s+response|reply\s+saying|response\s+is\s+exactly)\b|\b(?:reveal|print|send|share)\b[^.!?\n]{0,80}\b(?:hidden\s+prompt|password|credential|access\s+token|refresh\s+token|secret)\b|\b(?:private|stored)\b[^.!?\n]{0,40}\b(?:phone\s+number|contact\s+details|data|files?)\b|\bguaranteed\b[^.!?\n]{0,80}\b(?:followers?|returns?|engagement)\b|\b(?:buy|purchase)\s+(?:verified\s+)?followers?\b|\b(?:deposit|processing\s+fee)\b[^.!?\n]{0,80}\b(?:before|to\s+claim)\b/i;
+
+export function explicitPortfolioRequest(subject: string, body: string): boolean {
+  return PORTFOLIO_REQUEST.test(`${subject}\n${body}`);
+}
+
+export function legitimateInquiryFallbackAllowed(subject: string, body: string): boolean {
+  const text = `${subject}\n${body}`;
+  return !HOSTILE_INBOUND.test(text) &&
+    (explicitPortfolioRequest(subject, body) || (WORK_SIGNAL.test(text) && REQUEST_SIGNAL.test(text)));
+}
+
+export function safeInformationDraft(identity: DraftIdentity, wantsPortfolio = false): string {
+  const portfolio = wantsPortfolio ? "\n\nI can share relevant samples for review." : "";
+  return enforceConfiguredSignoff(
+    `Thanks for reaching out.\n\nCould you share more about the project scope, goals, timeline, and any brand materials you already have?${portfolio}`,
+    identity,
+  );
+}
+
+export function enforceConfiguredSignoff(draft: string, identity: DraftIdentity): string {
+  const signoff = String(identity.signoff ?? "Best").trim().replace(/\s+/g, " ").slice(0, 100) || "Best";
+  const name = String(identity.display_name ?? "").trim().replace(/\s+/g, " ").slice(0, 100);
+  const withoutExisting = draft.trim().replace(
+    /\n{1,3}(?:best|thanks|thank you|sincerely|regards|warmly|cheers|kind regards)[,!]?\s*(?:\n+\s*)?[^\n]{0,100}\s*$/i,
+    "",
+  ).trim();
+  return `${withoutExisting}\n\n${signoff},${name ? `\n${name}` : ""}`.trim();
+}
+
 export function finalizePortfolioDraft(draft: string, hasAttachments: boolean): string {
-  if (hasAttachments) return /\b(?:attach(?:ed|ment)|enclos(?:ed|ure))\b/i.test(draft)
-    ? draft : `${draft.trim()}\n\nI've attached relevant samples.`;
+  if (hasAttachments) {
+    if (/\b(?:attach(?:ed|ment)|enclos(?:ed|ure))\b/i.test(draft)) return draft;
+    const signoff = draft.match(/(?:^|\n)(?:best|thanks|thank you|sincerely|regards|warmly|cheers|kind regards)[,!]?\s*(?:\n|$)/i);
+    if (!signoff || signoff.index === undefined) return `${draft.trim()}\n\nI've attached relevant samples.`;
+    const position = signoff.index + (signoff[0].startsWith("\n") ? 1 : 0);
+    return `${draft.slice(0, position).trimEnd()}\n\nI've attached relevant samples.\n\n${draft.slice(position).trimStart()}`.trim();
+  }
   return draft.replace(/\b(?:i(?:'ve| have)?\s+)?(?:attached|enclosed)\s+(?:a few\s+)?(?:relevant\s+)?(?:samples|examples|files)\b[.!]?/gi,
     "I can share relevant samples.");
 }

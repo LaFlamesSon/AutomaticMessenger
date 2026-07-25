@@ -12,9 +12,13 @@ import {
   contactSafetyViolations,
   deliveryDecision,
   draftSafetyViolations,
+  enforceConfiguredSignoff,
+  explicitPortfolioRequest,
   findVerifiedOpenSlots,
   finalizePortfolioDraft,
+  legitimateInquiryFallbackAllowed,
   type MediaKitCandidate,
+  safeInformationDraft,
   selectMediaKit,
   safeCalendarPreference,
   type VerifiedOpenSlot,
@@ -327,16 +331,26 @@ async function loadSelectedMediaKit(supabase: any, kit: any): Promise<Attachment
 // editing it), capture the before/after pair into ia_draft_edits so future
 // drafts sound more like them. Auto-sent replies are never treated as user edits.
 async function learnFromSentDrafts(supabase: any, token: string, account: any): Promise<number> {
-  const { data: rows } = await supabase
+  const common = () => supabase
     .from("ia_processed_emails")
     .select("id, draft_text, processed_at, gmail_sent_message_id, gmail_draft_message_id")
     .eq("gmail_account_id", account.id)
     .eq("draft_created", true)
-    .or("sent_via.eq.manual_extension,and(sent_via.is.null,auto_sent.eq.false)")
     .eq("edit_captured", false)
     .not("draft_text", "is", null)
-    .gte("processed_at", new Date(Date.now() - 7 * 86400_000).toISOString())
-    .limit(10);
+    .gte("processed_at", new Date(Date.now() - 7 * 86400_000).toISOString());
+  const [{ data: manualRows }, { data: gmailDraftRows }] = await Promise.all([
+    common().eq("sent_via", "manual_extension").not("gmail_sent_message_id", "is", null)
+      .order("processed_at", { ascending: false }).limit(20),
+    common().is("sent_via", null).eq("auto_sent", false).not("gmail_draft_message_id", "is", null)
+      .order("processed_at", { ascending: false }).limit(30),
+  ]);
+  const seenRows = new Set<string>();
+  const rows = [...(manualRows ?? []), ...(gmailDraftRows ?? [])].filter((row: any) => {
+    if (seenRows.has(row.id)) return false;
+    seenRows.add(row.id);
+    return true;
+  });
   let learned = 0;
   for (const row of rows ?? []) {
     try {
@@ -527,6 +541,28 @@ Deno.serve(async (req: Request) => {
             triage = await triageEmail(systemPrompt, from, subject, emailBody);
           }
 
+          const portfolioRequested = explicitPortfolioRequest(subject, emailBody);
+          const fallbackAllowed = legitimateInquiryFallbackAllowed(subject, emailBody);
+          const enabledDraftCategories = Array.isArray(profile.draft_categories)
+            ? profile.draft_categories : ["urgent", "action_needed"];
+          const modelDraftUnsafe = triage.draft ? draftSafetyViolations(triage.draft).length > 0 : false;
+          const modelNeedsRecovery = enabledDraftCategories.includes(triage.category) &&
+            (!triage.draft || modelDraftUnsafe);
+          const categoryNeedsRecovery = !enabledDraftCategories.includes(triage.category) &&
+            triage.category !== "fyi" && fallbackAllowed;
+          if (fallbackAllowed && (modelNeedsRecovery || categoryNeedsRecovery)) {
+            triage = {
+              ...triage,
+              category: categoryNeedsRecovery ? "action_needed" : triage.category,
+              draft: safeInformationDraft(profile, portfolioRequested || triage.wants_portfolio),
+              wants_portfolio: portfolioRequested || triage.wants_portfolio,
+              missing_required: Array.from(new Set([...(triage.missing_required ?? []), "manual review"])),
+              confidence: Math.min(triage.confidence, 0.89),
+            };
+          } else if (portfolioRequested && fallbackAllowed) {
+            triage = { ...triage, wants_portfolio: true };
+          }
+
           let selectedKit: any = null;
           if (triage.wants_portfolio) {
             selectedKit = selectMediaKit(mediaKits as MediaKitCandidate[] ?? [], senderAddr, subject, emailBody);
@@ -558,8 +594,9 @@ Deno.serve(async (req: Request) => {
             attachments = await loadSelectedMediaKit(supabase, selectedKit);
           }
           if (triage.wants_portfolio && !attachments.length && decision === "auto_send") decision = "draft";
-          const portfolioDraft = triage.draft && triage.wants_portfolio
-            ? finalizePortfolioDraft(triage.draft, attachments.length > 0) : triage.draft;
+          const signedDraft = triage.draft ? enforceConfiguredSignoff(triage.draft, profile) : triage.draft;
+          const portfolioDraft = signedDraft && triage.wants_portfolio
+            ? finalizePortfolioDraft(signedDraft, attachments.length > 0) : signedDraft;
           let finalDraft = portfolioDraft ? applyContactPreference(portfolioDraft, calendar, verifiedSlots) : portfolioDraft;
           let contactViolations: string[] = [];
           if (portfolioDraft && finalDraft && decision !== "none") {
@@ -578,6 +615,7 @@ Deno.serve(async (req: Request) => {
             const freshSlots: VerifiedOpenSlot[] = freshBookingsError ? []
               : findVerifiedOpenSlots(freshCalendar, freshBookings ?? []);
             finalDraft = applyContactPreference(portfolioDraft, freshCalendar, freshSlots);
+            finalDraft = enforceConfiguredSignoff(finalDraft, profile);
             contactViolations = contactSafetyViolations(finalDraft, freshCalendar, freshSlots);
             if (contactViolations.length) decision = "none";
           }

@@ -7,7 +7,10 @@ import {
   bookingWithinAvailability, CATEGORIES, normalizeWeeklyAvailability,
   normalizedStringList, type WeeklyAvailabilityEntry,
 } from "../_shared/policy.ts";
-import { parseStrictRecipient, payloadHeader, payloadText, sanitizeHeader } from "../_shared/mime.ts";
+import {
+  parseStrictRecipient, payloadHeader, payloadText, sanitizeHeader,
+  type StableDraftAttachment, stableDraftPreview,
+} from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
 
 const CORS = {
@@ -251,19 +254,32 @@ function addressList(value: string): string[] | null {
   const parsed = value.split(",").map((entry) => parseStrictRecipient(entry));
   return parsed.every(Boolean) ? parsed as string[] : null;
 }
-function stablePayload(part: any): any {
-  return {
-    partId: String(part?.partId ?? ""), mimeType: sanitizeHeader(part?.mimeType, 100),
-    filename: sanitizeHeader(part?.filename, 180),
-    headers: (part?.headers ?? []).map((header: any) => ({ name: sanitizeHeader(header?.name, 100).toLowerCase(), value: sanitizeHeader(header?.value, 998) })),
-    body: { size: Number(part?.body?.size ?? 0), data: String(part?.body?.data ?? ""), attachmentId: String(part?.body?.attachmentId ?? "") },
-    parts: (part?.parts ?? []).map(stablePayload),
-  };
+async function attachmentContent(
+  accessToken: string,
+  messageId: string,
+  part: any,
+): Promise<{ data: string; size: number } | null> {
+  if (typeof part?.body?.data === "string" && part.body.data) {
+    return { data: part.body.data.replace(/=+$/, ""), size: Number(part.body.size ?? 0) };
+  }
+  const attachmentId = String(part?.body?.attachmentId ?? "");
+  if (!attachmentId) return null;
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!response.ok) return null;
+  const attachment = await response.json();
+  if (typeof attachment?.data !== "string" || !attachment.data) return null;
+  return { data: attachment.data.replace(/=+$/, ""), size: Number(attachment.size ?? part?.body?.size ?? 0) };
 }
 async function liveDraft(accessToken: string, draftId: string): Promise<{ recipient: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string; attachments: any[]; preview_version: string } | null> {
   const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}?format=full`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!response.ok) return null;
-  const payload = (await response.json())?.message?.payload;
+  const live = await response.json();
+  const messageId = String(live?.message?.id ?? "");
+  const payload = live?.message?.payload;
+  if (!messageId || !payload) return null;
   const to = addressList(payloadHeader(payload, "To"));
   const cc = addressList(payloadHeader(payload, "Cc"));
   const bcc = addressList(payloadHeader(payload, "Bcc"));
@@ -271,10 +287,28 @@ async function liveDraft(accessToken: string, draftId: string): Promise<{ recipi
   const recipient = to[0];
   const subject = sanitizeHeader(payloadHeader(payload, "Subject"), 500);
   const body = payloadText(payload);
-  const flattened: any[] = [];
-  const collect = (part: any) => { if (part?.filename || part?.body?.attachmentId) flattened.push({ filename: sanitizeHeader(part?.filename, 180), mime_type: sanitizeHeader(part?.mimeType, 100), byte_size: Number(part?.body?.size ?? 0) }); for (const child of part?.parts ?? []) collect(child); };
-  collect(payload);
-  const preview_version = await sha256(JSON.stringify(stablePayload(payload)));
+  const fingerprintAttachments: StableDraftAttachment[] = [];
+  const collect = async (part: any): Promise<boolean> => {
+    if (part?.filename || part?.body?.attachmentId) {
+      const content = await attachmentContent(accessToken, messageId, part);
+      if (!content) return false;
+      fingerprintAttachments.push({
+        filename: sanitizeHeader(part?.filename, 180),
+        mime_type: sanitizeHeader(part?.mimeType, 100),
+        byte_size: content.size,
+        content_sha256: await sha256(content.data),
+      });
+    }
+    for (const child of part?.parts ?? []) {
+      if (!await collect(child)) return false;
+    }
+    return true;
+  };
+  if (!await collect(payload)) return null;
+  const flattened = fingerprintAttachments.map(({ content_sha256: _content, ...attachment }) => attachment);
+  const preview_version = await sha256(JSON.stringify(stableDraftPreview({
+    to, cc, bcc, subject, body, attachments: fingerprintAttachments,
+  })));
   return { recipient, to, cc, bcc, subject, body, attachments: flattened, preview_version };
 }
 
