@@ -86,6 +86,12 @@ double-booking guard; API idempotency and owner checks sit above it.
 - Live reply experiments passed email-only, phone, and scheduled-call rules.
 - Media-kit upload validation, correct unique selection/attachment, ambiguous
   no-selection, and cleanup passed.
+- An 18-case live exact-message stress matrix passed 15 cases. PDF domain,
+  PNG brand, JPEG keyword, ambiguous tie, default fallback, owner-read mail,
+  owner-handled threads, injection resistance, long natural briefs, and
+  email-only postprocessing all worked without any automatic send. Direct
+  meeting requests without an explicit email fallback produced no draft in two
+  runs, and one of ten drafts omitted the exact configured signoff.
 - Two exact sent-edit examples produced measurable subsequent voice changes
   without price, availability, commitment, or contact-policy violations.
 
@@ -100,12 +106,15 @@ double-booking guard; API idempotency and owner checks sit above it.
 
 ## Next product work
 
-1. Upload at least one labeled media kit on the current account, then run one
-   exact sponsor fixture to verify unique selection and Gmail attachment.
-2. Perform one signed-in Calendar save/create/delete pass in the user's normal
+1. Make legitimate call/meeting requests deterministically produce an
+   information-gathering email reply when the saved contact mode is
+   `email_only`; add the C12/C16/C18 cases as regressions.
+2. Enforce the configured signoff server-side instead of relying only on the
+   model prompt.
+3. Perform one signed-in Calendar save/create/delete pass in the user's normal
    Chrome profile.
-3. Add real Google Calendar integration only with explicit OAuth scope and
+4. Add real Google Calendar integration only with explicit OAuth scope and
    truthful external conflict checks.
-4. Configure/activate Stripe, host the marketing site, and prepare Web Store
+5. Configure/activate Stripe, host the marketing site, and prepare Web Store
    packaging when product behavior is accepted.
-5. Rotate any credentials previously exposed in chat or local logs.
+6. Rotate any credentials previously exposed in chat or local logs.
