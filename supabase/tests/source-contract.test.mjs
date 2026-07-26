@@ -189,6 +189,13 @@ test("kit listing and labels remain owner scoped", async () => {
   assert.match(api, /cleanup_required/);
 });
 
+test("sweep loads media-kit descriptions for deterministic relevance matching", async () => {
+  const sweep = await read("functions/agent-sweep/index.ts");
+  assert.match(sweep, /select\("id, label, best_for,/);
+  assert.match(sweep, /description:\s*kit\.best_for/);
+  assert.match(sweep, /const shouldAttachKit = portfolioRequested \|\| contextualKitRelevant/);
+});
+
 test("server-side PNG validation checks the terminal IEND chunk type", async () => {
   const api = await read("functions/agent-api/index.ts");
   assert.match(api, /bytes\.slice\(-8, -4\).*0x49,0x45,0x4e,0x44/);
@@ -268,7 +275,7 @@ test("style learning requires an exact Gmail message association", async () => {
 test("safe deterministic recovery is Review-only and preserves injection defenses", async () => {
   const sweep = await read("functions/agent-sweep/index.ts");
   assert.match(sweep, /legitimateInquiryFallbackAllowed\(subject, emailBody\)/);
-  assert.match(sweep, /safeInformationDraft\(profile, portfolioRequested \|\| triage\.wants_portfolio\)/);
+  assert.match(sweep, /safeInformationDraft\(profile, shouldAttachKit \|\| triage\.wants_portfolio\)/);
   assert.match(sweep, /"manual review"/);
   assert.match(sweep, /confidence: Math\.min\(triage\.confidence, 0\.89\)/);
   assert.match(sweep, /explicitPortfolioRequest\(subject, emailBody\)/);

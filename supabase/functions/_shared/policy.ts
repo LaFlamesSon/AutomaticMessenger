@@ -7,12 +7,13 @@ export type Category = typeof CATEGORIES[number];
 export interface MediaKitCandidate {
   id: string;
   label: string;
+  description?: string | null;
   sender_domains?: string[];
   brand_names?: string[];
   keywords?: string[];
   is_default?: boolean;
   auto_attach?: boolean;
-  match_strength?: "exact_domain" | "exact_brand" | "keyword" | "default";
+  match_strength?: "exact_domain" | "exact_brand" | "keyword" | "description" | "default";
   auto_send_eligible?: boolean;
 }
 
@@ -62,7 +63,8 @@ const PORTFOLIO_REQUEST = new RegExp(
   String.raw`(?:\b(?:attach|send|share|include|provide|review|see|need(?:s|ed)?|want(?:s|ed)?|request(?:s|ed)?|looking\s+for)\b[^.!?\n]{0,100}\b${PORTFOLIO_NOUN}\b|\b${PORTFOLIO_NOUN}\b[^.!?\n]{0,100}\b(?:attach|send|share|include|provide|review|see|need(?:s|ed)?|want(?:s|ed)?|request(?:s|ed)?|looking\s+for)\b)`,
   "iu",
 );
-const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
+const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
+const COLLABORATION_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership)\b/i;
 const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|schedule|book)\b)|(?:\binterested\s+in\b)/i;
 const HOSTILE_INBOUND = /\b(?:ignore|bypass|override|disregard)\b[^.!?\n]{0,80}\b(?:instruction|rule|safety|approval|policy|prompt)\b|\b(?:system|developer)\s*(?:message|instruction)?\s*:|\b(?:email|these?)\s+instructions?\b[^.!?\n]{0,80}\b(?:outrank|override|replace)\b|\b(?:turn|enable)\b[^.!?\n]{0,40}\bauto[- ]?send\b|\b(?:correct\s+response|reply\s+saying|response\s+is\s+exactly)\b|\b(?:reveal|print|send|share)\b[^.!?\n]{0,80}\b(?:hidden\s+prompt|password|credential|access\s+token|refresh\s+token|secret)\b|\b(?:private|stored)\b[^.!?\n]{0,40}\b(?:phone\s+number|contact\s+details|data|files?)\b|\bguaranteed\b[^.!?\n]{0,80}\b(?:followers?|returns?|engagement)\b|\b(?:buy|purchase)\s+(?:verified\s+)?followers?\b|\b(?:deposit|processing\s+fee)\b[^.!?\n]{0,80}\b(?:before|to\s+claim)\b/i;
 
@@ -74,6 +76,11 @@ export function legitimateInquiryFallbackAllowed(subject: string, body: string):
   const text = `${subject}\n${body}`;
   return !HOSTILE_INBOUND.test(text) &&
     (explicitPortfolioRequest(subject, body) || (WORK_SIGNAL.test(text) && REQUEST_SIGNAL.test(text)));
+}
+
+export function collaborationMediaKitRelevant(subject: string, body: string): boolean {
+  const text = `${subject}\n${body}`;
+  return legitimateInquiryFallbackAllowed(subject, body) && COLLABORATION_SIGNAL.test(text);
 }
 
 export function safeInformationDraft(identity: DraftIdentity, wantsPortfolio = false): string {
@@ -142,15 +149,56 @@ function includesTerm(haystack: string, term: string): boolean {
   return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "iu").test(haystack);
 }
 
+const DESCRIPTION_STOP_WORDS = new Set([
+  "about", "also", "and", "attach", "attachment", "best", "brand", "campaign",
+  "collab", "collaboration", "content", "creator", "default", "example", "file",
+  "for", "general", "include", "information", "kit", "media", "our", "partnership",
+  "portfolio", "provide", "relevant", "request", "review", "sample", "send", "share",
+  "sponsor", "sponsorship", "that", "the", "their", "this", "use", "with", "work",
+]);
+
+function relevanceToken(raw: string): string {
+  let token = raw.toLocaleLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");
+  if (token.length > 5 && /ies$/.test(token)) token = `${token.slice(0, -3)}y`;
+  else if (token.length > 5 && /(?:ches|shes|xes|zes)$/.test(token)) token = token.slice(0, -2);
+  else if (token.length > 4 && /s$/.test(token) && !/ss$/.test(token)) token = token.slice(0, -1);
+  return token;
+}
+
+function relevanceTokens(value: string): Set<string> {
+  const tokens = value.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return new Set(tokens.map(relevanceToken)
+    .filter((token) => token.length >= 4 && !DESCRIPTION_STOP_WORDS.has(token)));
+}
+
+function descriptionMatchCount(description: string | null | undefined, emailText: string): number {
+  if (!description?.trim()) return 0;
+  const descriptionTokens = relevanceTokens(description.slice(0, 500));
+  const emailTokens = relevanceTokens(emailText);
+  let matches = 0;
+  for (const token of descriptionTokens) if (emailTokens.has(token)) matches++;
+  return matches;
+}
+
 export function selectMediaKit(kits: MediaKitCandidate[], senderEmail: string, subject: string, body: string): MediaKitCandidate | null {
   const domain = senderEmail.split("@")[1]?.toLocaleLowerCase() ?? "";
   const text = `${subject}\n${body}`.toLocaleLowerCase();
+  const defaultKit = () => {
+    const defaults = kits.filter((kit) => kit.is_default === true);
+    return defaults.length === 1
+      ? { ...defaults[0], match_strength: "default" as const, auto_send_eligible: false }
+      : null;
+  };
   const scored = kits.map((kit) => {
     let score = 0;
     let strength: MediaKitCandidate["match_strength"];
     if ((kit.sender_domains ?? []).some((d) => d.trim().toLocaleLowerCase() === domain)) { score = 300; strength = "exact_domain"; }
     else if ((kit.brand_names ?? []).some((term) => includesTerm(text, term))) { score = 200; strength = "exact_brand"; }
     else if ((kit.keywords ?? []).some((term) => includesTerm(text, term))) { score = 100; strength = "keyword"; }
+    else {
+      const matches = descriptionMatchCount(kit.description, text);
+      if (matches > 0) { score = 50 + Math.min(matches, 4) * 10; strength = "description"; }
+    }
     return { kit, score, strength };
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score);
   if (scored.length && (scored.length === 1 || scored[0].score > scored[1].score)) {
@@ -159,9 +207,7 @@ export function selectMediaKit(kits: MediaKitCandidate[], senderEmail: string, s
       // but only an exact configured sender-domain rule may release an attachment unattended.
       auto_send_eligible: scored[0].strength === "exact_domain" };
   }
-  if (scored.length) return null;
-  const defaults = kits.filter((kit) => kit.is_default === true);
-  return defaults.length === 1 ? { ...defaults[0], match_strength: "default", auto_send_eligible: false } : null;
+  return defaultKit();
 }
 
 const CLOCK = /^(?:[01]\d|2[0-3]):[0-5]\d$/;

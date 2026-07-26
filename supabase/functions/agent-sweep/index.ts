@@ -7,6 +7,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   applyContactPreference,
+  collaborationMediaKitRelevant,
   type CalendarPreference,
   type Category,
   contactSafetyViolations,
@@ -475,7 +476,7 @@ Deno.serve(async (req: Request) => {
       const verifiedSlots = findVerifiedOpenSlots(calendar, calendarBookings ?? []);
       const systemPrompt = buildSystemPrompt(profile, edits ?? [], calendar);
       const { data: mediaKits, error: kitError } = await supabase.from("ia_media_kits")
-        .select("id, label, storage_path, original_filename, mime_type, byte_size, brand_names, sender_domains, keywords, is_default, auto_attach")
+        .select("id, label, best_for, storage_path, original_filename, mime_type, byte_size, brand_names, sender_domains, keywords, is_default, auto_attach")
         .eq("user_id", account.user_id).eq("status", "active");
       if (kitError) throw new Error(`media kits: ${kitError.message}`);
       const { data: senderRules, error: rulesError } = await supabase.from("ia_sender_rules")
@@ -543,6 +544,8 @@ Deno.serve(async (req: Request) => {
 
           const portfolioRequested = explicitPortfolioRequest(subject, emailBody);
           const fallbackAllowed = legitimateInquiryFallbackAllowed(subject, emailBody);
+          const contextualKitRelevant = collaborationMediaKitRelevant(subject, emailBody);
+          const shouldAttachKit = portfolioRequested || contextualKitRelevant;
           const enabledDraftCategories = Array.isArray(profile.draft_categories)
             ? profile.draft_categories : ["urgent", "action_needed"];
           const modelDraftUnsafe = triage.draft ? draftSafetyViolations(triage.draft).length > 0 : false;
@@ -554,18 +557,19 @@ Deno.serve(async (req: Request) => {
             triage = {
               ...triage,
               category: categoryNeedsRecovery ? "action_needed" : triage.category,
-              draft: safeInformationDraft(profile, portfolioRequested || triage.wants_portfolio),
-              wants_portfolio: portfolioRequested || triage.wants_portfolio,
+              draft: safeInformationDraft(profile, shouldAttachKit || triage.wants_portfolio),
+              wants_portfolio: shouldAttachKit || triage.wants_portfolio,
               missing_required: Array.from(new Set([...(triage.missing_required ?? []), "manual review"])),
               confidence: Math.min(triage.confidence, 0.89),
             };
-          } else if (portfolioRequested && fallbackAllowed) {
+          } else if (shouldAttachKit && fallbackAllowed) {
             triage = { ...triage, wants_portfolio: true };
           }
 
           let selectedKit: any = null;
           if (triage.wants_portfolio) {
-            selectedKit = selectMediaKit(mediaKits as MediaKitCandidate[] ?? [], senderAddr, subject, emailBody);
+            const kitCandidates = (mediaKits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for }));
+            selectedKit = selectMediaKit(kitCandidates as MediaKitCandidate[], senderAddr, subject, emailBody);
           }
           const triageSafety = triage.draft ? draftSafetyViolations(triage.draft) : [];
           let decision = deliveryDecision({
