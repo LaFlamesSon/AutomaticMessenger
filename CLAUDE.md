@@ -51,8 +51,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 23 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning |
-| `agent-api` | 9 | Extension API, combined Google provider-token handoff, stable attachment-aware preview/send, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 27 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning |
+| `agent-api` | 10 | Extension API, combined Google provider-token handoff, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -125,6 +125,17 @@ double-booking guard; API idempotency and owner checks sit above it.
   `docs/audits/caughtup-description-kit-routing-20260725.md`.
 - Two exact sent-edit examples produced measurable subsequent voice changes
   without price, availability, commitment, or contact-policy violations.
+- A new 100-scenario tenant matrix exercised five media-kit routes, Settings
+  and Chat style changes, edit learning, three contact modes, read/handled and
+  duplicate behavior, injection/scam handling, stable attachment preview, and
+  controlled manual sending. The first pass was 92/100; all eight failures
+  passed fresh targeted reruns after fixes. A new hostile-settings-instruction
+  boundary then failed once and passed its fresh post-fix confirmation with no
+  draft or attachment. The five-tab live API matrix passed 26/26 and the local
+  policy/backend/extension suites passed 90/90. Auto-send remained off, four
+  sends stayed within the controlled accounts, and all temporary tenant state
+  was removed or restored. Evidence is in
+  `docs/audits/caughtup-tenant-100-feature-stress-20260725.md`.
 
 ## Repository layout
 
