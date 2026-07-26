@@ -75,7 +75,7 @@ const PORTFOLIO_REQUEST = new RegExp(
 );
 const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
 const COLLABORATION_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership)\b/i;
-const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|schedule|book)\b)|(?:\binterested\s+in\b)/i;
+const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|schedule|book)\b)|(?:\b(?:interested\s+in|looking\s+for)\b)/i;
 const EXPLICIT_NO_REPLY = /\b(?:fyi\s+only|for\s+(?:awareness|information|your\s+records)\s+only|no\s+(?:reply|response|action)\s+(?:is\s+)?(?:needed|required)|(?:please\s+)?do\s+not\s+reply)\b/i;
 const HOSTILE_INBOUND = /\b(?:ignore|bypass|override|disregard)\b[^.!?\n]{0,80}\b(?:instruction|rule|safety|approval|policy|prompt)\b|\b(?:system|developer)\s*(?:message|instruction)?\s*:|\b(?:email|these?)\s+instructions?\b[^.!?\n]{0,80}\b(?:outrank|override|replace)\b|\b(?:turn|enable)\b[^.!?\n]{0,40}\bauto[- ]?send\b|\b(?:correct\s+response|reply\s+saying|response\s+is\s+exactly)\b|\b(?:reveal|print|send|share)\b[^.!?\n]{0,80}\b(?:hidden\s+prompt|password|credential|access\s+token|refresh\s+token|secret)\b|\b(?:private|stored)\b[^.!?\n]{0,40}\b(?:phone\s+number|contact\s+details|data|files?)\b|\bguaranteed\b[^.!?\n]{0,80}\b(?:followers?|returns?|engagement)\b|\b(?:buy|purchase)\s+(?:verified\s+)?followers?\b|\b(?:deposit|processing\s+fee)\b[^.!?\n]{0,80}\b(?:before|to\s+claim)\b/i;
 
@@ -187,7 +187,12 @@ function descriptionMatchCount(description: string | null | undefined, emailText
   const descriptionTokens = relevanceTokens(description.slice(0, 500));
   const emailTokens = relevanceTokens(emailText);
   let matches = 0;
-  for (const token of descriptionTokens) if (emailTokens.has(token)) matches++;
+  for (const token of descriptionTokens) {
+    if (emailTokens.has(token)) matches += 2;
+    if (token.length >= 4 && Array.from(emailTokens).some((emailToken) =>
+      emailToken !== token && emailToken.length >= 4 &&
+      (token.startsWith(emailToken) || emailToken.startsWith(token)))) matches++;
+  }
   return matches;
 }
 
