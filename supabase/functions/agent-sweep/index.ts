@@ -17,6 +17,7 @@ import {
   explicitPortfolioRequest,
   findVerifiedOpenSlots,
   finalizePortfolioDraft,
+  hostileInboundDetected,
   legitimateInquiryFallbackAllowed,
   type MediaKitCandidate,
   safeInformationDraft,
@@ -540,6 +541,16 @@ Deno.serve(async (req: Request) => {
             triage = { category: "low_priority", summary: "Automated no-reply message.", draft: null, wants_portfolio: false, missing_required: [], confidence: 1 };
           } else {
             triage = await triageEmail(systemPrompt, from, subject, emailBody);
+          }
+          if (hostileInboundDetected(subject, emailBody)) {
+            triage = {
+              category: "spam_or_poor_fit",
+              summary: "Message contains untrusted instructions directed at the agent.",
+              draft: null,
+              wants_portfolio: false,
+              missing_required: [],
+              confidence: 1,
+            };
           }
 
           const portfolioRequested = explicitPortfolioRequest(subject, emailBody);
