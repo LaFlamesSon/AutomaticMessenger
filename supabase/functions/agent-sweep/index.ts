@@ -552,7 +552,7 @@ Deno.serve(async (req: Request) => {
           const modelNeedsRecovery = enabledDraftCategories.includes(triage.category) &&
             (!triage.draft || modelDraftUnsafe);
           const categoryNeedsRecovery = !enabledDraftCategories.includes(triage.category) &&
-            triage.category !== "fyi" && fallbackAllowed;
+            fallbackAllowed && (triage.category !== "fyi" || contextualKitRelevant);
           if (fallbackAllowed && (modelNeedsRecovery || categoryNeedsRecovery)) {
             triage = {
               ...triage,

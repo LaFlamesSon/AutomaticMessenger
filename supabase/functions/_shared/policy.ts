@@ -66,6 +66,7 @@ const PORTFOLIO_REQUEST = new RegExp(
 const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
 const COLLABORATION_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership)\b/i;
 const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|schedule|book)\b)|(?:\binterested\s+in\b)/i;
+const EXPLICIT_NO_REPLY = /\b(?:fyi\s+only|for\s+(?:awareness|information|your\s+records)\s+only|no\s+(?:reply|response|action)\s+(?:is\s+)?(?:needed|required)|(?:please\s+)?do\s+not\s+reply)\b/i;
 const HOSTILE_INBOUND = /\b(?:ignore|bypass|override|disregard)\b[^.!?\n]{0,80}\b(?:instruction|rule|safety|approval|policy|prompt)\b|\b(?:system|developer)\s*(?:message|instruction)?\s*:|\b(?:email|these?)\s+instructions?\b[^.!?\n]{0,80}\b(?:outrank|override|replace)\b|\b(?:turn|enable)\b[^.!?\n]{0,40}\bauto[- ]?send\b|\b(?:correct\s+response|reply\s+saying|response\s+is\s+exactly)\b|\b(?:reveal|print|send|share)\b[^.!?\n]{0,80}\b(?:hidden\s+prompt|password|credential|access\s+token|refresh\s+token|secret)\b|\b(?:private|stored)\b[^.!?\n]{0,40}\b(?:phone\s+number|contact\s+details|data|files?)\b|\bguaranteed\b[^.!?\n]{0,80}\b(?:followers?|returns?|engagement)\b|\b(?:buy|purchase)\s+(?:verified\s+)?followers?\b|\b(?:deposit|processing\s+fee)\b[^.!?\n]{0,80}\b(?:before|to\s+claim)\b/i;
 
 export function explicitPortfolioRequest(subject: string, body: string): boolean {
@@ -74,7 +75,7 @@ export function explicitPortfolioRequest(subject: string, body: string): boolean
 
 export function legitimateInquiryFallbackAllowed(subject: string, body: string): boolean {
   const text = `${subject}\n${body}`;
-  return !HOSTILE_INBOUND.test(text) &&
+  return !HOSTILE_INBOUND.test(text) && !EXPLICIT_NO_REPLY.test(text) &&
     (explicitPortfolioRequest(subject, body) || (WORK_SIGNAL.test(text) && REQUEST_SIGNAL.test(text)));
 }
 
@@ -150,25 +151,25 @@ function includesTerm(haystack: string, term: string): boolean {
 }
 
 const DESCRIPTION_STOP_WORDS = new Set([
-  "about", "also", "and", "attach", "attachment", "best", "brand", "campaign",
+  "about", "all", "also", "and", "any", "are", "attach", "attachment", "best", "brand", "campaign", "can",
   "collab", "collaboration", "content", "creator", "default", "example", "file",
-  "for", "general", "include", "information", "kit", "media", "our", "partnership",
+  "for", "from", "general", "has", "have", "include", "information", "into", "its", "kit", "media", "new", "not", "our", "partnership",
   "portfolio", "provide", "relevant", "request", "review", "sample", "send", "share",
-  "sponsor", "sponsorship", "that", "the", "their", "this", "use", "with", "work",
+  "sponsor", "sponsorship", "that", "the", "their", "this", "use", "who", "with", "work", "you", "your",
 ]);
 
 function relevanceToken(raw: string): string {
   let token = raw.toLocaleLowerCase().normalize("NFKD").replace(/\p{M}/gu, "");
   if (token.length > 5 && /ies$/.test(token)) token = `${token.slice(0, -3)}y`;
   else if (token.length > 5 && /(?:ches|shes|xes|zes)$/.test(token)) token = token.slice(0, -2);
-  else if (token.length > 4 && /s$/.test(token) && !/ss$/.test(token)) token = token.slice(0, -1);
+  else if (token.length > 3 && /s$/.test(token) && !/ss$/.test(token)) token = token.slice(0, -1);
   return token;
 }
 
 function relevanceTokens(value: string): Set<string> {
   const tokens = value.match(/[\p{L}\p{N}]+/gu) ?? [];
   return new Set(tokens.map(relevanceToken)
-    .filter((token) => token.length >= 4 && !DESCRIPTION_STOP_WORDS.has(token)));
+    .filter((token) => token.length >= 3 && !DESCRIPTION_STOP_WORDS.has(token)));
 }
 
 function descriptionMatchCount(description: string | null | undefined, emailText: string): number {

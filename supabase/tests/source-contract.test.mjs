@@ -194,6 +194,7 @@ test("sweep loads media-kit descriptions for deterministic relevance matching", 
   assert.match(sweep, /select\("id, label, best_for,/);
   assert.match(sweep, /description:\s*kit\.best_for/);
   assert.match(sweep, /const shouldAttachKit = portfolioRequested \|\| contextualKitRelevant/);
+  assert.match(sweep, /triage\.category !== "fyi" \|\| contextualKitRelevant/);
 });
 
 test("server-side PNG validation checks the terminal IEND chunk type", async () => {
