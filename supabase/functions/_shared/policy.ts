@@ -353,7 +353,10 @@ export function findVerifiedOpenSlots(
 
 export function applyContactPreference(draft: string, preference: CalendarPreference, slots: VerifiedOpenSlot[]): string {
   const base = draft.replace(/\r\n/g, "\n").split("\n").map((line) => {
-    const sentences = line.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [];
+    // A sentence boundary requires whitespace or end-of-line after punctuation.
+    // This keeps dots inside URLs intact so the server-owned booking suffix is
+    // removed and re-applied exactly during its idempotency safety check.
+    const sentences = line.match(/.*?(?:[.!?]+(?=\s|$)|$)/g) ?? [];
     return sentences.map((sentence) => sentence.trim()).filter((sentence) => sentence &&
       !CONTACT_LINE.test(sentence) && !EXTERNAL_CALENDAR_CLAIM.test(sentence)).join(" ");
   }).join("\n").replace(/\n{3,}/g, "\n\n").trim();

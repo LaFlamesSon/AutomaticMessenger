@@ -267,6 +267,11 @@ test("contact postprocessing is idempotent, preserves voice layout, and blocks b
   assert.match(withSlots, /9:00 AM PDT; let me know which works\./);
   assert.equal(applyContactPreference(withSlots, scheduled, slots), withSlots);
   assert.deepEqual(contactSafetyViolations(withSlots, scheduled, slots), []);
+  const bookingUrl = { ...scheduled, booking_url: "https://cal.example.com/caughtup-qa" };
+  const withBookingUrl = applyContactPreference("Thanks for the detail.\n\nBest,\nYafet", bookingUrl, []);
+  assert.match(withBookingUrl, /https:\/\/cal\.example\.com\/caughtup-qa/);
+  assert.equal(applyContactPreference(withBookingUrl, bookingUrl, []), withBookingUrl);
+  assert.deepEqual(contactSafetyViolations(withBookingUrl, bookingUrl, []), []);
   const syncClaim = "My Google Calendar is synchronized, so there will be no conflicts.\n\nBest,\nYafet";
   assert.doesNotMatch(applyContactPreference(syncClaim, emailOnly, []), /Google Calendar|synchron|no conflicts/i);
   assert.deepEqual(contactSafetyViolations(syncClaim, emailOnly, []), ["external_calendar_claim", "unverified_contact_method"]);
