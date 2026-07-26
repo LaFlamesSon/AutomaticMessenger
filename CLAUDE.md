@@ -48,8 +48,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 18 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, safe drafting, contact policy, kit selection, voice learning |
-| `agent-api` | 8 | Extension API, combined Google provider-token handoff, preview/send, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 21 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, contact policy, kit selection, voice learning |
+| `agent-api` | 9 | Extension API, combined Google provider-token handoff, stable attachment-aware preview/send, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -102,6 +102,16 @@ double-booking guard; API idempotency and owner checks sit above it.
   drafts. The separate extension suite passed 29/29 live API checks and 34/34
   local UI-contract checks. Full evidence is in
   `docs/audits/yafet-100-dynamic-stress-20260724.md`.
+- The follow-up fix cycle ran 51 additional exact-message cases. The first
+  targeted wave verified sponsor/meeting recall, safe budget handling, PDF/PNG
+  routing, stable attachment previews, manual send preservation, signoff
+  enforcement, and recent-edit learning. A 30-case boundary wave passed 28
+  immediately, exposing one brief-based recall gap and one provider timeout.
+  Repeat testing then exposed natural "needs samples" phrasing. Both language
+  gaps were fixed and the final six-case live confirmation passed 6/6.
+  Auto-send stayed off, two sends were limited to the controlled QA sender,
+  and the original profile was restored after every wave. Evidence is in
+  `docs/audits/caughtup-live-regression-20260725.md`.
 - Two exact sent-edit examples produced measurable subsequent voice changes
   without price, availability, commitment, or contact-policy violations.
 
@@ -116,23 +126,12 @@ double-booking guard; API idempotency and owner checks sit above it.
 
 ## Next product work
 
-1. Add deterministic recall/fallback handling for legitimate sponsor,
-   portfolio/media-kit, and meeting requests; include the 100-case failures as
-   regressions without weakening spam or injection defenses.
-2. When a model draft violates price/availability/commitment policy,
-   regenerate or deterministically sanitize a safe information-gathering draft
-   instead of silently producing no draft.
-3. Fix `learnFromSentDrafts()` starvation by prioritizing eligible recent sent
-   rows and completing/skipping stale unsent rows without losing real edits.
-4. Make attachment-bearing draft preview hashes depend only on stable,
-   user-visible send content so unchanged drafts do not fail with
-   `draft_changed`.
-5. Enforce the configured signoff server-side instead of relying only on the
-   model prompt.
-6. Perform one signed-in five-tab popup and Calendar pass in the user's normal
+1. Perform one signed-in five-tab popup and Calendar pass in the user's normal
    Chrome profile.
-7. Add real Google Calendar integration only with explicit OAuth scope and
+2. Add durable automated integration fixtures around the now-live deterministic
+   recall, safe-recovery, attachment-preview, learning, and signoff behavior.
+3. Add real Google Calendar integration only with explicit OAuth scope and
    truthful external conflict checks.
-8. Configure/activate Stripe, host the marketing site, and prepare Web Store
+4. Configure/activate Stripe, host the marketing site, and prepare Web Store
    packaging when product behavior is accepted.
-9. Rotate any credentials previously exposed in chat or local logs.
+5. Rotate any credentials previously exposed in chat or local logs.
