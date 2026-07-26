@@ -42,13 +42,16 @@ bookings; it does not claim or provide Google Calendar synchronization.
 - Gmail worker auth: `x-agent-secret`; secrets are read through
   `ia_get_config()` from Supabase Vault.
 - Media kits: private Storage objects plus owner-scoped metadata. Matching uses
-  configured brands/domains/keywords and refuses ambiguous ties.
+  configured domains, brands, keywords, and bounded description relevance.
+  Legitimate collaboration requests can receive a contextual kit without
+  explicit attachment wording; one default kit handles unmatched or ambiguous
+  requests without guessing between specific kits.
 
 ## Deployed Edge Functions
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 21 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, contact policy, kit selection, voice learning |
+| `agent-sweep` | 23 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning |
 | `agent-api` | 9 | Extension API, combined Google provider-token handoff, stable attachment-aware preview/send, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
@@ -112,6 +115,14 @@ double-booking guard; API idempotency and owner checks sit above it.
   Auto-send stayed off, two sends were limited to the controlled QA sender,
   and the original profile was restored after every wave. Evidence is in
   `docs/audits/caughtup-live-regression-20260725.md`.
+- Description-aware media-kit routing was verified in two 22-case live waves.
+  The first passed 20/22 and exposed short-term (`gym`) normalization and a
+  legitimate skincare request misclassified as FYI. After narrow fixes, the
+  second wave passed 22/22: fitness/eyelash/skincare descriptions selected the
+  intended images, unmatched and ambiguous collaborations selected the general
+  PDF, and FYI/injection/scam cases attached nothing. Auto-send remained off
+  and all temporary kits/profile changes were restored. Evidence is in
+  `docs/audits/caughtup-description-kit-routing-20260725.md`.
 - Two exact sent-edit examples produced measurable subsequent voice changes
   without price, availability, commitment, or contact-policy violations.
 
