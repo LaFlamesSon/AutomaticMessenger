@@ -131,6 +131,8 @@ test("portfolio wording never falsely claims a missing attachment", () => {
 test("explicit portfolio intent is deterministic but brand mentions alone are not", () => {
   assert.equal(explicitPortfolioRequest("Media kit", "Please attach your general media kit for review."), true);
   assert.equal(explicitPortfolioRequest("Samples", "Could you send work examples for NorthstarQA?"), true);
+  assert.equal(explicitPortfolioRequest("Creator campaign", "NorthstarQA needs relevant visual work examples."), true);
+  assert.equal(explicitPortfolioRequest("Portfolio review", "Our team is looking for relevant samples."), true);
   assert.equal(explicitPortfolioRequest("Campaign", "NorthstarQA would like to discuss campaign goals."), false);
 });
 

@@ -59,7 +59,7 @@ export function draftSafetyViolations(draft: string): string[] {
 
 const PORTFOLIO_NOUN = String.raw`(?:media\s+kit|portfolio|work\s+(?:samples?|examples?)|relevant\s+samples?|samples?|examples?|example\s+(?:images?|work)|case\s+stud(?:y|ies))`;
 const PORTFOLIO_REQUEST = new RegExp(
-  String.raw`(?:\b(?:attach|send|share|include|provide|review|see)\b[^.!?\n]{0,100}\b${PORTFOLIO_NOUN}\b|\b${PORTFOLIO_NOUN}\b[^.!?\n]{0,100}\b(?:attach|send|share|include|provide|review|see)\b)`,
+  String.raw`(?:\b(?:attach|send|share|include|provide|review|see|need(?:s|ed)?|want(?:s|ed)?|request(?:s|ed)?|looking\s+for)\b[^.!?\n]{0,100}\b${PORTFOLIO_NOUN}\b|\b${PORTFOLIO_NOUN}\b[^.!?\n]{0,100}\b(?:attach|send|share|include|provide|review|see|need(?:s|ed)?|want(?:s|ed)?|request(?:s|ed)?|looking\s+for)\b)`,
   "iu",
 );
 const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
