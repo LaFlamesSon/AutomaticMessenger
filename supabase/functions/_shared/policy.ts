@@ -54,6 +54,16 @@ export function normalizedStringList(value: unknown, maxItems: number, maxLength
   return out;
 }
 
+const STYLE_PREFERENCE_INTENT = /\b(?:make|write|use|keep|change|set|prefer|sound)\b[^.!?\n]{0,100}\b(?:repl(?:y|ies)|drafts?|tone|style|voice|writing)\b|\b(?:repl(?:y|ies)|drafts?|tone|style|voice)\b[^.!?\n]{0,100}\b(?:concise|brief|warm|friendly|formal|casual|professional|direct|playful|short)\b/i;
+const UNSAFE_STYLE_PREFERENCE = /\b(?:auto[- ]?send|bypass|override|ignore\s+(?:safety|rules?)|accept|decline|price|rate|availability|turnaround)\b/i;
+
+export function explicitStylePreference(message: string): string | null {
+  const normalized = message.trim().replace(/\s+/g, " ").slice(0, 500);
+  if (!normalized || /^(?:why|what|how|when|where|did|was|were)\b/i.test(normalized) ||
+    !STYLE_PREFERENCE_INTENT.test(normalized) || UNSAFE_STYLE_PREFERENCE.test(normalized)) return null;
+  return normalized;
+}
+
 export function draftSafetyViolations(draft: string): string[] {
   return HARD_DRAFT_PATTERNS.filter(([, pattern]) => pattern.test(draft)).map(([name]) => name);
 }

@@ -634,6 +634,11 @@ $("chatForm").addEventListener("submit", async (event) => {
     const result = await api("chat", { message: text }, { timeout: 30000 });
     $("typing")?.remove();
     addMessage("agent", result.reply || "I couldn't form a response.");
+    if (result.profile_updated?.tone) {
+      if (currentProfile) currentProfile.tone = result.profile_updated.tone;
+      addMessage("rule", "Writing style updated for future replies.");
+      settingsLoaded = false;
+    }
     if (result.rule_added) {
       addMessage("rule", `Rule saved: ${result.rule_added}`);
       settingsLoaded = false;

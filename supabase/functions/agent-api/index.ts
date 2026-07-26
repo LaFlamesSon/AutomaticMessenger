@@ -5,7 +5,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   bookingWithinAvailability, CATEGORIES, normalizeWeeklyAvailability,
-  normalizedStringList, type WeeklyAvailabilityEntry,
+  normalizedStringList, explicitStylePreference, type WeeklyAvailabilityEntry,
 } from "../_shared/policy.ts";
 import {
   parseStrictRecipient, payloadHeader, payloadText, sanitizeHeader,
@@ -389,6 +389,7 @@ Deno.serve(async (req: Request) => {
       case "chat": {
         const message = cleanString(body.message ?? "", "message", 4000);
         if (!message) return json({ error: "empty message" }, 400);
+        const stylePreference = explicitStylePreference(message);
         const { error: userMessageError } = await supabase.from("ia_chat_messages")
           .insert({ user_id: user.id, role: "user", content: message });
         if (userMessageError) throw new Error(userMessageError.message);
@@ -430,23 +431,28 @@ Deno.serve(async (req: Request) => {
           const candidate = typeof parsed.new_rule === "string" ? cleanString(parsed.new_rule, "new_rule", 300) : "";
           newRule = candidate && isRestrictiveRule(candidate) ? candidate : null;
         } catch { /* retain safe fallback */ }
-        if (newRule && profile) {
-          const current = String(profile.custom_rules ?? "");
-          const lines = new Set(current.split("\n").map((line) => line.trim()).filter(Boolean));
-          lines.add(`- ${newRule}`);
-          const customRules = Array.from(lines).join("\n").slice(0, 4000);
-          const { error } = await supabase.from("ia_voice_profiles")
-            .update({ custom_rules: customRules, reply_mode: "draft_only", auto_send: false,
-              auto_send_confirmed_at: null, auto_send_policy_version: null,
-              updated_at: new Date().toISOString(), settings_version: Number(profile.settings_version ?? 1) + 1 })
-            .eq("user_id", user.id);
+        if ((newRule || stylePreference) && profile) {
+          const updates: Record<string, unknown> = {
+            updated_at: new Date().toISOString(),
+            settings_version: Number(profile.settings_version ?? 1) + 1,
+          };
+          if (stylePreference) updates.tone = stylePreference;
+          if (newRule) {
+            const current = String(profile.custom_rules ?? "");
+            const lines = new Set(current.split("\n").map((line) => line.trim()).filter(Boolean));
+            lines.add(`- ${newRule}`);
+            updates.custom_rules = Array.from(lines).join("\n").slice(0, 4000);
+            Object.assign(updates, { reply_mode: "draft_only", auto_send: false,
+              auto_send_confirmed_at: null, auto_send_policy_version: null });
+          }
+          const { error } = await supabase.from("ia_voice_profiles").update(updates).eq("user_id", user.id);
           if (error) throw new Error(error.message);
         }
         const { error: assistantMessageError } = await supabase.from("ia_chat_messages")
           .insert({ user_id: user.id, role: "assistant", content: reply });
         if (assistantMessageError) throw new Error(assistantMessageError.message);
-        return json({ reply, rule_added: newRule, reply_mode: newRule ? "draft_only" : profile?.reply_mode,
-          auto_send_disabled: Boolean(newRule) });
+        return json({ reply, rule_added: newRule, profile_updated: stylePreference ? { tone: stylePreference } : null,
+          reply_mode: newRule ? "draft_only" : profile?.reply_mode, auto_send_disabled: Boolean(newRule) });
       }
 
       case "profile_get": {

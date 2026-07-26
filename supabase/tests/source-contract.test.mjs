@@ -126,6 +126,13 @@ test("extension-facing action contract is present", async () => {
   assert.match(api, /body\.action === "auth_refresh"/);
 });
 
+test("chat style suggestions persist a bounded tone update for the extension", async () => {
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(api, /const stylePreference = explicitStylePreference\(message\)/);
+  assert.match(api, /if \(stylePreference\) updates\.tone = stylePreference/);
+  assert.match(api, /profile_updated: stylePreference \? \{ tone: stylePreference \} : null/);
+});
+
 test("calendar preferences and booking mutations are owner scoped and force Review atomically", async () => {
   const migration = await read("migrations/20260721000004_calendar_contact_preferences.sql");
   const api = await read("functions/agent-api/index.ts");

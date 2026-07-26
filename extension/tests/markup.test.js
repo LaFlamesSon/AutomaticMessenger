@@ -174,6 +174,12 @@ test("standing rules visibly force Review mode", () => {
   assert.match(script, /Standing rules keep replies in Review/);
 });
 
+test("Chat writing-style updates are reflected in extension state", () => {
+  assert.match(script, /result\.profile_updated\?\.tone/);
+  assert.match(script, /currentProfile\.tone = result\.profile_updated\.tone/);
+  assert.match(script, /Writing style updated for future replies/);
+});
+
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
