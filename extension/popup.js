@@ -26,6 +26,7 @@ let settingsLoaded = false;
 let appEmail = "";
 let gmailAddress = "";
 let pendingKitEdit = null;
+let gmailReconnectRequired = false;
 
 function create(tag, className, text) {
   const element = document.createElement(tag);
@@ -58,6 +59,9 @@ function safeApiMessage(data, status) {
   }
   if (code === "already_in_progress") {
     return { code, message: "An inbox sweep is already in progress. Check its status here." };
+  }
+  if (code === "gmail_reconnect_required") {
+    return { code, message: "Gmail access expired. Reconnect Gmail to continue." };
   }
   if (code === "version_conflict") return { code, message: "These preferences changed elsewhere. Reload and try again." };
   if (code === "booking_conflict") return { code, message: "That time overlaps an existing CaughtUp booking." };
@@ -307,18 +311,20 @@ $("connectGoogle").addEventListener("click", async () => {
     }
     let profile = await api("profile_get");
     applyIdentity(profile);
-    if (profile.gmail_connected !== true && providerTokens) {
+    if (providerTokens) {
       try {
         await api("gmail_connect_provider", providerTokens);
         providerTokens = null;
+        gmailReconnectRequired = false;
         profile = await api("profile_get");
         applyIdentity(profile);
       } catch (error) {
         providerTokens = null;
         if (error?.code !== "gmail_provider_unavailable") throw error;
+        gmailReconnectRequired = true;
       }
     }
-    if (profile.gmail_connected !== true) {
+    if (profile.gmail_connected !== true || gmailReconnectRequired) {
       setBusy(button, true, "Connecting Gmail…");
       const gmailStart = await api("gmail_connect_start", { redirect_url: redirectUrl });
       if (!gmailStart.authorization_url) throw new Core.ApiError("Gmail connection is not available yet.", 0, "missing_gmail_url");
@@ -329,6 +335,7 @@ $("connectGoogle").addEventListener("click", async () => {
       }
       profile = await api("profile_get");
       if (profile.gmail_connected !== true) throw new Core.ApiError("Gmail connection is still being confirmed. Try again.", 0, "gmail_not_connected");
+      gmailReconnectRequired = false;
       applyIdentity(profile);
     }
     showSetup(false);
@@ -345,6 +352,7 @@ $("signOut").addEventListener("click", async () => {
   currentProfile = null;
   manualSendKeys = {};
   manualSweepRequestId = null;
+  gmailReconnectRequired = false;
   pendingBookingRequest = null;
   kitsLoaded = false;
   calendarLoaded = false;
@@ -595,6 +603,13 @@ $("sweepBtn").addEventListener("click", async () => {
     button.dataset.label = "Sweep now";
     await loadDigest();
   } catch (error) {
+    if (error.code === "gmail_reconnect_required") {
+      await forgetManualSweepRequestId();
+      gmailReconnectRequired = true;
+      button.dataset.label = "Sweep now";
+      showSetup(true, "Gmail access expired. Reconnect Gmail, then run Sweep now again.", "gmail");
+      return;
+    }
     button.dataset.label = manualSweepRequestId ? "Check sweep status" : "Sweep now";
     $("globalStatus").textContent = error.code === "already_in_progress"
       ? "An inbox sweep is already in progress. Check its status here."

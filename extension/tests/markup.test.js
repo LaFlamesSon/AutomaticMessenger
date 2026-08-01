@@ -59,6 +59,15 @@ test("manual sweep retries persist one request id until confirmed completion", (
   assert.doesNotMatch(script, /api\("sweep", \{ request_id: globalThis\.crypto/);
 });
 
+test("expired Gmail authorization opens a real reconnect flow", () => {
+  assert.match(script, /gmailReconnectRequired/);
+  assert.match(script, /if \(providerTokens\)/);
+  assert.doesNotMatch(script, /profile\.gmail_connected !== true && providerTokens/);
+  assert.match(script, /profile\.gmail_connected !== true \|\| gmailReconnectRequired/);
+  assert.match(script, /error\.code === "gmail_reconnect_required"/);
+  assert.match(script, /showSetup\(true, "Gmail access expired\.[^\n]+", "gmail"\)/);
+});
+
 test("manual send requires an authoritative versioned preview", () => {
   assert.match(script, /api\("draft_get", \{ id: email\.id \}\)/);
   assert.match(script, /preview_version: pendingDraft\.preview_version/);
@@ -183,7 +192,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.1");
+  assert.equal(manifest.version, "0.3.2");
 });
 
 test("focus and reduced-motion styles are present", () => {

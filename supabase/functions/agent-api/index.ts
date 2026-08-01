@@ -721,6 +721,14 @@ Deno.serve(async (req: Request) => {
           body: JSON.stringify({ trigger: "manual", user_id: user.id, request_id: requestId }),
         });
         const payload = await resp.json().catch(() => ({ error: "sweep returned invalid JSON" }));
+        const resultError = Array.isArray(payload?.results)
+          ? payload.results.find((result: any) => result?.error) : null;
+        if (resp.ok && resultError?.code === "gmail_reconnect_required") {
+          return json({ error: "Gmail access expired. Reconnect Gmail to continue.", code: "gmail_reconnect_required" }, 422);
+        }
+        if (resp.ok && resultError) {
+          return json({ error: "Inbox sweep failed. Try again.", code: "sweep_failed" }, 502);
+        }
         return json(payload, resp.status);
       }
 

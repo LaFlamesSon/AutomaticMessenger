@@ -28,6 +28,17 @@ test("manual sweep passes trusted authenticated ownership to the worker", async 
   assert.match(sweep, /manual sweep requires a valid user_id/);
 });
 
+test("expired Gmail authorization is surfaced as a reconnect requirement", async () => {
+  const api = await read("functions/agent-api/index.ts");
+  const sweep = await read("functions/agent-sweep/index.ts");
+  assert.match(sweep, /class GmailReconnectRequiredError/);
+  assert.match(sweep, /resp\.status === 400 \|\| resp\.status === 401/);
+  assert.match(sweep, /error: reconnectRequired \? "gmail_reconnect_required" : "sweep_failed"/);
+  assert.match(sweep, /code: "gmail_reconnect_required"/);
+  assert.match(api, /resultError\?\.code === "gmail_reconnect_required"/);
+  assert.match(api, /Gmail access expired\. Reconnect Gmail to continue\./);
+});
+
 test("targeted manual sweeps isolate one owned Gmail message", async () => {
   const sweep = await read("functions/agent-sweep/index.ts");
   assert.match(sweep, /targeted manual sweep requires valid Gmail account and message IDs/);

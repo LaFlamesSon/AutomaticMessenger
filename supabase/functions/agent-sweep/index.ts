@@ -68,6 +68,13 @@ interface Attachment {
   b64: string;
 }
 
+class GmailReconnectRequiredError extends Error {
+  constructor() {
+    super("gmail_reconnect_required");
+    this.name = "GmailReconnectRequiredError";
+  }
+}
+
 // ---------------------------------------------------------------- helpers
 
 function b64urlEncode(s: string): string {
@@ -95,7 +102,10 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
       grant_type: "refresh_token",
     }),
   });
-  if (!resp.ok) throw new Error(`token_refresh_${resp.status}`);
+  if (!resp.ok) {
+    if (resp.status === 400 || resp.status === 401) throw new GmailReconnectRequiredError();
+    throw new Error(`token_refresh_${resp.status}`);
+  }
   return (await resp.json()).access_token;
 }
 
@@ -738,14 +748,17 @@ Deno.serve(async (req: Request) => {
         diagnostics: targeted ? targetedDiagnostics : undefined,
       });
     } catch (err) {
+      const reconnectRequired = err instanceof GmailReconnectRequiredError;
       console.error(JSON.stringify({ component: "agent-sweep", account_id: account.id, error_type: err instanceof Error ? err.name : "unknown" }));
       await supabase.from("ia_agent_runs").update({
         finished_at: new Date().toISOString(),
         emails_scanned: scanned, drafts_created: drafted,
-        status: "error", error: "sweep_failed",
+        status: "error", error: reconnectRequired ? "gmail_reconnect_required" : "sweep_failed",
       }).eq("id", run.id);
       await supabase.from("ia_job_claims").update({ status: "error", finished_at: new Date().toISOString() }).eq("id", jobClaim);
-      results.push({ account: account.gmail_address, error: "sweep failed" });
+      results.push(reconnectRequired
+        ? { account: account.gmail_address, error: "Gmail access expired", code: "gmail_reconnect_required" }
+        : { account: account.gmail_address, error: "sweep failed", code: "sweep_failed" });
     }
   }
 
