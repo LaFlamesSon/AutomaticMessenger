@@ -61,11 +61,14 @@ test("manual sweep retries persist one request id until confirmed completion", (
 
 test("expired Gmail authorization opens a real reconnect flow", () => {
   assert.match(script, /gmailReconnectRequired/);
+  assert.match(script, /GMAIL_RECONNECT_STORAGE/);
+  assert.match(script, /rememberGmailReconnectRequired/);
   assert.match(script, /if \(providerTokens\)/);
   assert.doesNotMatch(script, /profile\.gmail_connected !== true && providerTokens/);
   assert.match(script, /profile\.gmail_connected !== true \|\| gmailReconnectRequired/);
   assert.match(script, /error\.code === "gmail_reconnect_required"/);
   assert.match(script, /showSetup\(true, "Gmail access expired\.[^\n]+", "gmail"\)/);
+  assert.match(script, /startedWithoutSession && !providerHandoffCompleted/);
 });
 
 test("manual send requires an authoritative versioned preview", () => {
@@ -161,7 +164,7 @@ test("Google onboarding requests identity and Gmail in one launch with a safe fa
 
 test("authenticated users can resume Gmail consent and identity labels stay distinct", () => {
   assert.match(script, /gmail_connected !== true/);
-  assert.match(script, /showSetup\(true, "", "gmail"\)/);
+  assert.match(script, /showSetup\(true, gmailReconnectRequired \? "Gmail access expired\. Reconnect Gmail to continue\." : "", "gmail"\)/);
   assert.match(script, /gmailAddress\.toLowerCase\(\) !== appEmail\.toLowerCase\(\)/);
 });
 
@@ -192,7 +195,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.2");
+  assert.equal(manifest.version, "0.3.3");
 });
 
 test("focus and reduced-motion styles are present", () => {

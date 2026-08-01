@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.2** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.3** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -139,9 +139,10 @@ double-booking guard; API idempotency and owner checks sit above it.
 - Expired Google Testing-mode refresh tokens exposed a reconnect defect: an
   existing Gmail row caused new provider credentials to be discarded, while a
   failed sweep was returned as an apparent success and Today rendered empty.
-  Extension 0.3.2 now replaces verified credentials on every consent, offers a
-  real reconnect flow, and surfaces `gmail_reconnect_required`. Production
-  verification returned HTTP 422 and recorded that exact safe run error.
+  Extension 0.3.3 replaces verified credentials on every consent, offers a real
+  reconnect flow, persists that requirement across popup restarts, and surfaces
+  `gmail_reconnect_required`. Production verification returned HTTP 422 and
+  recorded that exact safe run error.
 
 ## Repository layout
 

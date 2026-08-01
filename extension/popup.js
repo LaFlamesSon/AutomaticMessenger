@@ -9,6 +9,7 @@ const PROFILE_FIELDS = ["display_name", "occupation", "services", "tone", "signo
 const MANUAL_SEND_KEYS_STORAGE = "caughtup_manual_send_keys";
 const MANUAL_SWEEP_ID_STORAGE = "caughtup_manual_sweep_request_id";
 const BOOKING_REQUEST_STORAGE = "caughtup_booking_request";
+const GMAIL_RECONNECT_STORAGE = "caughtup_gmail_reconnect_required";
 
 let session = null;
 let currentProfile = null;
@@ -196,6 +197,14 @@ async function forgetManualSweepRequestId() {
   try { await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE); } catch { /* server remains authoritative */ }
 }
 
+async function rememberGmailReconnectRequired(required) {
+  gmailReconnectRequired = required === true;
+  try {
+    if (gmailReconnectRequired) await chrome.storage.local.set({ [GMAIL_RECONNECT_STORAGE]: true });
+    else await chrome.storage.local.remove(GMAIL_RECONNECT_STORAGE);
+  } catch { /* in-memory state still protects this popup session */ }
+}
+
 function showSetup(show, message = "", mode = "app") {
   $("setup").classList.toggle("hidden", !show);
   $("tabs").classList.toggle("hidden", show);
@@ -278,6 +287,8 @@ $("connectGoogle").addEventListener("click", async () => {
   setBusy(button, true, "Opening Google…");
   setStatus("setupStatus", "");
   try {
+    const startedWithoutSession = !session;
+    let providerHandoffCompleted = false;
     const redirectUrl = chrome.identity.getRedirectURL("caughtup");
     let providerTokens = null;
     if (!session) {
@@ -315,14 +326,18 @@ $("connectGoogle").addEventListener("click", async () => {
       try {
         await api("gmail_connect_provider", providerTokens);
         providerTokens = null;
-        gmailReconnectRequired = false;
+        providerHandoffCompleted = true;
+        await rememberGmailReconnectRequired(false);
         profile = await api("profile_get");
         applyIdentity(profile);
       } catch (error) {
         providerTokens = null;
         if (error?.code !== "gmail_provider_unavailable") throw error;
-        gmailReconnectRequired = true;
+        await rememberGmailReconnectRequired(true);
       }
+    }
+    if (startedWithoutSession && !providerHandoffCompleted) {
+      await rememberGmailReconnectRequired(true);
     }
     if (profile.gmail_connected !== true || gmailReconnectRequired) {
       setBusy(button, true, "Connecting Gmail…");
@@ -335,7 +350,7 @@ $("connectGoogle").addEventListener("click", async () => {
       }
       profile = await api("profile_get");
       if (profile.gmail_connected !== true) throw new Core.ApiError("Gmail connection is still being confirmed. Try again.", 0, "gmail_not_connected");
-      gmailReconnectRequired = false;
+      await rememberGmailReconnectRequired(false);
       applyIdentity(profile);
     }
     showSetup(false);
@@ -364,6 +379,7 @@ $("signOut").addEventListener("click", async () => {
     chrome.storage.local.remove(MANUAL_SEND_KEYS_STORAGE),
     chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE),
     chrome.storage.local.remove(BOOKING_REQUEST_STORAGE),
+    chrome.storage.local.remove(GMAIL_RECONNECT_STORAGE),
     chrome.storage.sync.remove("token"),
   ]);
   showSetup(true, "", "app");
@@ -605,7 +621,7 @@ $("sweepBtn").addEventListener("click", async () => {
   } catch (error) {
     if (error.code === "gmail_reconnect_required") {
       await forgetManualSweepRequestId();
-      gmailReconnectRequired = true;
+      await rememberGmailReconnectRequired(true);
       button.dataset.label = "Sweep now";
       showSetup(true, "Gmail access expired. Reconnect Gmail, then run Sweep now again.", "gmail");
       return;
@@ -1330,13 +1346,14 @@ buildAvailabilityRows();
       showSetup(true);
       return;
     }
-    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE]);
+    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE]);
     session = local.caughtup_session || null;
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
       : {};
     const sweepState = Core.ensureSweepRequestId(local[MANUAL_SWEEP_ID_STORAGE], () => "invalid-placeholder");
     manualSweepRequestId = sweepState.created ? null : sweepState.requestId;
+    gmailReconnectRequired = local[GMAIL_RECONNECT_STORAGE] === true;
     if (manualSweepRequestId) {
       $("sweepBtn").dataset.label = "Check sweep status";
       $("sweepBtn").textContent = "Check sweep status";
@@ -1354,8 +1371,8 @@ buildAvailabilityRows();
       ...(profileResult.profile || {}),
       learning: profileResult.learning || profileResult.profile?.learning,
     });
-    if (profileResult.gmail_connected !== true && profileResult.profile?.gmail_connected !== true) {
-      showSetup(true, "", "gmail");
+    if ((profileResult.gmail_connected !== true && profileResult.profile?.gmail_connected !== true) || gmailReconnectRequired) {
+      showSetup(true, gmailReconnectRequired ? "Gmail access expired. Reconnect Gmail to continue." : "", "gmail");
       return;
     }
     showSetup(false);
