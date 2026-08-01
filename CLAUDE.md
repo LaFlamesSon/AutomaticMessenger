@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.1** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.2** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -51,8 +51,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 27 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning |
-| `agent-api` | 10 | Extension API, combined Google provider-token handoff, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 28 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
+| `agent-api` | 11 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -136,6 +136,12 @@ double-booking guard; API idempotency and owner checks sit above it.
   sends stayed within the controlled accounts, and all temporary tenant state
   was removed or restored. Evidence is in
   `docs/audits/caughtup-tenant-100-feature-stress-20260725.md`.
+- Expired Google Testing-mode refresh tokens exposed a reconnect defect: an
+  existing Gmail row caused new provider credentials to be discarded, while a
+  failed sweep was returned as an apparent success and Today rendered empty.
+  Extension 0.3.2 now replaces verified credentials on every consent, offers a
+  real reconnect flow, and surfaces `gmail_reconnect_required`. Production
+  verification returned HTTP 422 and recorded that exact safe run error.
 
 ## Repository layout
 
