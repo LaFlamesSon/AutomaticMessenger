@@ -130,6 +130,11 @@ test("active Auto-send policy changes require a fresh confirmation", () => {
   assert.equal(Core.autoSendPolicyChanged(current, { ...current, custom_rules: "- Never suggest Friday calls" }), true);
 });
 
+test("Auto-send selection defaults to both supported categories when none were chosen", () => {
+  assert.deepEqual(Core.ensureAutoSendCategories([]), ["urgent", "action_needed"]);
+  assert.deepEqual(Core.ensureAutoSendCategories(["action_needed", "fyi", "action_needed"]), ["action_needed"]);
+});
+
 test("manual send key remains stable for the same draft across retries and reload state", () => {
   let generated = 0;
   const first = Core.ensureManualSendKey({}, "draft-123", () => {

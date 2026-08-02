@@ -193,9 +193,13 @@ function descriptionMatchCount(description: string | null | undefined, emailText
   let matches = 0;
   for (const token of descriptionTokens) {
     if (emailTokens.has(token)) matches += 2;
-    if (token.length >= 4 && Array.from(emailTokens).some((emailToken) =>
-      emailToken !== token && emailToken.length >= 4 &&
-      (token.startsWith(emailToken) || emailToken.startsWith(token)))) matches++;
+    if (token.length >= 4 && Array.from(emailTokens).some((emailToken) => {
+      if (emailToken === token || emailToken.length < 4) return false;
+      const shorter = Math.min(token.length, emailToken.length);
+      const longer = Math.max(token.length, emailToken.length);
+      return shorter / longer >= 0.5 &&
+        (token.startsWith(emailToken) || emailToken.startsWith(token));
+    })) matches++;
   }
   return matches;
 }

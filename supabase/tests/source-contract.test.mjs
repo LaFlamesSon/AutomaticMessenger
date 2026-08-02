@@ -276,6 +276,13 @@ test("auto-send rechecks current profile version immediately before provider mut
   assert.match(sweep, /if \(freshDecision !== "auto_send"\) decision = "draft"/);
 });
 
+test("auto-send confirmation requires at least one eligible category", async () => {
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(api, /select\("settings_version, custom_rules, auto_send_categories"\)/);
+  assert.match(api, /code: "auto_categories_required"/);
+  assert.match(api, /eligible_categories: eligibleCategories/);
+});
+
 test("one active job claim blocks different window keys and only stale claimed work expires", async () => {
   const migration = await read("migrations/20260721000002_stability_contract.sql");
   assert.match(migration, /ia_job_claims_one_active_uidx[\s\S]+where status in \('claimed', 'sending', 'sent', 'reconcile'\)/);

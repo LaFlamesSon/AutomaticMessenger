@@ -554,10 +554,16 @@ Deno.serve(async (req: Request) => {
 
       case "auto_send_prepare": {
         const { data: current, error: currentError } = await supabase.from("ia_voice_profiles")
-          .select("settings_version, custom_rules").eq("user_id", user.id).single();
+          .select("settings_version, custom_rules, auto_send_categories").eq("user_id", user.id).single();
         if (currentError) throw new Error(currentError.message);
         if (String(current.custom_rules ?? "").trim()) {
           return json({ error: "standing free-text rules require Review mode", code: "review_required" }, 409);
+        }
+        const eligibleCategories = Array.isArray(current.auto_send_categories)
+          ? current.auto_send_categories.filter((category: unknown) => category === "urgent" || category === "action_needed")
+          : [];
+        if (!eligibleCategories.length) {
+          return json({ error: "choose at least one Auto-send category", code: "auto_categories_required" }, 409);
         }
         const challenge = crypto.randomUUID() + crypto.randomUUID();
         const challengeHash = await sha256(challenge);
@@ -572,10 +578,13 @@ Deno.serve(async (req: Request) => {
         return json({
           challenge,
           expires_at: expiresAt,
-          confirmation_text: "Eligible replies may be sent without review.",
+          confirmation_text: `CaughtUp may send eligible ${eligibleCategories.map((category: string) =>
+            category === "action_needed" ? "Action needed" : "Urgent").join(" and ")} replies without review.`,
+          eligible_categories: eligibleCategories,
           policy_version: AUTO_SEND_POLICY_VERSION,
           safeguards: [
-            "Only urgent and action-needed categories you selected",
+            `Only ${eligibleCategories.map((category: string) =>
+              category === "action_needed" ? "Action needed" : "Urgent").join(" and ")} categories you selected`,
             "Missing required details always fall back to a draft",
             "Unsafe language and ambiguous media kits are never auto-sent",
           ],

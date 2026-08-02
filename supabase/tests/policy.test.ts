@@ -124,6 +124,16 @@ test("ambiguous description relevance falls back to one general kit without gues
   assert.equal(selectMediaKit(kits.slice(0, 2), "brand@example.com", "Beauty collaboration", "Please send relevant samples."), null);
 });
 
+test("short subject tokens cannot create unrelated description matches", () => {
+  const kits = [
+    { id: "automotive", label: "Automotive", description: "Automotive, electric vehicle, car care, mobility, and transportation campaigns." },
+    { id: "general", label: "General", description: "General sponsor media kit and portfolio.", is_default: true },
+  ];
+  const generic = "We have a paid creator partnership. Project scope, budget, timeline, and brand materials are available.";
+  assert.equal(selectMediaKit(kits, "brand@example.com", "[CU-UI-AUTO-20260802024742] sponsorship inquiry", generic)?.id, "general");
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Automotive partnership", "Please send relevant samples.")?.id, "automotive");
+});
+
 test("portfolio auto-send needs explicit kit opt-in", () => {
   const profile = {
     draft_categories: ["action_needed"],

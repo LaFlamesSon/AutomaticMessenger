@@ -19,6 +19,7 @@
     { value: "timeline", label: "Timeline" },
     { value: "what brand materials they already have", label: "Brand materials" },
   ];
+  const AUTO_SEND_CATEGORIES = ["urgent", "action_needed"];
   const MEDIA_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
   const MAX_MEDIA_BYTES = 8_000_000;
   const CONTACT_MODES = ["email_only", "scheduled_call", "phone"];
@@ -279,6 +280,12 @@
       String(current.custom_rules || "").trim() !== String(next.custom_rules || "").trim();
   }
 
+  function ensureAutoSendCategories(values) {
+    const selected = [...new Set(Array.isArray(values) ? values : [])]
+      .filter((value) => AUTO_SEND_CATEGORIES.includes(value));
+    return selected.length ? selected : [...AUTO_SEND_CATEGORIES];
+  }
+
   function findManualSendKey(keys, draftId) {
     const current = keys && typeof keys === "object" && !Array.isArray(keys) ? keys : {};
     const id = String(draftId || "").trim();
@@ -335,6 +342,7 @@
     CATEGORIES,
     CATEGORY_LABELS,
     REQUIRED_QUESTIONS,
+    AUTO_SEND_CATEGORIES,
     MEDIA_TYPES,
     MAX_MEDIA_BYTES,
     CONTACT_MODES,
@@ -360,6 +368,7 @@
     parseOAuthCallback,
     sameStringSet,
     autoSendPolicyChanged,
+    ensureAutoSendCategories,
     findManualSendKey,
     ensureManualSendKey,
     ensureSweepRequestId,

@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.5** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.6** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -150,6 +150,12 @@ double-booking guard; API idempotency and owner checks sit above it.
   popup reopen. Legacy request IDs that could loop forever on `already claimed`
   are discarded. Today no longer renders Low priority or Filtered out aggregate
   rows; those categories remain internal triage outcomes.
+- Auto-send activation now starts as soon as the user selects it, defaults an
+  empty eligibility choice to Urgent and Action needed, requires a non-empty
+  category set server-side, and visibly reports whether confirmation completed.
+  Media-kit description matching no longer treats four-letter prefixes such as
+  `auto` as evidence for an `automotive` kit; unmatched collaborations use the
+  single General fallback.
 
 ## Repository layout
 

@@ -209,6 +209,15 @@ test("standing rules visibly force Review mode", () => {
   assert.match(script, /Standing rules keep replies in Review/);
 });
 
+test("selecting Auto-send immediately enters the save and confirmation flow", () => {
+  assert.match(html, /id="modeSetupStatus"/);
+  assert.match(html, /Selecting this opens the required confirmation/);
+  assert.match(script, /modeAuto"\)\.addEventListener\("change"/);
+  assert.match(script, /selectDefaultAutoSendCategories\(\)/);
+  assert.match(script, /settingsForm"\)\.requestSubmit\(\)/);
+  assert.match(script, /Auto-send is active for the selected eligible categories/);
+});
+
 test("Chat writing-style updates are reflected in extension state", () => {
   assert.match(script, /result\.profile_updated\?\.tone/);
   assert.match(script, /currentProfile\.tone = result\.profile_updated\.tone/);
@@ -218,7 +227,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.5");
+  assert.equal(manifest.version, "0.3.6");
 });
 
 test("focus and reduced-motion styles are present", () => {

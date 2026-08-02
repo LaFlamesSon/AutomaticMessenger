@@ -1175,6 +1175,9 @@ function fillProfile(raw) {
   const rules = Number(currentProfile.learning.standing_rules_count || currentProfile.custom_rules.split("\n").filter(Boolean).length);
   $("learningSummary").textContent = `${examples} writing example${examples === 1 ? "" : "s"} and ${rules} standing rule${rules === 1 ? "" : "s"}.`;
   updateModeBadge(currentProfile.reply_mode);
+  setStatus("modeSetupStatus", currentProfile.reply_mode === "auto_send"
+    ? "Auto-send is active for the selected eligible categories."
+    : "Review mode is active. Replies will be saved as drafts.", "success");
 }
 
 async function loadProfile() {
@@ -1223,6 +1226,26 @@ async function prepareAutoSend() {
   $("autoSendDialog").showModal();
 }
 
+function selectDefaultAutoSendCategories() {
+  const selected = Core.ensureAutoSendCategories(checkedValues("autoCategory"));
+  document.querySelectorAll("input[name=autoCategory]").forEach((input) => {
+    input.checked = selected.includes(input.value);
+  });
+}
+
+$("modeAuto").addEventListener("change", () => {
+  if (!$("modeAuto").checked || !currentProfile) return;
+  selectDefaultAutoSendCategories();
+  setStatus("modeSetupStatus", "Saving your Auto-send choices before confirmationâ€¦");
+  $("settingsForm").requestSubmit();
+});
+
+$("modeReview").addEventListener("change", () => {
+  if (!$("modeReview").checked || !currentProfile || currentProfile.reply_mode !== "auto_send") return;
+  setStatus("modeSetupStatus", "Turning Auto-send offâ€¦");
+  $("settingsForm").requestSubmit();
+});
+
 $("settingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!currentProfile) return;
@@ -1261,6 +1284,7 @@ $("settingsForm").addEventListener("submit", async (event) => {
   } catch (error) {
     fillProfile(currentProfile);
     setStatus("saveMsg", Core.safeErrorMessage(error), "error");
+    setStatus("modeSetupStatus", Core.safeErrorMessage(error), "error");
   } finally {
     setBusy(button, false);
   }
@@ -1275,6 +1299,7 @@ $("confirmAutoSend").addEventListener("click", async () => {
     fillProfile(currentProfile);
     $("autoSendDialog").close();
     setStatus("saveMsg", "Settings saved. Auto-send is on for eligible replies.", "success");
+    setStatus("modeSetupStatus", "Auto-send is active for the selected eligible categories.", "success");
   } catch (error) {
     setStatus("autoSendStatus", Core.safeErrorMessage(error), "error");
     $("modeReview").checked = true;
@@ -1287,6 +1312,7 @@ $("confirmAutoSend").addEventListener("click", async () => {
 $("cancelAutoSend").addEventListener("click", () => {
   autoSendChallenge = null;
   $("modeReview").checked = true;
+  setStatus("modeSetupStatus", "Auto-send was not enabled. Review mode remains active.", "success");
 });
 
 $("resetLearning").addEventListener("click", async () => {
