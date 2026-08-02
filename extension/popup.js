@@ -15,7 +15,9 @@ let currentProfile = null;
 let pendingDraft = null;
 let pendingSendCard = null;
 let manualSendKeys = {};
-let manualSweepRequestId = null;
+let manualSweepState = null;
+let lastSweepRun = null;
+let sweepPolling = false;
 let autoSendChallenge = null;
 let kitsLoaded = false;
 let calendarLoaded = false;
@@ -58,7 +60,7 @@ function safeApiMessage(data, status) {
     return { code: "send_in_progress", message: "CaughtUp is checking this send. Do not send it again yet." };
   }
   if (code === "already_in_progress") {
-    return { code, message: "An inbox sweep is already in progress. Check its status here." };
+    return { code, message: "CaughtUp is finishing your inbox sweep." };
   }
   if (code === "gmail_reconnect_required") {
     return { code, message: "Gmail access expired. Reconnect Gmail to continue." };
@@ -181,18 +183,24 @@ async function forgetManualSendKey(draftId) {
 
 async function getManualSweepRequestId() {
   const result = Core.ensureSweepRequestId(
-    manualSweepRequestId,
+    manualSweepState?.request_id,
     () => globalThis.crypto?.randomUUID?.() || `fallback-${Date.now()}`,
   );
-  manualSweepRequestId = result.requestId;
-  if (result.created) {
-    try { await chrome.storage.local.set({ [MANUAL_SWEEP_ID_STORAGE]: manualSweepRequestId }); } catch { /* stable for this popup session */ }
+  if (!manualSweepState || result.created) {
+    manualSweepState = {
+      request_id: result.requestId,
+      started_at: new Date().toISOString(),
+      baseline_finished_at: lastSweepRun?.finished_at || null,
+    };
   }
-  return manualSweepRequestId;
+  if (result.created) {
+    try { await chrome.storage.local.set({ [MANUAL_SWEEP_ID_STORAGE]: manualSweepState }); } catch { /* stable for this popup session */ }
+  }
+  return result.requestId;
 }
 
 async function forgetManualSweepRequestId() {
-  manualSweepRequestId = null;
+  manualSweepState = null;
   try { await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE); } catch { /* server remains authoritative */ }
 }
 
@@ -288,7 +296,7 @@ $("signOut").addEventListener("click", async () => {
   session = null;
   currentProfile = null;
   manualSendKeys = {};
-  manualSweepRequestId = null;
+  manualSweepState = null;
   gmailReconnectRequired = false;
   pendingBookingRequest = null;
   kitsLoaded = false;
@@ -347,6 +355,7 @@ async function loadDigest() {
         learning: profileResult.learning || profileResult.profile.learning,
       });
     }
+    lastSweepRun = result.last_run || null;
     $("lastRun").textContent = formatLastRun(result.last_run);
     updateModeBadge(result.reply_mode || currentProfile?.reply_mode || "draft_only");
     renderDigest(result.emails || []);
@@ -365,7 +374,7 @@ function renderDigest(emails) {
   });
 
   let rendered = false;
-  Core.CATEGORIES.forEach((category) => {
+  ["urgent", "action_needed", "fyi"].forEach((category) => {
     const items = byCategory[category] || [];
     if (!items.length) return;
     const group = create("section", `cat ${category}`);
@@ -373,11 +382,7 @@ function renderDigest(emails) {
     const heading = create("h2", "cat-heading", `${Core.CATEGORY_LABELS[category]} — ${items.length}`);
     heading.id = `cat-${category}`;
     group.appendChild(heading);
-    if (category === "low_priority" || category === "spam_or_poor_fit") {
-      heading.textContent += " handled";
-    } else {
-      items.forEach((email) => group.appendChild(renderEmailCard(email)));
-    }
+    items.forEach((email) => group.appendChild(renderEmailCard(email)));
     digest.appendChild(group);
     rendered = true;
   });
@@ -527,34 +532,95 @@ $("cancelSend").addEventListener("click", () => {
   pendingSendCard = null;
 });
 
+function setGlobalStatus(message = "", kind = "") {
+  const status = $("globalStatus");
+  status.textContent = message;
+  status.classList.toggle("progress", kind === "progress");
+  status.classList.toggle("hidden", !message);
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function pollPendingSweep() {
+  if (!manualSweepState || sweepPolling) return false;
+  const state = manualSweepState;
+  const button = $("sweepBtn");
+  sweepPolling = true;
+  setBusy(button, true, "Sweeping…");
+  setGlobalStatus("Sweeping your inbox…", "progress");
+  try {
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      if (attempt > 0) await wait(attempt < 10 ? 2000 : 5000);
+      let digestResult;
+      try {
+        digestResult = await api("digest", {}, { timeout: 8000 });
+      } catch (error) {
+        if (error?.code === "unauthorized" || error?.status === 401) throw error;
+        continue;
+      }
+      lastSweepRun = digestResult.last_run || null;
+      if (!Core.sweepRunChanged(lastSweepRun, state)) continue;
+      const succeeded = lastSweepRun?.status === "ok";
+      await forgetManualSweepRequestId();
+      await loadDigest();
+      if (succeeded) setGlobalStatus();
+      else setGlobalStatus("CaughtUp could not finish that sweep. Tap Sweep now to try again.");
+      return succeeded;
+    }
+    await forgetManualSweepRequestId();
+    setGlobalStatus("The sweep is taking longer than expected. Tap Sweep now to try again.");
+    return false;
+  } catch (error) {
+    await forgetManualSweepRequestId();
+    setGlobalStatus(Core.safeErrorMessage(error));
+    return false;
+  } finally {
+    button.dataset.label = "Sweep now";
+    setBusy(button, false);
+    sweepPolling = false;
+  }
+}
+
 $("sweepBtn").addEventListener("click", async () => {
+  if (sweepPolling) return;
   const button = $("sweepBtn");
   setBusy(button, true, "Sweeping…");
-  $("globalStatus").classList.add("hidden");
+  setGlobalStatus("Sweeping your inbox…", "progress");
   try {
     const requestId = await getManualSweepRequestId();
     const result = await api("sweep", { request_id: requestId }, { timeout: 30000 });
     const alreadyInProgress = result?.code === "already_in_progress" || result?.already_in_progress === true ||
       (Array.isArray(result?.results) && result.results.some((item) => item?.reason === "already_in_progress" || item?.reason === "already claimed"));
-    if (alreadyInProgress) throw new Core.ApiError("An inbox sweep is already in progress. Check its status here.", 409, "already_in_progress");
+    if (alreadyInProgress) {
+      setBusy(button, false);
+      await pollPendingSweep();
+      return;
+    }
     await forgetManualSweepRequestId();
     button.dataset.label = "Sweep now";
     await loadDigest();
+    setGlobalStatus();
   } catch (error) {
     if (error.code === "gmail_reconnect_required") {
       await forgetManualSweepRequestId();
       await rememberGmailReconnectRequired(true);
       button.dataset.label = "Sweep now";
+      setGlobalStatus();
       showSetup(true, "Gmail access expired. Reconnect Gmail, then run Sweep now again.", "gmail");
       return;
     }
-    button.dataset.label = manualSweepRequestId ? "Check sweep status" : "Sweep now";
-    $("globalStatus").textContent = error.code === "already_in_progress"
-      ? "An inbox sweep is already in progress. Check its status here."
-      : `${Core.safeErrorMessage(error)} Retry here to safely check the same sweep.`;
-    $("globalStatus").classList.remove("hidden");
+    if (["already_in_progress", "timeout", "network", "sweep_failed"].includes(error.code)) {
+      setBusy(button, false);
+      await pollPendingSweep();
+      return;
+    }
+    await forgetManualSweepRequestId();
+    button.dataset.label = "Sweep now";
+    setGlobalStatus(Core.safeErrorMessage(error));
   } finally {
-    setBusy(button, false);
+    if (!sweepPolling) setBusy(button, false);
   }
 });
 
@@ -1273,13 +1339,11 @@ buildAvailabilityRows();
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
       : {};
-    const sweepState = Core.ensureSweepRequestId(local[MANUAL_SWEEP_ID_STORAGE], () => "invalid-placeholder");
-    manualSweepRequestId = sweepState.created ? null : sweepState.requestId;
-    gmailReconnectRequired = local[GMAIL_RECONNECT_STORAGE] === true;
-    if (manualSweepRequestId) {
-      $("sweepBtn").dataset.label = "Check sweep status";
-      $("sweepBtn").textContent = "Check sweep status";
+    manualSweepState = Core.normalizeSweepState(local[MANUAL_SWEEP_ID_STORAGE]);
+    if (local[MANUAL_SWEEP_ID_STORAGE] && !manualSweepState) {
+      await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE);
     }
+    gmailReconnectRequired = local[GMAIL_RECONNECT_STORAGE] === true;
     pendingBookingRequest = local[BOOKING_REQUEST_STORAGE] && typeof local[BOOKING_REQUEST_STORAGE] === "object"
       ? local[BOOKING_REQUEST_STORAGE]
       : null;
@@ -1299,6 +1363,7 @@ buildAvailabilityRows();
     }
     showSetup(false);
     await loadDigest();
+    if (manualSweepState) void pollPendingSweep();
   } catch (error) {
     showSetup(true, Core.safeErrorMessage(error));
   }

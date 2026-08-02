@@ -174,6 +174,27 @@ test("manual sweep request id remains stable across timeout retries and popup re
   assert.equal(generated, 1);
 });
 
+test("pending sweep state recognizes a newly completed run and rejects legacy strings", () => {
+  const state = {
+    request_id: "manual-sweep:11111111-2222-3333-4444-555555555555",
+    started_at: "2026-08-02T02:20:00.000Z",
+    baseline_finished_at: "2026-08-02T02:10:00.000Z",
+  };
+  assert.deepEqual(Core.normalizeSweepState(state), state);
+  assert.equal(Core.normalizeSweepState(state.request_id), null);
+  assert.equal(Core.sweepRunChanged({ finished_at: state.baseline_finished_at, status: "ok" }, state), false);
+  assert.equal(Core.sweepRunChanged({ finished_at: "2026-08-02T02:21:00.000Z", status: "ok" }, state), true);
+  assert.equal(Core.sweepRunChanged({ finished_at: null }, state), false);
+  assert.equal(Core.sweepRunChanged(
+    { finished_at: "2026-08-02T02:19:00.000Z", status: "ok" },
+    { ...state, baseline_finished_at: null },
+  ), false);
+  assert.equal(Core.sweepRunChanged(
+    { finished_at: "2026-08-02T02:20:30.000Z", status: "ok" },
+    { ...state, baseline_finished_at: null },
+  ), true);
+});
+
 test("unsafe provider details are not used for unknown errors", () => {
   assert.equal(Core.safeErrorMessage(new Error("secret provider response")), "CaughtUp couldn't complete that. Try again.");
   assert.match(Core.safeErrorMessage(new Core.ApiError("", 401, "unauthorized")), /session expired/i);

@@ -55,14 +55,24 @@ test("manual send retries persist and reuse one idempotency key", () => {
   assert.doesNotMatch(script, /const idempotencyKey = globalThis\.crypto/);
 });
 
-test("manual sweep retries persist one request id until confirmed completion", () => {
+test("manual sweep follows completion automatically without exposing status mechanics", () => {
   assert.match(script, /MANUAL_SWEEP_ID_STORAGE/);
   assert.match(script, /request_id: requestId/);
   assert.match(script, /await forgetManualSweepRequestId\(\)/);
-  assert.match(script, /Check sweep status/);
+  assert.doesNotMatch(script, /Check sweep status/);
   assert.match(script, /already_in_progress/);
   assert.match(script, /setBusy\(button, true, "Sweeping…"\)/);
+  assert.match(script, /baseline_finished_at: lastSweepRun\?\.finished_at \|\| null/);
+  assert.match(script, /Core\.sweepRunChanged/);
+  assert.match(script, /if \(manualSweepState\) void pollPendingSweep\(\)/);
+  assert.match(script, /button\.dataset\.label = "Sweep now"/);
   assert.doesNotMatch(script, /api\("sweep", \{ request_id: globalThis\.crypto/);
+});
+
+test("Today omits non-actionable Low priority and Filtered out aggregates", () => {
+  const renderBlock = script.match(/function renderDigest\(emails\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(renderBlock, /\["urgent", "action_needed", "fyi"\]/);
+  assert.doesNotMatch(renderBlock, /low_priority|spam_or_poor_fit|handled/);
 });
 
 test("expired Gmail authorization opens a real reconnect flow", () => {
@@ -208,7 +218,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.4");
+  assert.equal(manifest.version, "0.3.5");
 });
 
 test("focus and reduced-motion styles are present", () => {

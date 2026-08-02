@@ -44,6 +44,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 750; }
 .mark { color: #ef9b67; font-size: 18px; }
 .global-status { padding: 8px 14px; border-bottom: 1px solid #efc5c1; color: var(--bad); background: var(--bad-soft); }
+.global-status.progress { border-bottom-color: #ead7c8; color: #704323; background: #fff5ea; }
 
 .tabs { display: flex; border-bottom: 1px solid var(--line); background: #fff; }
 .tab {
