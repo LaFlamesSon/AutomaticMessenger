@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.9** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.10** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -189,11 +189,12 @@ double-booking guard; API idempotency and owner checks sit above it.
   safe missing-details, General PDF, and Fitness PNG replies auto-sent to Yafet's
   own controlled Gmail alias; prompt injection produced no reply; owner mail was
   skipped. Evidence is in `docs/audits/caughtup-auto-sweep-20260802.md`.
-- Extension 0.3.9 gives successful manual sweeps a green caught-up banner, shows
+- Extension 0.3.10 gives successful manual sweeps a green caught-up banner, shows
   an explicit nothing-pending state after sent items are removed from Today's
-  pending view, and adds an accessible code-native duck guide. The duck waddles
-  above Today, pauses while its deterministic inbox brief is open, and resumes
-  when closed. Cached digest, kit, and calendar views render immediately while
+  pending view, and adds an accessible code-native duck guide. A small rubber
+  duck waddles directly against the app background above Today, pauses while its
+  deterministic inbox brief is open, and resumes when closed. Cached digest,
+  kit, and calendar views render immediately while
   quiet background refreshes run; Settings reuses the already-fetched startup
   profile instead of making a duplicate first-tab request.
 

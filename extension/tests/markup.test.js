@@ -79,7 +79,13 @@ test("Today has an accessible interactive duck that pauses for its inbox brief",
   assert.match(script, /function updateDuckSummary/);
   assert.match(script, /classList\.toggle\("paused", open\)/);
   assert.match(script, /setDuckSummaryOpen\(false\)/);
-  assert.match(css, /@keyframes duck-walk/);
+  assert.match(css, /@keyframes duck-stroll/);
+  assert.match(css, /\.duck-art\s*\{[\s\S]*?width: 28px;[\s\S]*?height: 25px;/);
+  assert.match(html, /duck-foot duck-foot-back/);
+  assert.match(html, /duck-foot duck-foot-front/);
+  assert.match(html, /<circle class="duck-eye"[^>]+>[\s\S]*?<circle class="duck-eye"/);
+  assert.doesNotMatch(html, /duck-track|duck-hint/);
+  assert.doesNotMatch(css, /\.duck-guide\s*\{[^}]*background:/);
   assert.match(css, /\.duck-guide\.paused/);
 });
 
@@ -257,7 +263,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.9");
+  assert.equal(manifest.version, "0.3.10");
 });
 
 test("focus and reduced-motion styles are present", () => {
