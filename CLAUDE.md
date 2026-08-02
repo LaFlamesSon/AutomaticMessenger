@@ -51,8 +51,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 28 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
-| `agent-api` | 11 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 29 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
+| `agent-api` | 12 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -155,7 +155,9 @@ double-booking guard; API idempotency and owner checks sit above it.
   category set server-side, and visibly reports whether confirmation completed.
   Media-kit description matching no longer treats four-letter prefixes such as
   `auto` as evidence for an `automotive` kit; unmatched collaborations use the
-  single General fallback.
+  single General fallback. Deployed verification rejected an empty Auto-send
+  category set with `auto_categories_required`; an exact Review-mode Gmail
+  fixture containing the prior `AUTO` tag selected Yafet General Media Kit.
 
 ## Repository layout
 
