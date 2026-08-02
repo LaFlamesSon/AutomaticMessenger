@@ -9,6 +9,7 @@ const MANUAL_SEND_KEYS_STORAGE = "caughtup_manual_send_keys";
 const MANUAL_SWEEP_ID_STORAGE = "caughtup_manual_sweep_request_id";
 const BOOKING_REQUEST_STORAGE = "caughtup_booking_request";
 const GMAIL_RECONNECT_STORAGE = "caughtup_gmail_reconnect_required";
+const VIEW_CACHE_STORAGE = "caughtup_view_cache_v1";
 
 let session = null;
 let currentProfile = null;
@@ -20,7 +21,9 @@ let lastSweepRun = null;
 let sweepPolling = false;
 let autoSendChallenge = null;
 let kitsLoaded = false;
+let kitsLoading = false;
 let calendarLoaded = false;
+let calendarLoading = false;
 let currentCalendar = null;
 let currentBookings = [];
 let pendingBookingRequest = null;
@@ -29,6 +32,8 @@ let appEmail = "";
 let gmailAddress = "";
 let pendingKitEdit = null;
 let gmailReconnectRequired = false;
+let viewCache = {};
+let latestDigestEmails = [];
 
 function create(tag, className, text) {
   const element = document.createElement(tag);
@@ -256,8 +261,8 @@ function activateTab(name, focus = true) {
     if (selected && focus) tab.focus();
   });
   PANELS.forEach((panel) => $(panel).classList.toggle("hidden", panel !== name));
-  if (name === "kits" && !kitsLoaded) loadKits();
-  if (name === "calendar" && !calendarLoaded) loadCalendar();
+  if (name === "kits" && !kitsLoaded && !kitsLoading) loadKits();
+  if (name === "calendar" && !calendarLoaded && !calendarLoading) loadCalendar();
   if (name === "settings" && !settingsLoaded) loadProfile();
 }
 
@@ -298,9 +303,13 @@ $("signOut").addEventListener("click", async () => {
   manualSendKeys = {};
   manualSweepState = null;
   gmailReconnectRequired = false;
+  viewCache = {};
+  latestDigestEmails = [];
   pendingBookingRequest = null;
   kitsLoaded = false;
+  kitsLoading = false;
   calendarLoaded = false;
+  calendarLoading = false;
   settingsLoaded = false;
   appEmail = "";
   gmailAddress = "";
@@ -310,6 +319,7 @@ $("signOut").addEventListener("click", async () => {
     chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE),
     chrome.storage.local.remove(BOOKING_REQUEST_STORAGE),
     chrome.storage.local.remove(GMAIL_RECONNECT_STORAGE),
+    chrome.storage.local.remove(VIEW_CACHE_STORAGE),
     chrome.storage.sync.remove("token"),
   ]);
   showSetup(true, "", "app");
@@ -341,9 +351,25 @@ function formatLastRun(lastRun) {
   return `Last sweep ${date.toLocaleString()}`;
 }
 
-async function loadDigest() {
-  stateCard("todayStatus", "Loading your inbox…");
-  $("digest").classList.add("hidden");
+async function cacheView(name, value) {
+  if (!appEmail) return;
+  viewCache = { ...viewCache, owner: appEmail.toLowerCase(), [name]: value };
+  try { await chrome.storage.local.set({ [VIEW_CACHE_STORAGE]: viewCache }); } catch { /* cache is an optional speed-up */ }
+}
+
+function applyDigestResult(result = {}) {
+  lastSweepRun = result.last_run || null;
+  $("lastRun").textContent = formatLastRun(result.last_run);
+  updateModeBadge(result.reply_mode || currentProfile?.reply_mode || "draft_only");
+  renderDigest(result.emails || []);
+}
+
+async function loadDigest(options = {}) {
+  const quiet = options.quiet === true;
+  if (!quiet) {
+    stateCard("todayStatus", "Loading your inbox…");
+    $("digest").classList.add("hidden");
+  }
   try {
     const [result, profileResult] = await Promise.all([
       api("digest"),
@@ -355,12 +381,10 @@ async function loadDigest() {
         learning: profileResult.learning || profileResult.profile.learning,
       });
     }
-    lastSweepRun = result.last_run || null;
-    $("lastRun").textContent = formatLastRun(result.last_run);
-    updateModeBadge(result.reply_mode || currentProfile?.reply_mode || "draft_only");
-    renderDigest(result.emails || []);
+    applyDigestResult(result);
+    void cacheView("digest", result);
   } catch (error) {
-    stateCard("todayStatus", Core.safeErrorMessage(error), "error", loadDigest);
+    if (!quiet || !viewCache.digest) stateCard("todayStatus", Core.safeErrorMessage(error), "error", loadDigest);
   }
 }
 
@@ -368,7 +392,10 @@ function renderDigest(emails) {
   const digest = $("digest");
   digest.replaceChildren();
   const byCategory = {};
-  emails.forEach((email) => {
+  const pendingEmails = emails.filter((email) => Core.CATEGORIES.includes(email.category) && Core.deliveryState(email) !== "sent");
+  latestDigestEmails = pendingEmails;
+  updateDuckSummary(pendingEmails);
+  pendingEmails.forEach((email) => {
     if (!Core.CATEGORIES.includes(email.category)) return;
     (byCategory[email.category] ||= []).push(email);
   });
@@ -388,9 +415,47 @@ function renderDigest(emails) {
   });
 
   $("todayStatus").classList.toggle("hidden", rendered);
-  if (!rendered) stateCard("todayStatus", "All caught up. Nothing needs you right now.");
+  if (!rendered) stateCard("todayStatus", "You're all caught up — nothing pending!");
   digest.classList.toggle("hidden", !rendered);
 }
+
+function updateDuckSummary(emails = latestDigestEmails) {
+  const pending = Array.isArray(emails) ? emails : [];
+  const text = $("duckSummaryText");
+  const list = $("duckSummaryList");
+  list.replaceChildren();
+  if (!pending.length) {
+    text.textContent = "You're all caught up — nothing pending!";
+    return;
+  }
+  const counts = pending.reduce((result, email) => {
+    result[email.category] = (result[email.category] || 0) + 1;
+    return result;
+  }, {});
+  const breakdown = ["urgent", "action_needed", "fyi"]
+    .filter((category) => counts[category])
+    .map((category) => `${counts[category]} ${Core.CATEGORY_LABELS[category].toLowerCase()}`);
+  text.textContent = `${pending.length} ${pending.length === 1 ? "message needs" : "messages need"} you: ${breakdown.join(", ")}.`;
+  pending.slice(0, 3).forEach((email) => {
+    const summary = String(email.summary || "Open Today for details.").trim();
+    const preview = summary.length > 92 ? `${summary.slice(0, 89)}…` : summary;
+    list.appendChild(create("li", "", `${email.subject || "No subject"}: ${preview}`));
+  });
+  if (pending.length > 3) list.appendChild(create("li", "", `Plus ${pending.length - 3} more in Today.`));
+}
+
+function setDuckSummaryOpen(open) {
+  $("duckSummary").classList.toggle("hidden", !open);
+  $("duckGuide").classList.toggle("paused", open);
+  $("duckButton").setAttribute("aria-expanded", String(open));
+  if (open) $("closeDuckSummary").focus();
+}
+
+$("duckButton").addEventListener("click", () => setDuckSummaryOpen(true));
+$("closeDuckSummary").addEventListener("click", () => {
+  setDuckSummaryOpen(false);
+  $("duckButton").focus();
+});
 
 function renderEmailCard(email) {
   const card = create("article", "card");
@@ -536,6 +601,7 @@ function setGlobalStatus(message = "", kind = "") {
   const status = $("globalStatus");
   status.textContent = message;
   status.classList.toggle("progress", kind === "progress");
+  status.classList.toggle("success", kind === "success");
   status.classList.toggle("hidden", !message);
 }
 
@@ -546,12 +612,12 @@ function wait(milliseconds) {
 function showSweepOutcome(result) {
   const summary = Core.summarizeSweepResults(result);
   if (!summary.scanned) {
-    setGlobalStatus("Sweep complete. Your inbox was already caught up.");
+    setGlobalStatus("You're all caught up! Nothing pending.", "success");
     return;
   }
   const sent = `${summary.sent} ${summary.sent === 1 ? "reply" : "replies"} sent`;
   const review = `${summary.review} ${summary.review === 1 ? "reply needs" : "replies need"} review`;
-  setGlobalStatus(`Sweep complete: ${sent}; ${review}.`);
+  setGlobalStatus(`You're all caught up! ${sent}; ${review}.`, "success");
 }
 
 async function pollPendingSweep() {
@@ -576,7 +642,7 @@ async function pollPendingSweep() {
       const succeeded = lastSweepRun?.status === "ok";
       await forgetManualSweepRequestId();
       await loadDigest();
-      if (succeeded) setGlobalStatus("Sweep complete. Today is updated with sent replies and anything that still needs review.");
+      if (succeeded) setGlobalStatus("You're all caught up! Today is updated with anything that still needs review.", "success");
       else setGlobalStatus("CaughtUp could not finish that sweep. Tap Sweep now to try again.");
       return succeeded;
     }
@@ -782,17 +848,25 @@ function fillCalendar(raw, bookings = currentBookings) {
   renderBookings(currentBookings);
 }
 
-async function loadCalendar() {
-  stateCard("calendarStatus", "Loading contact preferences...");
-  $("calendarForm").classList.add("hidden");
+async function loadCalendar(options = {}) {
+  if (calendarLoading) return;
+  calendarLoading = true;
+  const quiet = options.quiet === true;
+  if (!quiet) {
+    stateCard("calendarStatus", "Loading contact preferences...");
+    $("calendarForm").classList.add("hidden");
+  }
   try {
     const result = await api("calendar_get");
     fillCalendar(result.calendar || {}, result.bookings || []);
     $("calendarStatus").classList.add("hidden");
     $("calendarForm").classList.remove("hidden");
     calendarLoaded = true;
+    void cacheView("calendar", result);
   } catch (error) {
-    stateCard("calendarStatus", Core.safeErrorMessage(error), "error", loadCalendar);
+    if (!quiet || !viewCache.calendar) stateCard("calendarStatus", Core.safeErrorMessage(error), "error", loadCalendar);
+  } finally {
+    calendarLoading = false;
   }
 }
 
@@ -944,15 +1018,23 @@ function showKitForm(show) {
 $("showKitForm").addEventListener("click", () => showKitForm($("kitForm").classList.contains("hidden")));
 $("cancelKit").addEventListener("click", () => showKitForm(false));
 
-async function loadKits() {
-  stateCard("kitsStatus", "Loading kits…");
-  $("kitList").classList.add("hidden");
+async function loadKits(options = {}) {
+  if (kitsLoading) return;
+  kitsLoading = true;
+  const quiet = options.quiet === true;
+  if (!quiet) {
+    stateCard("kitsStatus", "Loading kits…");
+    $("kitList").classList.add("hidden");
+  }
   try {
     const result = await api("media_kit_list");
     renderKits(result.kits || []);
     kitsLoaded = true;
+    void cacheView("kits", result);
   } catch (error) {
-    stateCard("kitsStatus", Core.safeErrorMessage(error), "error", loadKits);
+    if (!quiet || !viewCache.kits) stateCard("kitsStatus", Core.safeErrorMessage(error), "error", loadKits);
+  } finally {
+    kitsLoading = false;
   }
 }
 
@@ -1365,14 +1447,46 @@ setupDialogSafety($("autoSendDialog"), "cancelAutoSend");
 buildRequiredQuestionControls();
 buildAvailabilityRows();
 
+function hydrateViewCache() {
+  const hydrated = { digest: false, kits: false, calendar: false };
+  if (!appEmail || viewCache?.owner !== appEmail.toLowerCase()) {
+    viewCache = {};
+    return hydrated;
+  }
+  try {
+    if (viewCache.digest) {
+      applyDigestResult(viewCache.digest);
+      hydrated.digest = true;
+    }
+  } catch { delete viewCache.digest; }
+  try {
+    if (viewCache.kits) {
+      renderKits(viewCache.kits.kits || []);
+      kitsLoaded = true;
+      hydrated.kits = true;
+    }
+  } catch { delete viewCache.kits; }
+  try {
+    if (viewCache.calendar) {
+      fillCalendar(viewCache.calendar.calendar || {}, viewCache.calendar.bookings || []);
+      $("calendarStatus").classList.add("hidden");
+      $("calendarForm").classList.remove("hidden");
+      calendarLoaded = true;
+      hydrated.calendar = true;
+    }
+  } catch { delete viewCache.calendar; }
+  return hydrated;
+}
+
 (async function init() {
   try {
     if (!chrome.storage?.local || !chrome.storage?.sync) {
       showSetup(true);
       return;
     }
-    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE]);
+    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE, VIEW_CACHE_STORAGE]);
     session = local.caughtup_session || null;
+    viewCache = local[VIEW_CACHE_STORAGE] && typeof local[VIEW_CACHE_STORAGE] === "object" ? local[VIEW_CACHE_STORAGE] : {};
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
       : {};
@@ -1398,8 +1512,17 @@ buildAvailabilityRows();
       showSetup(true, gmailReconnectRequired ? "Gmail access expired. Reconnect Gmail to continue." : "", "gmail");
       return;
     }
+    fillProfile(currentProfile);
+    $("connectedEmail").textContent = connectedIdentityLabel();
+    $("settingsStatus").classList.add("hidden");
+    $("settingsForm").classList.remove("hidden");
+    settingsLoaded = true;
     showSetup(false);
-    await loadDigest();
+    const hydrated = hydrateViewCache();
+    const digestRefresh = loadDigest({ quiet: hydrated.digest });
+    void loadKits({ quiet: hydrated.kits });
+    void loadCalendar({ quiet: hydrated.calendar });
+    await digestRefresh;
     if (manualSweepState) void pollPendingSweep();
   } catch (error) {
     showSetup(true, Core.safeErrorMessage(error));

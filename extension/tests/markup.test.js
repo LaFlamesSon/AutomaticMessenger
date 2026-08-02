@@ -24,7 +24,7 @@ test("popup exposes exactly the five approved tabs and matching accessible panel
   });
   assert.match(script, /ArrowRight/);
   assert.match(script, /ArrowLeft/);
-  assert.match(script, /if \(name === "calendar" && !calendarLoaded\) loadCalendar\(\)/);
+  assert.match(script, /if \(name === "calendar" && !calendarLoaded && !calendarLoading\) loadCalendar\(\)/);
 });
 
 test("popup IDs are unique", () => {
@@ -68,7 +68,35 @@ test("manual sweep follows completion automatically without exposing status mech
   assert.match(script, /button\.dataset\.label = "Sweep now"/);
   assert.doesNotMatch(script, /api\("sweep", \{ request_id: globalThis\.crypto/);
   assert.match(script, /Core\.summarizeSweepResults\(result\)/);
-  assert.match(script, /Sweep complete: \$\{sent\}; \$\{review\}/);
+  assert.match(script, /You're all caught up! \$\{sent\}; \$\{review\}/);
+  assert.match(script, /setGlobalStatus\([^\n]+"success"\)/);
+});
+
+test("Today has an accessible interactive duck that pauses for its inbox brief", () => {
+  assert.match(html, /id="duckButton"[^>]+aria-expanded="false"[^>]+aria-controls="duckSummary"/);
+  assert.match(html, /id="duckSummary"[^>]+role="region"/);
+  assert.match(html, /id="closeDuckSummary"[^>]+aria-label="Close inbox brief"/);
+  assert.match(script, /function updateDuckSummary/);
+  assert.match(script, /classList\.toggle\("paused", open\)/);
+  assert.match(script, /setDuckSummaryOpen\(false\)/);
+  assert.match(css, /@keyframes duck-walk/);
+  assert.match(css, /\.duck-guide\.paused/);
+});
+
+test("empty Today and successful sweeps use the requested caught-up states", () => {
+  assert.match(script, /You're all caught up — nothing pending!/);
+  assert.match(css, /\.global-status\.success/);
+  assert.match(script, /Core\.deliveryState\(email\) !== "sent"/);
+});
+
+test("secondary tabs hydrate from cache and refresh without duplicate requests", () => {
+  assert.match(script, /VIEW_CACHE_STORAGE/);
+  assert.match(script, /function hydrateViewCache/);
+  assert.match(script, /fillProfile\(currentProfile\)/);
+  assert.match(script, /loadKits\(\{ quiet: hydrated\.kits \}\)/);
+  assert.match(script, /loadCalendar\(\{ quiet: hydrated\.calendar \}\)/);
+  assert.match(script, /if \(kitsLoading\) return/);
+  assert.match(script, /if \(calendarLoading\) return/);
 });
 
 test("Today omits non-actionable Low priority and Filtered out aggregates", () => {
@@ -229,7 +257,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.8");
+  assert.equal(manifest.version, "0.3.9");
 });
 
 test("focus and reduced-motion styles are present", () => {

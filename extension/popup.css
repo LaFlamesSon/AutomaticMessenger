@@ -45,6 +45,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .mark { color: #ef9b67; font-size: 18px; }
 .global-status { padding: 8px 14px; border-bottom: 1px solid #efc5c1; color: var(--bad); background: var(--bad-soft); }
 .global-status.progress { border-bottom-color: #ead7c8; color: #704323; background: #fff5ea; }
+.global-status.success { border-bottom-color: #b9dbc5; color: var(--good); background: var(--good-soft); font-weight: 700; }
 
 .tabs { display: flex; border-bottom: 1px solid var(--line); background: #fff; }
 .tab {
@@ -135,6 +136,66 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 }
 .mode-badge { padding: 4px 8px; color: var(--good); background: var(--good-soft); }
 .mode-badge.auto { color: var(--accent); background: var(--accent-soft); }
+
+.duck-guide {
+  position: relative;
+  min-height: 82px;
+  margin: -3px 0 13px;
+  overflow: hidden;
+  border: 1px solid #e3d7bd;
+  border-radius: 13px;
+  background: linear-gradient(#dff3f3 0 68%, #e8dfbd 68% 76%, #bcd395 76%);
+}
+.duck-track { position: absolute; right: 10px; bottom: 17px; left: 10px; border-bottom: 2px dotted rgba(83, 90, 53, .2); }
+.duck-button {
+  position: absolute;
+  z-index: 2;
+  bottom: 9px;
+  left: 7px;
+  width: 76px;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  filter: drop-shadow(0 2px 1px rgba(70, 54, 24, .12));
+  animation: duck-walk 8s ease-in-out infinite alternate;
+}
+.duck-button:hover { filter: drop-shadow(0 3px 2px rgba(70, 54, 24, .22)); }
+.duck-art { display: block; width: 76px; height: 52px; overflow: visible; animation: duck-bob .42s ease-in-out infinite alternate; }
+.duck-shadow { fill: rgba(45, 52, 28, .15); }
+.duck-body, .duck-head { fill: #f5c84b; stroke: #b97820; stroke-width: 1.2; }
+.duck-wing { fill: #e8ad2f; stroke: #b97820; stroke-width: 1; }
+.duck-beak, .duck-leg { fill: #e8812d; stroke: #b95520; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.duck-eye { fill: #17181c; }
+.duck-leg { animation: duck-step .42s ease-in-out infinite alternate; }
+.duck-leg-back { animation-direction: alternate-reverse; }
+.duck-hint {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  z-index: 1;
+  translate: -50% 0;
+  white-space: nowrap;
+  color: #48605a;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.duck-guide.paused .duck-button, .duck-guide.paused .duck-art, .duck-guide.paused .duck-leg { animation-play-state: paused; }
+.duck-summary {
+  position: relative;
+  z-index: 3;
+  min-height: 80px;
+  padding: 11px 12px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, .96);
+  animation: summary-in .16s ease-out;
+}
+.duck-summary-head { display: flex; justify-content: space-between; gap: 10px; }
+.duck-summary h2 { font-size: 13px; }
+.duck-summary p { margin-top: 2px; color: var(--soft); font-size: 11.5px; }
+.duck-close { min-height: 26px; width: 26px; padding: 0; border: 0; color: var(--soft); background: transparent; font-size: 22px; line-height: 1; }
+.duck-summary-list { margin: 8px 0 0; padding-left: 17px; color: var(--soft); font-size: 11.5px; }
+.duck-summary-list li + li { margin-top: 3px; }
 
 .cat { margin-bottom: 15px; }
 .cat-heading { margin: 0 0 6px; color: var(--soft); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
@@ -233,6 +294,10 @@ dialog::backdrop { background: rgba(23, 24, 28, .55); }
 
 @keyframes msg-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 @keyframes bounce { 0%, 60%, 100% { transform: none; opacity: .4; } 30% { transform: translateY(-4px); opacity: 1; } }
+@keyframes duck-walk { from { transform: translateX(0); } to { transform: translateX(275px); } }
+@keyframes duck-bob { from { transform: translateY(0) rotate(-1deg); } to { transform: translateY(-2px) rotate(1deg); } }
+@keyframes duck-step { from { transform: rotate(8deg); } to { transform: rotate(-10deg); } }
+@keyframes summary-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }

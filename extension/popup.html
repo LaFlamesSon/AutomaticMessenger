@@ -35,6 +35,33 @@
     </section>
 
     <section id="today" class="panel" role="tabpanel" aria-labelledby="tab-today" tabindex="0">
+      <section id="duckGuide" class="duck-guide" aria-label="Inbox guide">
+        <div class="duck-track" aria-hidden="true"></div>
+        <button id="duckButton" class="duck-button" type="button" aria-expanded="false" aria-controls="duckSummary" title="Hear what's waiting">
+          <svg class="duck-art" viewBox="0 0 76 52" aria-hidden="true" focusable="false">
+            <ellipse class="duck-shadow" cx="38" cy="47" rx="25" ry="3"></ellipse>
+            <ellipse class="duck-body" cx="36" cy="29" rx="22" ry="14"></ellipse>
+            <path class="duck-wing" d="M23 26c8-7 19-5 24 2-6 8-17 9-24-2Z"></path>
+            <circle class="duck-head" cx="55" cy="18" r="11"></circle>
+            <path class="duck-beak" d="M64 18l11 4-11 4c-2-2-2-6 0-8Z"></path>
+            <circle class="duck-eye" cx="58" cy="15" r="1.7"></circle>
+            <path class="duck-leg duck-leg-back" d="M31 40v6l-5 2h8"></path>
+            <path class="duck-leg duck-leg-front" d="M45 40v6l-5 2h8"></path>
+          </svg>
+          <span class="sr-only">Open the inbox summary</span>
+        </button>
+        <span class="duck-hint">Tap the duck for your inbox brief</span>
+        <div id="duckSummary" class="duck-summary hidden" role="region" aria-labelledby="duckSummaryTitle">
+          <div class="duck-summary-head">
+            <div>
+              <h2 id="duckSummaryTitle">Your inbox brief</h2>
+              <p id="duckSummaryText">Checking what needs you&hellip;</p>
+            </div>
+            <button id="closeDuckSummary" class="duck-close" type="button" aria-label="Close inbox brief">&times;</button>
+          </div>
+          <ul id="duckSummaryList" class="duck-summary-list"></ul>
+        </div>
+      </section>
       <div class="panel-heading">
         <div>
           <h1>Today</h1>
