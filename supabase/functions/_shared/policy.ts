@@ -207,6 +207,8 @@ function descriptionMatchCount(description: string | null | undefined, emailText
   return matches;
 }
 
+const EXPLICITLY_BROAD_KIT_REQUEST = /\b(?:general|broad|mixed|multiple|several|various)\s+(?:beauty|media\s+kit|kit|product(?:s)?|categor(?:y|ies)|industr(?:y|ies)|vertical(?:s)?|collaboration|campaign)\b|\bno\s+(?:single|specific|clear)\s+(?:specialty|category|fit|focus)\b/i;
+
 export function selectMediaKit(kits: MediaKitCandidate[], senderEmail: string, subject: string, body: string): MediaKitCandidate | null {
   const domain = senderEmail.split("@")[1]?.toLocaleLowerCase() ?? "";
   const text = `${subject}\n${body}`.toLocaleLowerCase();
@@ -229,6 +231,8 @@ export function selectMediaKit(kits: MediaKitCandidate[], senderEmail: string, s
     return { kit, score, strength };
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score);
   if (scored.length && (scored.length === 1 || scored[0].score > scored[1].score)) {
+    if (EXPLICITLY_BROAD_KIT_REQUEST.test(text) &&
+      scored[0].strength !== "exact_domain" && scored[0].strength !== "exact_brand") return defaultKit();
     return { ...scored[0].kit, match_strength: scored[0].strength,
       // Content is untrusted: brand/keyword mentions may suggest a Review draft,
       // but only an exact configured sender-domain rule may release an attachment unattended.

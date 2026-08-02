@@ -126,6 +126,18 @@ test("ambiguous description relevance falls back to one general kit without gues
   assert.equal(selectMediaKit(kits.slice(0, 2), "brand@example.com", "Beauty collaboration", "Please send relevant samples."), null);
 });
 
+test("explicitly broad kit requests use General unless trusted routing is exact", () => {
+  const kits = [
+    { id: "lashes", label: "Lashes", description: "Eyelash, mascara, cosmetics, lash extension, and beauty partnerships.", brand_names: ["LumaLashQA"], sender_domains: ["lumalash.example"] },
+    { id: "general", label: "General", is_default: true },
+  ];
+  const broad = "We are planning a broad beauty collaboration across several product categories, with no single specialty.";
+  assert.equal(selectMediaKit(kits, "person@example.com", "Media kit", broad)?.id, "general");
+  assert.equal(selectMediaKit(kits, "person@example.com", "General media kit", "Please send the general kit.")?.id, "general");
+  assert.equal(selectMediaKit(kits, "person@lumalash.example", "Broad beauty campaign", broad)?.id, "lashes");
+  assert.equal(selectMediaKit(kits, "person@example.com", "LumaLashQA broad campaign", broad)?.id, "lashes");
+});
+
 test("short subject tokens cannot create unrelated description matches", () => {
   const kits = [
     { id: "automotive", label: "Automotive", description: "Automotive, electric vehicle, car care, mobility, and transportation campaigns." },
