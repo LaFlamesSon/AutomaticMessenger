@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.7** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.8** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -52,8 +52,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 31 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
-| `agent-api` | 13 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 32 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
+| `agent-api` | 14 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -180,6 +180,15 @@ double-booking guard; API idempotency and owner checks sit above it.
   mixed requests to the default kit unless an exact configured sender domain or
   brand overrides it; the fresh live rerun selected Yafet General Media Kit.
   Evidence is in `docs/audits/caughtup-25-live-20260802.md`.
+- Extension 0.3.8 makes `Sweep now` report exact sent/Review counts and refresh
+  Today with authoritative delivery state. Agent-sweep v32 skips owner-originated
+  Inbox messages, replaces low-confidence legitimate model wording with a safe
+  deterministic information request, and allows a uniquely matched kit to send
+  only when its owner-controlled Auto-attach switch is on. Yafet General Media
+  Kit now has Auto-attach enabled. Five deployed Gmail acceptance cases passed:
+  safe missing-details, General PDF, and Fitness PNG replies auto-sent to Yafet's
+  own controlled Gmail alias; prompt injection produced no reply; owner mail was
+  skipped. Evidence is in `docs/audits/caughtup-auto-sweep-20260802.md`.
 
 ## Repository layout
 
