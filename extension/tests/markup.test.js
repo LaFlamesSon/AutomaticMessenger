@@ -67,6 +67,8 @@ test("manual sweep follows completion automatically without exposing status mech
   assert.match(script, /if \(manualSweepState\) void pollPendingSweep\(\)/);
   assert.match(script, /button\.dataset\.label = "Sweep now"/);
   assert.doesNotMatch(script, /api\("sweep", \{ request_id: globalThis\.crypto/);
+  assert.match(script, /Core\.summarizeSweepResults\(result\)/);
+  assert.match(script, /Sweep complete: \$\{sent\}; \$\{review\}/);
 });
 
 test("Today omits non-actionable Low priority and Filtered out aggregates", () => {
@@ -211,11 +213,11 @@ test("standing rules visibly force Review mode", () => {
 
 test("selecting Auto-send immediately enters the save and confirmation flow", () => {
   assert.match(html, /id="modeSetupStatus"/);
-  assert.match(html, /Selecting this opens the required confirmation/);
+  assert.match(html, /Sweep now sends every reply that passes safety/);
   assert.match(script, /modeAuto"\)\.addEventListener\("change"/);
   assert.match(script, /selectDefaultAutoSendCategories\(\)/);
   assert.match(script, /settingsForm"\)\.requestSubmit\(\)/);
-  assert.match(script, /Auto-send is active for the selected eligible categories/);
+  assert.match(script, /Auto-send is active\. Sweep now sends every reply that passes safety/);
 });
 
 test("Chat writing-style updates are reflected in extension state", () => {
@@ -227,7 +229,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.7");
+  assert.equal(manifest.version, "0.3.8");
 });
 
 test("focus and reduced-motion styles are present", () => {

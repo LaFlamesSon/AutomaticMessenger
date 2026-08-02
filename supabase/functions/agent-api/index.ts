@@ -578,15 +578,16 @@ Deno.serve(async (req: Request) => {
         return json({
           challenge,
           expires_at: expiresAt,
-          confirmation_text: `CaughtUp may send eligible ${eligibleCategories.map((category: string) =>
+          confirmation_text: `When Sweep now runs, CaughtUp will send safe ${eligibleCategories.map((category: string) =>
             category === "action_needed" ? "Action needed" : "Urgent").join(" and ")} replies without review.`,
           eligible_categories: eligibleCategories,
           policy_version: AUTO_SEND_POLICY_VERSION,
           safeguards: [
             `Only ${eligibleCategories.map((category: string) =>
               category === "action_needed" ? "Action needed" : "Urgent").join(" and ")} categories you selected`,
-            "Safe replies may ask for missing project details without making commitments",
-            "Unsafe language and ambiguous media kits are never auto-sent",
+            "Uncertain inquiries use a conservative information request instead of uncertain model wording",
+            "Kits you marked Auto-attach may send after one clear deterministic match",
+            "No-reply messages, unsafe language, and ambiguous media kits are never sent",
           ],
         });
       }

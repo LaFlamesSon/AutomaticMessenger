@@ -215,7 +215,7 @@ export function selectMediaKit(kits: MediaKitCandidate[], senderEmail: string, s
   const defaultKit = () => {
     const defaults = kits.filter((kit) => kit.is_default === true);
     return defaults.length === 1
-      ? { ...defaults[0], match_strength: "default" as const, auto_send_eligible: false }
+      ? { ...defaults[0], match_strength: "default" as const, auto_send_eligible: defaults[0].auto_attach === true }
       : null;
   };
   const scored = kits.map((kit) => {
@@ -234,9 +234,10 @@ export function selectMediaKit(kits: MediaKitCandidate[], senderEmail: string, s
     if (EXPLICITLY_BROAD_KIT_REQUEST.test(text) &&
       scored[0].strength !== "exact_domain" && scored[0].strength !== "exact_brand") return defaultKit();
     return { ...scored[0].kit, match_strength: scored[0].strength,
-      // Content is untrusted: brand/keyword mentions may suggest a Review draft,
-      // but only an exact configured sender-domain rule may release an attachment unattended.
-      auto_send_eligible: scored[0].strength === "exact_domain" };
+      // The owner-controlled Auto-attach toggle authorizes a uniquely matched
+      // kit for otherwise safe Auto-send replies. Ambiguous matches already
+      // fall back rather than guessing between private files.
+      auto_send_eligible: scored[0].kit.auto_attach === true };
   }
   return defaultKit();
 }

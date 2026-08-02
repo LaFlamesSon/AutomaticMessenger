@@ -203,7 +203,7 @@
           </label>
           <label class="choice-card warning-choice" for="modeAuto">
             <input id="modeAuto" name="replyMode" type="radio" value="auto_send">
-            <span><strong>Auto-send eligible replies</strong><small>Selecting this opens the required confirmation. Safety rules stay on.</small></span>
+            <span><strong>Auto-send safe replies</strong><small>Sweep now sends every reply that passes safety. Media kits follow their Auto-attach setting.</small></span>
           </label>
           <p id="modeSetupStatus" class="status-text" role="status" aria-live="polite"></p>
         </fieldset>
@@ -221,7 +221,7 @@
               <legend>Auto-send may apply to</legend>
               <label class="check-row"><input type="checkbox" name="autoCategory" value="urgent"><span>Urgent</span></label>
               <label class="check-row"><input type="checkbox" name="autoCategory" value="action_needed"><span>Action needed</span></label>
-              <p class="hint">CaughtUp may safely ask for missing details. Uncertain or unsafe replies stay in Review.</p>
+              <p class="hint">Uncertain inquiries use a conservative information request. No-reply and unsafe messages are blocked.</p>
             </fieldset>
             <fieldset>
               <legend>Ask when missing</legend>
@@ -306,7 +306,7 @@
   <dialog id="autoSendDialog" aria-labelledby="autoSendTitle">
     <form method="dialog" class="dialog-card">
       <h2 id="autoSendTitle">Turn on Auto-send?</h2>
-      <p id="autoSendCopy">Eligible replies may be sent without review. CaughtUp will still draft when required details are missing or a decision is uncertain.</p>
+      <p id="autoSendCopy">Sweep now sends every reply that passes safety. Kits send only when their Auto-attach setting is enabled.</p>
       <ul id="autoSendSafeguards" class="safeguards"></ul>
       <p id="autoSendStatus" class="status-text" role="status" aria-live="assertive"></p>
       <div class="button-row">

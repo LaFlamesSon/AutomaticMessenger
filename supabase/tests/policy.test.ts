@@ -25,7 +25,7 @@ import {
   parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
 } from "../functions/_shared/mime.ts";
 import { allowedChromeRedirect } from "../functions/_shared/oauth.ts";
-import { hasLaterOwnerAction } from "../functions/_shared/gmail.ts";
+import { hasLaterOwnerAction, isOwnerAction } from "../functions/_shared/gmail.ts";
 
 test("sweep eligibility includes unread and owner-read mail but excludes later owner handling", () => {
   const unread = { id: "incoming-1", internalDate: "1000", labelIds: ["INBOX", "UNREAD"] };
@@ -43,6 +43,8 @@ test("sweep eligibility includes unread and owner-read mail but excludes later o
 
   const inboundFollowUp = { id: "incoming-3", internalDate: "2000", labelIds: ["INBOX"] };
   assert.equal(hasLaterOwnerAction(inboundFollowUp, [ownerRead, laterOwnerReply, inboundFollowUp]), false);
+  assert.equal(isOwnerAction({ id: "self", labelIds: ["INBOX", "SENT"] }), true);
+  assert.equal(isOwnerAction(ownerRead), false);
 });
 
 test("Review is the default and confirmed auto-send is narrow", () => {
@@ -116,6 +118,17 @@ test("kit descriptions route niche requests and the general kit is the safe fall
   assert.equal(selectMediaKit(kits, "brand@example.com", "Travel collaboration", "Please send a kit for our luggage campaign.")?.id, "general");
 });
 
+test("uniquely matched owner-opted kits are eligible for safe Auto-send", () => {
+  const kits = [
+    { id: "fitness", label: "Fitness", description: "Fitness, gym, and workout partnerships.", auto_attach: true },
+    { id: "general", label: "General", is_default: true, auto_attach: true },
+  ];
+  const fitness = selectMediaKit(kits, "brand@example.com", "Gym partnership", "Please send samples.");
+  const general = selectMediaKit(kits, "brand@example.com", "Travel partnership", "Please send samples.");
+  assert.equal(fitness?.auto_send_eligible, true);
+  assert.equal(general?.auto_send_eligible, true);
+});
+
 test("ambiguous description relevance falls back to one general kit without guessing", () => {
   const kits = [
     { id: "skin", label: "Skin", description: "Beauty and skincare collaborations." },
@@ -163,7 +176,7 @@ test("generic description words do not route unrelated industry requests", () =>
   assert.equal(selectMediaKit(kits, "brand@example.com", "Furniture collaboration", "This is for a home renovation campaign.")?.id, "home");
 });
 
-test("portfolio auto-send needs explicit kit opt-in", () => {
+test("portfolio auto-send needs explicit kit opt-in and a unique deterministic match", () => {
   const profile = {
     draft_categories: ["action_needed"],
     reply_mode: "auto_send",
@@ -175,7 +188,7 @@ test("portfolio auto-send needs explicit kit opt-in", () => {
   const base = { category: "action_needed" as const, draft: "Samples are attached.", profile, wantsPortfolio: true, confidence: 0.95 };
   assert.equal(deliveryDecision({ ...base, selectedKit: { id: "a", label: "A", auto_attach: false } }), "draft");
   assert.equal(deliveryDecision({ ...base, selectedKit: { id: "a", label: "A", auto_attach: true, match_strength: "keyword", auto_send_eligible: false } }), "draft");
-  assert.equal(deliveryDecision({ ...base, selectedKit: { id: "a", label: "A", auto_attach: true, match_strength: "exact_domain", auto_send_eligible: true } }), "auto_send");
+  assert.equal(deliveryDecision({ ...base, selectedKit: { id: "a", label: "A", auto_attach: true, match_strength: "keyword", auto_send_eligible: true } }), "auto_send");
 });
 
 test("free-text rules always force Review even for otherwise eligible replies", () => {
@@ -256,11 +269,14 @@ test("draft preview fingerprint ignores Gmail transport ids but detects content 
   }));
 });
 
-test("untrusted brand content can suggest Review but never unattended attachment", () => {
+test("untrusted brand content needs explicit owner Auto-attach opt-in", () => {
   const selected = selectMediaKit([{ id: "a", label: "A", brand_names: ["Acme"], auto_attach: true }],
     "stranger@example.com", "Acme partnership", "Please send samples");
   assert.equal(selected?.match_strength, "exact_brand");
-  assert.equal(selected?.auto_send_eligible, false);
+  assert.equal(selected?.auto_send_eligible, true);
+  const disabled = selectMediaKit([{ id: "a", label: "A", brand_names: ["Acme"], auto_attach: false }],
+    "stranger@example.com", "Acme partnership", "Please send samples");
+  assert.equal(disabled?.auto_send_eligible, false);
 });
 
 test("timezone schedule windows are deterministic", () => {

@@ -298,12 +298,14 @@ test("style learning requires an exact Gmail message association", async () => {
   assert.doesNotMatch(sweep, /sort\(\(a: any, b: any\).*internalDate/);
 });
 
-test("safe deterministic recovery is Review-only and preserves injection defenses", async () => {
+test("safe deterministic recovery can Auto-send without weakening injection defenses", async () => {
   const sweep = await read("functions/agent-sweep/index.ts");
   assert.match(sweep, /legitimateInquiryFallbackAllowed\(subject, emailBody\)/);
   assert.match(sweep, /safeInformationDraft\(profile, shouldAttachKit \|\| triage\.wants_portfolio\)/);
-  assert.match(sweep, /"manual review"/);
-  assert.match(sweep, /confidence: Math\.min\(triage\.confidence, 0\.89\)/);
+  assert.doesNotMatch(sweep, /"manual review"/);
+  assert.match(sweep, /draft: safeInformationDraft[\s\S]+confidence: 1/);
+  assert.match(sweep, /triage\.confidence < 0\.9/);
+  assert.match(sweep, /isOwnerAction\(msg\)/);
   assert.match(sweep, /explicitPortfolioRequest\(subject, emailBody\)/);
   assert.match(sweep, /enforceConfiguredSignoff\(finalDraft, profile\)/);
 });

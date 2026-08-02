@@ -200,6 +200,14 @@ test("pending sweep state recognizes a newly completed run and rejects legacy st
   ), true);
 });
 
+test("sweep summaries distinguish sent replies from Review drafts", () => {
+  assert.deepEqual(Core.summarizeSweepResults({ results: [
+    { scanned: 5, drafted: 4, auto_sent: 3, review_drafts: 1 },
+    { scanned: 2, drafted: 1, auto_sent: 0 },
+  ] }), { scanned: 7, sent: 3, review: 2 });
+  assert.deepEqual(Core.summarizeSweepResults(null), { scanned: 0, sent: 0, review: 0 });
+});
+
 test("unsafe provider details are not used for unknown errors", () => {
   assert.equal(Core.safeErrorMessage(new Error("secret provider response")), "CaughtUp couldn't complete that. Try again.");
   assert.match(Core.safeErrorMessage(new Core.ApiError("", 401, "unauthorized")), /session expired/i);

@@ -337,6 +337,21 @@
     return Date.parse(finishedAt) >= Date.parse(state.started_at) - 5000;
   }
 
+  function summarizeSweepResults(payload) {
+    const rows = Array.isArray(payload?.results) ? payload.results : [];
+    const number = (value) => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+    return rows.reduce((summary, row) => {
+      const sent = number(row?.auto_sent);
+      const drafted = number(row?.drafted);
+      summary.scanned += number(row?.scanned);
+      summary.sent += sent;
+      summary.review += row?.review_drafts === undefined
+        ? Math.max(0, drafted - sent)
+        : number(row.review_drafts);
+      return summary;
+    }, { scanned: 0, sent: 0, review: 0 });
+  }
+
   return {
     ApiError,
     CATEGORIES,
@@ -374,5 +389,6 @@
     ensureSweepRequestId,
     normalizeSweepState,
     sweepRunChanged,
+    summarizeSweepResults,
   };
 });

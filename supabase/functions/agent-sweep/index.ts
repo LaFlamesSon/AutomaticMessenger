@@ -26,7 +26,7 @@ import {
   type VerifiedOpenSlot,
 } from "../_shared/policy.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
-import { hasLaterOwnerAction } from "../_shared/gmail.ts";
+import { hasLaterOwnerAction, isOwnerAction } from "../_shared/gmail.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
@@ -463,7 +463,7 @@ Deno.serve(async (req: Request) => {
       continue;
     }
 
-    let scanned = 0, drafted = 0;
+    let scanned = 0, drafted = 0, autoSentCount = 0;
     const targetedDiagnostics: Record<string, unknown>[] = [];
     const digest: Record<Category, { from: string; subject: string; summary: string; draft_created: boolean }[]> = {
       urgent: [], action_needed: [], fyi: [], low_priority: [], spam_or_poor_fit: [],
@@ -521,6 +521,16 @@ Deno.serve(async (req: Request) => {
         try {
           const msg = await gmailGet(token, `/messages/${ref.id}?format=full`);
           scanned++;
+          if (isOwnerAction(msg)) {
+            // Self-addressed and other owner-originated Inbox messages are not
+            // inbound work. Never let Sweep now reply to the user's own send.
+            await gmailPost(token, `/messages/${ref.id}/modify`, { addLabelIds: [labelId] });
+            const { error: ownerOriginatedError } = await supabase.from("ia_message_claims")
+              .update({ status: "complete", finished_at: new Date().toISOString(), error_code: "owner_originated" })
+              .eq("id", messageClaim).eq("status", "claimed");
+            if (ownerOriginatedError) throw new Error("owner_originated_state_failed");
+            continue;
+          }
           const thread = await gmailGet(token, `/threads/${encodeURIComponent(msg.threadId)}?format=metadata`);
           if (hasLaterOwnerAction(msg, thread.messages ?? [])) {
             // A later SENT message or owner draft means the person already handled
@@ -568,6 +578,8 @@ Deno.serve(async (req: Request) => {
           const fallbackAllowed = legitimateInquiryFallbackAllowed(subject, emailBody);
           const contextualKitRelevant = collaborationMediaKitRelevant(subject, emailBody);
           const shouldAttachKit = portfolioRequested || contextualKitRelevant;
+          const confirmedAutoMode = profile.reply_mode === "auto_send" && profile.auto_send === true &&
+            typeof profile.auto_send_confirmed_at === "string" && profile.auto_send_policy_version === "v1";
           const enabledDraftCategories = Array.isArray(profile.draft_categories)
             ? profile.draft_categories : ["urgent", "action_needed"];
           const modelDraftUnsafe = triage.draft ? draftSafetyViolations(triage.draft).length > 0 : false;
@@ -581,11 +593,23 @@ Deno.serve(async (req: Request) => {
               category: categoryNeedsRecovery ? "action_needed" : triage.category,
               draft: safeInformationDraft(profile, shouldAttachKit || triage.wants_portfolio),
               wants_portfolio: shouldAttachKit || triage.wants_portfolio,
-              missing_required: Array.from(new Set([...(triage.missing_required ?? []), "manual review"])),
-              confidence: Math.min(triage.confidence, 0.89),
+              missing_required: triage.missing_required ?? [],
+              confidence: 1,
             };
           } else if (shouldAttachKit && fallbackAllowed) {
             triage = { ...triage, wants_portfolio: true };
+          }
+          if (confirmedAutoMode && fallbackAllowed && enabledDraftCategories.includes(triage.category) &&
+            triage.draft && !draftSafetyViolations(triage.draft).length && triage.confidence < 0.9) {
+            // Never auto-send uncertain model-specific wording. Replace it with
+            // the deterministic, bounded information request that has no price,
+            // availability, acceptance, rejection, or turnaround claims.
+            triage = {
+              ...triage,
+              draft: safeInformationDraft(profile, shouldAttachKit || triage.wants_portfolio),
+              wants_portfolio: shouldAttachKit || triage.wants_portfolio,
+              confidence: 1,
+            };
           }
 
           let selectedKit: any = null;
@@ -692,6 +716,7 @@ Deno.serve(async (req: Request) => {
                 .eq("id", messageClaim).eq("status", "sending").select("id").maybeSingle();
               if (sentClaimError || !sentClaim) throw new Error("message_send_state_failed");
               autoSent = true;
+              autoSentCount++;
             } else {
               const draft = await gmailPost(token, "/drafts", { message: { raw, threadId: msg.threadId } });
               gmailDraftId = draft.id ?? null;
@@ -744,7 +769,8 @@ Deno.serve(async (req: Request) => {
 
       results.push({
         account: account.gmail_address,
-        scanned, drafted, style_examples_learned: learned,
+        scanned, drafted, auto_sent: autoSentCount, review_drafts: drafted - autoSentCount,
+        style_examples_learned: learned,
         digest: scanned === 0 ? "All caught up" : digest,
         diagnostics: targeted ? targetedDiagnostics : undefined,
       });

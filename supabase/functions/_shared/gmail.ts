@@ -4,7 +4,7 @@ export interface GmailThreadMessage {
   labelIds?: string[];
 }
 
-function isOwnerAction(message: GmailThreadMessage): boolean {
+export function isOwnerAction(message: GmailThreadMessage): boolean {
   const labels = new Set(message.labelIds ?? []);
   return labels.has("SENT") || labels.has("DRAFT");
 }

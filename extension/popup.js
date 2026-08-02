@@ -543,6 +543,17 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function showSweepOutcome(result) {
+  const summary = Core.summarizeSweepResults(result);
+  if (!summary.scanned) {
+    setGlobalStatus("Sweep complete. Your inbox was already caught up.");
+    return;
+  }
+  const sent = `${summary.sent} ${summary.sent === 1 ? "reply" : "replies"} sent`;
+  const review = `${summary.review} ${summary.review === 1 ? "reply needs" : "replies need"} review`;
+  setGlobalStatus(`Sweep complete: ${sent}; ${review}.`);
+}
+
 async function pollPendingSweep() {
   if (!manualSweepState || sweepPolling) return false;
   const state = manualSweepState;
@@ -565,7 +576,7 @@ async function pollPendingSweep() {
       const succeeded = lastSweepRun?.status === "ok";
       await forgetManualSweepRequestId();
       await loadDigest();
-      if (succeeded) setGlobalStatus();
+      if (succeeded) setGlobalStatus("Sweep complete. Today is updated with sent replies and anything that still needs review.");
       else setGlobalStatus("CaughtUp could not finish that sweep. Tap Sweep now to try again.");
       return succeeded;
     }
@@ -601,7 +612,7 @@ $("sweepBtn").addEventListener("click", async () => {
     await forgetManualSweepRequestId();
     button.dataset.label = "Sweep now";
     await loadDigest();
-    setGlobalStatus();
+    showSweepOutcome(result);
   } catch (error) {
     if (error.code === "gmail_reconnect_required") {
       await forgetManualSweepRequestId();
@@ -1176,7 +1187,7 @@ function fillProfile(raw) {
   $("learningSummary").textContent = `${examples} writing example${examples === 1 ? "" : "s"} and ${rules} standing rule${rules === 1 ? "" : "s"}.`;
   updateModeBadge(currentProfile.reply_mode);
   setStatus("modeSetupStatus", currentProfile.reply_mode === "auto_send"
-    ? "Auto-send is active for the selected eligible categories."
+    ? "Auto-send is active. Sweep now sends every reply that passes safety and your kit Auto-attach choices."
     : "Review mode is active. Replies will be saved as drafts.", "success");
 }
 
@@ -1218,10 +1229,10 @@ async function prepareAutoSend() {
   const result = await api("auto_send_prepare");
   autoSendChallenge = result.challenge;
   if (!autoSendChallenge) throw new Core.ApiError("Auto-send confirmation is not available.", 0, "missing_challenge");
-  $("autoSendCopy").textContent = result.confirmation_text || "Eligible replies may be sent without review. CaughtUp will draft whenever required details are missing or a decision is uncertain.";
+  $("autoSendCopy").textContent = result.confirmation_text || "Sweep now sends every reply that passes safety. Uncertain inquiries use a conservative information request instead of uncertain wording.";
   const list = $("autoSendSafeguards");
   list.replaceChildren();
-  (result.safeguards || ["Only selected categories", "Required questions fall back to drafts", "Safety rules cannot be overridden"]).forEach((item) => list.appendChild(create("li", "", item)));
+  (result.safeguards || ["Only selected categories", "Auto-attach follows each kit's setting", "Safety rules cannot be overridden"]).forEach((item) => list.appendChild(create("li", "", item)));
   setStatus("autoSendStatus", "");
   $("autoSendDialog").showModal();
 }
@@ -1298,8 +1309,8 @@ $("confirmAutoSend").addEventListener("click", async () => {
     currentProfile = Core.normalizeProfile(result.profile || { ...currentProfile, reply_mode: "auto_send" });
     fillProfile(currentProfile);
     $("autoSendDialog").close();
-    setStatus("saveMsg", "Settings saved. Auto-send is on for eligible replies.", "success");
-    setStatus("modeSetupStatus", "Auto-send is active for the selected eligible categories.", "success");
+    setStatus("saveMsg", "Settings saved. Sweep now will send every reply that passes safety.", "success");
+    setStatus("modeSetupStatus", "Auto-send is active. Media kits follow each kit's Auto-attach setting.", "success");
   } catch (error) {
     setStatus("autoSendStatus", Core.safeErrorMessage(error), "error");
     $("modeReview").checked = true;
