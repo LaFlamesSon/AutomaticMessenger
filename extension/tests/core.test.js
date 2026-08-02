@@ -178,3 +178,15 @@ test("unsafe provider details are not used for unknown errors", () => {
   assert.equal(Core.safeErrorMessage(new Error("secret provider response")), "CaughtUp couldn't complete that. Try again.");
   assert.match(Core.safeErrorMessage(new Core.ApiError("", 401, "unauthorized")), /session expired/i);
 });
+
+test("OAuth callbacks parse fragment sessions and query-based Gmail completion", () => {
+  const session = Core.parseOAuthCallback(
+    "https://example.chromiumapp.org/caughtup#access_token=access&refresh_token=refresh&expires_at=123&provider_token=temporary",
+  );
+  assert.equal(session.access_token, "access");
+  assert.equal(session.refresh_token, "refresh");
+  assert.equal(session.expires_at, "123");
+  assert.equal(session.provider_token, "temporary");
+  assert.equal(Core.parseOAuthCallback("https://example.chromiumapp.org/caughtup?caughtup_gmail=connected").caughtup_gmail, "connected");
+  assert.equal(Core.parseOAuthCallback("not a URL").error, "invalid_callback");
+});

@@ -244,6 +244,28 @@
     return expiry !== null && expiry <= now + leewayMs;
   }
 
+  function parseOAuthCallback(callbackUrl) {
+    let url;
+    try {
+      url = new URL(String(callbackUrl || ""));
+    } catch {
+      return { error: "invalid_callback" };
+    }
+    const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
+    const read = (name) => fragment.get(name) || url.searchParams.get(name);
+    return {
+      error: read("error") || null,
+      error_description: read("error_description") || null,
+      access_token: read("access_token") || null,
+      refresh_token: read("refresh_token") || null,
+      expires_at: read("expires_at") || null,
+      token_type: read("token_type") || null,
+      provider_token: read("provider_token") || null,
+      provider_refresh_token: read("provider_refresh_token") || null,
+      caughtup_gmail: read("caughtup_gmail") || null,
+    };
+  }
+
   function sameStringSet(left, right) {
     const a = [...new Set(Array.isArray(left) ? left : [])].sort();
     const b = [...new Set(Array.isArray(right) ? right : [])].sort();
@@ -317,6 +339,7 @@
     authHeaders,
     expiryToMs,
     shouldRefreshSession,
+    parseOAuthCallback,
     sameStringSet,
     autoSendPolicyChanged,
     findManualSendKey,

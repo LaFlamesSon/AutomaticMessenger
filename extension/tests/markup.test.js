@@ -9,6 +9,10 @@ const extensionDir = path.resolve(__dirname, "..");
 const html = fs.readFileSync(path.join(extensionDir, "popup.html"), "utf8");
 const script = fs.readFileSync(path.join(extensionDir, "popup.js"), "utf8");
 const css = fs.readFileSync(path.join(extensionDir, "popup.css"), "utf8");
+const connectHtml = fs.readFileSync(path.join(extensionDir, "connect.html"), "utf8");
+const connectScript = fs.readFileSync(path.join(extensionDir, "connect.js"), "utf8");
+const connectCss = fs.readFileSync(path.join(extensionDir, "connect.css"), "utf8");
+const allScripts = `${script}\n${connectScript}`;
 const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
 
 test("popup exposes exactly the five approved tabs and matching accessible panels", () => {
@@ -27,6 +31,8 @@ test("popup IDs are unique", () => {
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
   const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
   assert.deepEqual(duplicates, []);
+  const connectIds = [...connectHtml.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(new Set(connectIds).size, connectIds.length);
 });
 
 test("irreversible modes have explicit dialogs and live status", () => {
@@ -63,12 +69,12 @@ test("expired Gmail authorization opens a real reconnect flow", () => {
   assert.match(script, /gmailReconnectRequired/);
   assert.match(script, /GMAIL_RECONNECT_STORAGE/);
   assert.match(script, /rememberGmailReconnectRequired/);
-  assert.match(script, /if \(providerTokens\)/);
-  assert.doesNotMatch(script, /profile\.gmail_connected !== true && providerTokens/);
-  assert.match(script, /profile\.gmail_connected !== true \|\| gmailReconnectRequired/);
+  assert.match(connectScript, /if \(providerTokens\)/);
+  assert.doesNotMatch(connectScript, /profile\?\.gmail_connected !== true && providerTokens/);
+  assert.match(connectScript, /profile\?\.gmail_connected !== true \|\| reconnectState\[GMAIL_RECONNECT_STORAGE\] === true/);
   assert.match(script, /error\.code === "gmail_reconnect_required"/);
   assert.match(script, /showSetup\(true, "Gmail access expired\.[^\n]+", "gmail"\)/);
-  assert.match(script, /startedWithoutSession && !providerHandoffCompleted/);
+  assert.match(connectScript, /startedWithoutSession && !providerHandoffCompleted/);
 });
 
 test("manual send requires an authoritative versioned preview", () => {
@@ -105,7 +111,7 @@ test("client targets the audited API actions", () => {
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
     "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
-  ].forEach((action) => assert.ok(script.includes(`"${action}"`), `missing ${action}`));
+  ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -145,21 +151,28 @@ test("internal bookings are timezone-aware, idempotent, and deletions are confir
   assert.match(script, /canCreateBooking = scheduledMode && currentCalendar\?\.contact_mode === "scheduled_call"/);
 });
 
-test("Google onboarding requests identity and Gmail in one launch with a safe fallback", () => {
-  assert.match(script, /chrome\.identity\.getRedirectURL/);
-  assert.match(script, /SUPABASE_AUTH/);
-  assert.match(script, /openid email profile https:\/\/www\.googleapis\.com\/auth\/gmail\.modify/);
-  assert.match(script, /authorize\.searchParams\.set\("access_type", "offline"\)/);
-  assert.match(script, /authorize\.searchParams\.set\("prompt", "consent"\)/);
-  assert.match(script, /auth\.get\("provider_token"\)/);
-  assert.match(script, /auth\.get\("provider_refresh_token"\)/);
-  assert.match(script, /api\("gmail_connect_provider", providerTokens\)/);
-  assert.match(script, /"gmail_connect_start"/);
-  assert.match(script, /caughtup_gmail/);
-  const persistedSession = script.match(/session = \{[\s\S]*?\};\s+const providerAccessToken/)?.[0] ?? "";
-  assert.doesNotMatch(persistedSession, /provider_token|provider_refresh_token/);
+test("Google onboarding runs in a durable extension page with a safe Gmail fallback", () => {
+  assert.match(script, /chrome\.tabs\.create\(\{ url: chrome\.runtime\.getURL\("connect\.html"\) \}\)/);
+  assert.doesNotMatch(script, /launchWebAuthFlow/);
+  assert.match(connectHtml, /Keep this page open/);
+  assert.match(connectHtml, /Connecting does not send any email/);
+  assert.match(connectScript, /chrome\.identity\.getRedirectURL/);
+  assert.match(connectScript, /chrome\.identity\.launchWebAuthFlow/);
+  assert.match(connectScript, /SUPABASE_AUTH/);
+  assert.match(connectScript, /openid email profile https:\/\/www\.googleapis\.com\/auth\/gmail\.modify/);
+  assert.match(connectScript, /authorize\.searchParams\.set\("access_type", "offline"\)/);
+  assert.match(connectScript, /authorize\.searchParams\.set\("prompt", "consent"\)/);
+  assert.match(connectScript, /auth\.provider_token/);
+  assert.match(connectScript, /auth\.provider_refresh_token/);
+  assert.match(connectScript, /api\("gmail_connect_provider", providerTokens\)/);
+  assert.match(connectScript, /"gmail_connect_start"/);
+  assert.match(connectScript, /gmailAuth\.caughtup_gmail/);
+  const persistedSessions = [...connectScript.matchAll(/await saveSession\(\{([\s\S]*?)\}\);/g)].map((match) => match[1]);
+  assert.ok(persistedSessions.length >= 2);
+  persistedSessions.forEach((persisted) => assert.doesNotMatch(persisted, /provider_token|provider_refresh_token/));
   assert.doesNotMatch(html, /tokenInput|Paste your access token/i);
-  assert.doesNotMatch(script, /x-api-token/);
+  assert.doesNotMatch(allScripts, /x-api-token/);
+  assert.match(connectCss, /prefers-reduced-motion/);
 });
 
 test("authenticated users can resume Gmail consent and identity labels stay distinct", () => {
@@ -195,7 +208,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.3");
+  assert.equal(manifest.version, "0.3.4");
 });
 
 test("focus and reduced-motion styles are present", () => {

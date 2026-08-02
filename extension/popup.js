@@ -1,7 +1,6 @@
 "use strict";
 
 const API = "https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/agent-api";
-const SUPABASE_AUTH = "https://xkrpxvswdkreglmefuot.supabase.co/auth/v1/authorize";
 const Core = globalThis.CaughtUpCore;
 const $ = (id) => document.getElementById(id);
 const PANELS = ["today", "chat", "kits", "calendar", "settings"];
@@ -268,93 +267,16 @@ document.querySelectorAll("[role=tab]").forEach((tab, index, tabs) => {
   });
 });
 
-async function launchAuthFlow(url) {
-  if (!chrome.identity?.launchWebAuthFlow) throw new Core.ApiError("Reload CaughtUp as an unpacked Chrome extension to connect.", 0, "identity_unavailable");
-  return new Promise((resolve, reject) => {
-    chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
-      const runtimeError = chrome.runtime.lastError;
-      if (runtimeError || !redirectUrl) {
-        reject(new Core.ApiError("Google connection was canceled or could not finish.", 0, "oauth_canceled"));
-        return;
-      }
-      resolve(redirectUrl);
-    });
-  });
-}
-
 $("connectGoogle").addEventListener("click", async () => {
   const button = $("connectGoogle");
-  setBusy(button, true, "Opening Google…");
+  setBusy(button, true, "Opening secure setup…");
   setStatus("setupStatus", "");
   try {
-    const startedWithoutSession = !session;
-    let providerHandoffCompleted = false;
-    const redirectUrl = chrome.identity.getRedirectURL("caughtup");
-    let providerTokens = null;
-    if (!session) {
-      const authorize = new URL(SUPABASE_AUTH);
-      authorize.searchParams.set("provider", "google");
-      authorize.searchParams.set("redirect_to", redirectUrl);
-      authorize.searchParams.set("scopes", "openid email profile https://www.googleapis.com/auth/gmail.modify");
-      authorize.searchParams.set("access_type", "offline");
-      authorize.searchParams.set("prompt", "consent");
-      const callbackUrl = new URL(await launchAuthFlow(authorize.toString()));
-      const auth = new URLSearchParams(callbackUrl.hash.replace(/^#/, ""));
-      if (callbackUrl.searchParams.get("error") || auth.get("error")) {
-        throw new Core.ApiError("Google connection did not finish. Try again.", 0, "oauth_error");
-      }
-      const accessToken = auth.get("access_token");
-      if (!accessToken) throw new Core.ApiError("Google connection did not create a session.", 0, "missing_session");
-      session = {
-        access_token: accessToken,
-        refresh_token: auth.get("refresh_token") || null,
-        expires_at: auth.get("expires_at") || null,
-      };
-      const providerAccessToken = auth.get("provider_token");
-      const providerRefreshToken = auth.get("provider_refresh_token");
-      if (providerAccessToken && providerRefreshToken) {
-        providerTokens = {
-          provider_access_token: providerAccessToken,
-          provider_refresh_token: providerRefreshToken,
-        };
-      }
-      await chrome.storage.local.set({ caughtup_session: session });
+    if (!chrome.tabs?.create || !chrome.runtime?.getURL) {
+      throw new Core.ApiError("Reload CaughtUp as an unpacked Chrome extension to connect.", 0, "identity_unavailable");
     }
-    let profile = await api("profile_get");
-    applyIdentity(profile);
-    if (providerTokens) {
-      try {
-        await api("gmail_connect_provider", providerTokens);
-        providerTokens = null;
-        providerHandoffCompleted = true;
-        await rememberGmailReconnectRequired(false);
-        profile = await api("profile_get");
-        applyIdentity(profile);
-      } catch (error) {
-        providerTokens = null;
-        if (error?.code !== "gmail_provider_unavailable") throw error;
-        await rememberGmailReconnectRequired(true);
-      }
-    }
-    if (startedWithoutSession && !providerHandoffCompleted) {
-      await rememberGmailReconnectRequired(true);
-    }
-    if (profile.gmail_connected !== true || gmailReconnectRequired) {
-      setBusy(button, true, "Connecting Gmail…");
-      const gmailStart = await api("gmail_connect_start", { redirect_url: redirectUrl });
-      if (!gmailStart.authorization_url) throw new Core.ApiError("Gmail connection is not available yet.", 0, "missing_gmail_url");
-      const gmailCallback = new URL(await launchAuthFlow(gmailStart.authorization_url));
-      const gmailResult = gmailCallback.searchParams.get("caughtup_gmail");
-      if (gmailCallback.searchParams.get("error") || gmailResult !== "connected") {
-        throw new Core.ApiError("Gmail connection did not finish. Try again.", 0, "gmail_oauth_error");
-      }
-      profile = await api("profile_get");
-      if (profile.gmail_connected !== true) throw new Core.ApiError("Gmail connection is still being confirmed. Try again.", 0, "gmail_not_connected");
-      await rememberGmailReconnectRequired(false);
-      applyIdentity(profile);
-    }
-    showSetup(false);
-    await loadDigest();
+    await chrome.tabs.create({ url: chrome.runtime.getURL("connect.html") });
+    window.close();
   } catch (error) {
     setStatus("setupStatus", Core.safeErrorMessage(error), "error");
   } finally {

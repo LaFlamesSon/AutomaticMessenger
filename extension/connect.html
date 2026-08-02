@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect CaughtUp</title>
+  <link rel="stylesheet" href="connect.css">
+</head>
+<body>
+  <header>
+    <span class="mark" aria-hidden="true">&#9993;</span>
+    <strong>CaughtUp</strong>
+  </header>
+  <main>
+    <div id="statusMark" class="status-mark" aria-hidden="true">&#10024;</div>
+    <h1 id="title">Connecting CaughtUp</h1>
+    <p id="message">Keep this page open while Google sign-in and Gmail access finish.</p>
+    <div class="progress" aria-hidden="true"><span id="progress"></span></div>
+    <p id="detail" class="detail" role="status" aria-live="polite">Starting secure Google sign-in…</p>
+    <button id="retry" class="primary hidden" type="button">Try again</button>
+    <button id="close" class="secondary hidden" type="button">Close this page</button>
+    <p class="safety">CaughtUp remains in Review mode. Connecting does not send any email.</p>
+  </main>
+  <script src="core.js"></script>
+  <script src="connect.js"></script>
+</body>
+</html>
