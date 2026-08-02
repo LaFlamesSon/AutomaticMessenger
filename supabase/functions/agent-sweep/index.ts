@@ -194,6 +194,7 @@ For the email you receive:
 3. For every email categorized as one of these user-enabled categories (${draftCategories}), draft MUST be a non-empty reply. The reply must:
    - Thanks them and shows the user actually read their email (reference one specific detail from it)
    - Asks for whichever of these they haven't already given: ${alwaysAsk}
+   - Treats those as useful details to gather, not prerequisites for replying; ask naturally without inventing an answer
    - Follows this server-owned contact policy: ${contactInstruction}
    - Is under 150 words
    - Signs off with "${profile.signoff}," followed by ${profile.display_name || "the user's name"}
@@ -210,7 +211,7 @@ const OUTPUT_INSTRUCTION = `
 
 OUTPUT FORMAT: Respond with ONLY a JSON object, no other text:
 {"category": "urgent" | "action_needed" | "fyi" | "low_priority" | "spam_or_poor_fit", "summary": "<one sentence>", "draft": "<reply text>" or null, "wants_portfolio": true or false, "missing_required": ["<required item not supplied>"], "confidence": 0.0}
-confidence must be a number from 0 through 1 representing confidence in the category, facts, and proposed reply. wants_portfolio is true ONLY when the sender explicitly asks to see work samples, a portfolio, or example images. missing_required must contain each configured required question not answered by the email.`;
+confidence must be a number from 0 through 1 representing confidence in the category, facts, and proposed reply. wants_portfolio is true ONLY when the sender explicitly asks to see work samples, a portfolio, or example images. missing_required must list each configured detail not answered by the email; these are details the reply should ask for, not reasons by themselves to withhold a safe reply.`;
 
 async function triageEmail(
   systemPrompt: string,

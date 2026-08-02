@@ -585,7 +585,7 @@ Deno.serve(async (req: Request) => {
           safeguards: [
             `Only ${eligibleCategories.map((category: string) =>
               category === "action_needed" ? "Action needed" : "Urgent").join(" and ")} categories you selected`,
-            "Missing required details always fall back to a draft",
+            "Safe replies may ask for missing project details without making commitments",
             "Unsafe language and ambiguous media kits are never auto-sent",
           ],
         });

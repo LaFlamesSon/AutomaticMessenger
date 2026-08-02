@@ -60,7 +60,9 @@ test("Review is the default and confirmed auto-send is narrow", () => {
   assert.equal(deliveryDecision({ category: "action_needed", draft: "Thanks for the brief.", profile: confirmed, confidence: 0.95 }), "auto_send");
   assert.equal(deliveryDecision({ category: "action_needed", draft: "Thanks for the brief.", profile: confirmed }), "draft");
   assert.equal(deliveryDecision({ category: "action_needed", draft: "Thanks for the brief.", profile: confirmed, confidence: 0.89 }), "draft");
-  assert.equal(deliveryDecision({ category: "action_needed", draft: "Thanks.", missingRequired: ["budget"], profile: confirmed }), "draft");
+  assert.equal(deliveryDecision({ category: "action_needed", draft: "What budget do you have in mind?", missingRequired: ["budget"], profile: confirmed, confidence: 0.95 }), "auto_send");
+  assert.equal(deliveryDecision({ category: "action_needed", draft: "Could you share the scope, budget, and timeline?", missingRequired: ["project scope", "budget", "timeline"], profile: confirmed, confidence: 0.95 }), "auto_send");
+  assert.equal(deliveryDecision({ category: "action_needed", draft: "Could you share more project details?", missingRequired: ["manual review"], profile: confirmed, confidence: 0.95 }), "draft");
 });
 
 test("unsafe language is never drafted or auto-sent", () => {
@@ -132,6 +134,21 @@ test("short subject tokens cannot create unrelated description matches", () => {
   const generic = "We have a paid creator partnership. Project scope, budget, timeline, and brand materials are available.";
   assert.equal(selectMediaKit(kits, "brand@example.com", "[CU-UI-AUTO-20260802024742] sponsorship inquiry", generic)?.id, "general");
   assert.equal(selectMediaKit(kits, "brand@example.com", "Automotive partnership", "Please send relevant samples.")?.id, "automotive");
+});
+
+test("generic description words do not route unrelated industry requests", () => {
+  const kits = [
+    { id: "automotive", label: "Automotive", description: "Automotive, electric vehicle, car care, mobility, and transportation campaigns." },
+    { id: "finance", label: "Finance", description: "Finance, banking, investing, financial education, and fintech partnerships." },
+    { id: "home", label: "Home Interior", description: "Home decor, interior design, furniture, renovation, and household campaigns." },
+    { id: "general", label: "General", description: "General sponsor media kit and portfolio.", is_default: true },
+  ];
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Pet-care collaboration", "Please send a kit for our dog grooming products.")?.id, "general");
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Education platform partnership", "We make online learning tools for teachers.")?.id, "general");
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Social campaign design", "Please share samples for our social media launch.")?.id, "general");
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Electric vehicle campaign", "Our mobility company would like a partnership.")?.id, "automotive");
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Fintech partnership", "We build investing tools for consumers.")?.id, "finance");
+  assert.equal(selectMediaKit(kits, "brand@example.com", "Furniture collaboration", "This is for a home renovation campaign.")?.id, "home");
 });
 
 test("portfolio auto-send needs explicit kit opt-in", () => {

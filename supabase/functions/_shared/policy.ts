@@ -149,7 +149,10 @@ export function deliveryDecision(input: {
   const autoCategories = Array.isArray(input.profile.auto_send_categories)
     ? input.profile.auto_send_categories as string[] : [];
   if (!autoCategories.includes(input.category)) return "draft";
-  if ((input.missingRequired ?? []).length) return "draft";
+  // Configured questions are information to gather, not four prerequisites that
+  // must all be answered before a safe reply can be sent. Deterministic recovery
+  // marks its output for human review explicitly and must remain Review-only.
+  if ((input.missingRequired ?? []).some((item) => item.trim().toLocaleLowerCase() === "manual review")) return "draft";
   if (typeof input.profile.custom_rules === "string" && input.profile.custom_rules.trim()) return "draft";
   if (typeof input.confidence !== "number" || !Number.isFinite(input.confidence) || input.confidence < 0.9) return "draft";
   if (input.wantsPortfolio && (!input.selectedKit || input.selectedKit.auto_attach !== true ||
@@ -166,9 +169,9 @@ function includesTerm(haystack: string, term: string): boolean {
 
 const DESCRIPTION_STOP_WORDS = new Set([
   "about", "all", "also", "and", "any", "are", "attach", "attachment", "best", "brand", "campaign", "can",
-  "collab", "collaboration", "content", "creator", "default", "example", "file",
+  "business", "care", "collab", "collaboration", "content", "creator", "default", "design", "education", "example", "file",
   "for", "from", "general", "has", "have", "include", "information", "into", "its", "kit", "media", "new", "not", "our", "partnership",
-  "portfolio", "provide", "relevant", "request", "review", "sample", "send", "share",
+  "platform", "portfolio", "product", "provide", "relevant", "request", "review", "sample", "send", "service", "share",
   "sponsor", "sponsorship", "that", "the", "their", "this", "use", "who", "with", "work", "you", "your",
 ]);
 

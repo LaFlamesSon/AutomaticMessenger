@@ -227,7 +227,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.6");
+  assert.equal(manifest.version, "0.3.7");
 });
 
 test("focus and reduced-motion styles are present", () => {
