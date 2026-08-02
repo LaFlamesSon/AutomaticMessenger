@@ -33,7 +33,6 @@ let gmailAddress = "";
 let pendingKitEdit = null;
 let gmailReconnectRequired = false;
 let viewCache = {};
-let latestDigestEmails = [];
 
 function create(tag, className, text) {
   const element = document.createElement(tag);
@@ -304,7 +303,6 @@ $("signOut").addEventListener("click", async () => {
   manualSweepState = null;
   gmailReconnectRequired = false;
   viewCache = {};
-  latestDigestEmails = [];
   pendingBookingRequest = null;
   kitsLoaded = false;
   kitsLoading = false;
@@ -393,8 +391,6 @@ function renderDigest(emails) {
   digest.replaceChildren();
   const byCategory = {};
   const pendingEmails = emails.filter((email) => Core.CATEGORIES.includes(email.category) && Core.deliveryState(email) !== "sent");
-  latestDigestEmails = pendingEmails;
-  updateDuckSummary(pendingEmails);
   pendingEmails.forEach((email) => {
     if (!Core.CATEGORIES.includes(email.category)) return;
     (byCategory[email.category] ||= []).push(email);
@@ -418,44 +414,6 @@ function renderDigest(emails) {
   if (!rendered) stateCard("todayStatus", "You're all caught up — nothing pending!");
   digest.classList.toggle("hidden", !rendered);
 }
-
-function updateDuckSummary(emails = latestDigestEmails) {
-  const pending = Array.isArray(emails) ? emails : [];
-  const text = $("duckSummaryText");
-  const list = $("duckSummaryList");
-  list.replaceChildren();
-  if (!pending.length) {
-    text.textContent = "You're all caught up — nothing pending!";
-    return;
-  }
-  const counts = pending.reduce((result, email) => {
-    result[email.category] = (result[email.category] || 0) + 1;
-    return result;
-  }, {});
-  const breakdown = ["urgent", "action_needed", "fyi"]
-    .filter((category) => counts[category])
-    .map((category) => `${counts[category]} ${Core.CATEGORY_LABELS[category].toLowerCase()}`);
-  text.textContent = `${pending.length} ${pending.length === 1 ? "message needs" : "messages need"} you: ${breakdown.join(", ")}.`;
-  pending.slice(0, 3).forEach((email) => {
-    const summary = String(email.summary || "Open Today for details.").trim();
-    const preview = summary.length > 92 ? `${summary.slice(0, 89)}…` : summary;
-    list.appendChild(create("li", "", `${email.subject || "No subject"}: ${preview}`));
-  });
-  if (pending.length > 3) list.appendChild(create("li", "", `Plus ${pending.length - 3} more in Today.`));
-}
-
-function setDuckSummaryOpen(open) {
-  $("duckSummary").classList.toggle("hidden", !open);
-  $("duckGuide").classList.toggle("paused", open);
-  $("duckButton").setAttribute("aria-expanded", String(open));
-  if (open) $("closeDuckSummary").focus();
-}
-
-$("duckButton").addEventListener("click", () => setDuckSummaryOpen(true));
-$("closeDuckSummary").addEventListener("click", () => {
-  setDuckSummaryOpen(false);
-  $("duckButton").focus();
-});
 
 function renderEmailCard(email) {
   const card = create("article", "card");
