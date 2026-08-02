@@ -10,14 +10,15 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.6** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.7** with five tabs: Today, Chat, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
 ## Safety posture
 
 - Email content is untrusted data, never agent instructions.
-- Auto-send is off and the production profile is in Review (`draft_only`).
+- Auto-send is currently enabled for the production profile's explicitly
+  confirmed Urgent and Action needed categories.
 - Contact details and scheduling slots come from owner-controlled server state.
 - A draft may offer server-verified open slots, but never claim a meeting is
   confirmed, booked, or reserved.
@@ -51,8 +52,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 29 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
-| `agent-api` | 12 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 30 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
+| `agent-api` | 13 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -158,6 +159,16 @@ double-booking guard; API idempotency and owner checks sit above it.
   single General fallback. Deployed verification rejected an empty Auto-send
   category set with `auto_categories_required`; an exact Review-mode Gmail
   fixture containing the prior `AUTO` tag selected Yafet General Media Kit.
+- Configured Ask-when-missing items are now details the reply gathers rather
+  than four simultaneous prerequisites for sending. Safe, high-confidence
+  information-gathering replies can auto-send, while deterministic recovery,
+  custom rules, unsafe language, low confidence, and ambiguous attachments
+  remain Review-only. Generic description words such as `care`, `education`,
+  and `design` no longer select unrelated kits. Eight exact live cases on
+  `agent-sweep` v30 verified a safe missing-details auto-reply, General fallback
+  for pet care/education/social design, positive Automotive and Finance routes,
+  an attachment-gated Review draft, and no reply to prompt injection. The one
+  automatic reply was self-addressed to `yafet2132@gmail.com`.
 
 ## Repository layout
 
