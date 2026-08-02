@@ -52,7 +52,7 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 30 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
+| `agent-sweep` | 31 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
 | `agent-api` | 13 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
@@ -77,7 +77,8 @@ double-booking guard; API idempotency and owner checks sit above it.
 ## Operations and live verification
 
 - Scheduled sweep cron is paused during iterative live QA.
-- Auto-send remains off after every test.
+- Live QA preserves the user's current Auto-send setting; unattended QA replies
+  must stay inside explicitly controlled accounts.
 - Runtime model `deepseek-v4-flash` returned valid JSON after the retired
   `deepseek-chat` name caused HTTP 400 failures.
 - The current unpacked-extension callback is allowed by both Supabase Auth and
@@ -169,6 +170,16 @@ double-booking guard; API idempotency and owner checks sit above it.
   for pet care/education/social design, positive Automotive and Finance routes,
   an attachment-gated Review draft, and no reply to prompt injection. The one
   automatic reply was self-addressed to `yafet2132@gmail.com`.
+- A 25-case exact-message live matrix on 2026-08-02 exercised missing-detail
+  replies, current contact policy, 14 specific/general kit requests, unsafe
+  budget/acceptance boundaries, prompt injection, FYI, owner-read mail, and
+  duplicate isolation. It produced 3 controlled self-addressed sends, 20 live
+  drafts, and 2 no-reply outcomes with no unsafe language or external recipient.
+  One real gap let the word `beauty` select Eyelash despite an explicitly broad,
+  multi-category request. Agent-sweep v31 now routes explicitly general/broad/
+  mixed requests to the default kit unless an exact configured sender domain or
+  brand overrides it; the fresh live rerun selected Yafet General Media Kit.
+  Evidence is in `docs/audits/caughtup-25-live-20260802.md`.
 
 ## Repository layout
 
