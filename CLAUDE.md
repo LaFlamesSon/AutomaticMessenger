@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.12** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension is version **0.4.0** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -52,8 +52,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 32 | Exact/batch Gmail triage, DeepSeek V4 non-thinking JSON requests, owner-handled thread exclusion, deterministic safe recovery, description-aware kit selection, contact policy, voice learning, expired-Gmail detection |
-| `agent-api` | 14 | Extension API, combined Google provider-token handoff and reconnection, stable attachment-aware preview/send, persisted Chat style preferences, media-kit lifecycle, calendar preferences/bookings |
+| `agent-sweep` | 33 | Exact/batch Gmail triage plus opt-in, confirmation-required business-domain relationship suggestions for Opportunities |
+| `agent-api` | 15 | Extension API plus creator opportunity preferences, evidence-based matching, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -195,11 +195,14 @@ double-booking guard; API idempotency and owner checks sit above it.
   quiet background refreshes run; Settings reuses the already-fetched startup
   profile instead of making a duplicate first-tab request. The experimental
   animated inbox mascot was removed completely after visual review.
-- Extension 0.3.12 moves the existing Ask CaughtUp preference and inbox control
-  into a compact Today card and replaces the top-level Chat tab with an honest
-  Opportunities product shell. Opportunity discovery and outreach are not yet
-  active; the owner-scoped, evidence-first, approval-required version 1 design
-  is documented in `docs/opportunities-v1.md`.
+- Extension 0.4.0 activates the owner-scoped Opportunities workflow: opt-in
+  creator direction, Gmail relationship suggestions requiring confirmation,
+  creator-added brands and same-domain HTTPS source URLs, deterministic scoring,
+  current media-kit recommendations, save/dismiss state, and Gmail outreach
+  drafts with authoritative preview and explicit send. Inbox Auto-send never
+  applies to opportunity outreach. Migration `20260805011421` is live; source
+  and deployed acceptance evidence is in
+  `docs/audits/caughtup-opportunities-v1-20260804.md`.
 
 ## Repository layout
 
