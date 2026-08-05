@@ -5,13 +5,17 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   bookingWithinAvailability, CATEGORIES, normalizeWeeklyAvailability,
-  normalizedStringList, explicitStylePreference, type WeeklyAvailabilityEntry,
+  normalizedStringList, explicitStylePreference, draftSafetyViolations, type WeeklyAvailabilityEntry,
 } from "../_shared/policy.ts";
 import {
-  parseStrictRecipient, payloadHeader, payloadText, sanitizeHeader,
+  parseStrictRecipient, payloadHeader, payloadText, quoteFilename, sanitizeHeader,
   type StableDraftAttachment, stableDraftPreview,
 } from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
+import {
+  matchOpportunity, normalizeOpportunityDomain, normalizeOpportunitySourceUrl,
+  OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
+} from "../_shared/opportunities.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -111,6 +115,44 @@ function cleanList(value: unknown, maxItems: number, maxLength: number): string[
   } catch (error) {
     throw new InputError(error instanceof Error ? error.message : "invalid list");
   }
+}
+
+function cleanEmail(value: unknown, required = false): string | null {
+  if (value === null || value === undefined || value === "") {
+    if (required) throw new InputError("contact_email is required");
+    return null;
+  }
+  const email = cleanString(value, "contact_email", 320).toLocaleLowerCase();
+  if (!parseStrictRecipient(email)) throw new InputError("contact_email is invalid");
+  return email;
+}
+
+function b64urlEncode(value: string): string {
+  return btoa(unescape(encodeURIComponent(value))).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let value = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    value += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(value);
+}
+
+function buildOpportunityMime(to: string, subject: string, bodyText: string, attachment?: { name: string; mime: string; b64: string }): string {
+  const recipient = parseStrictRecipient(to);
+  if (!recipient) throw new InputError("contact_email is invalid");
+  const headers = [`To: ${recipient}`, `Subject: ${sanitizeHeader(subject, 200)}`, "MIME-Version: 1.0"];
+  if (!attachment) return b64urlEncode([...headers, 'Content-Type: text/plain; charset="UTF-8"', "", bodyText].join("\r\n"));
+  const boundary = `caughtup-${crypto.randomUUID()}`;
+  const filename = quoteFilename(attachment.name);
+  return b64urlEncode([
+    ...headers, `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
+    `--${boundary}`, 'Content-Type: text/plain; charset="UTF-8"', "", bodyText,
+    `--${boundary}`, `Content-Type: ${attachment.mime}; name="${filename}"`,
+    `Content-Disposition: attachment; filename="${filename}"`, "Content-Transfer-Encoding: base64", "",
+    ...(attachment.b64.match(/.{1,76}/g) ?? []), `--${boundary}--`,
+  ].join("\r\n"));
 }
 
 async function sha256(value: string): Promise<string> {
@@ -310,6 +352,84 @@ async function liveDraft(accessToken: string, draftId: string): Promise<{ recipi
     to, cc, bcc, subject, body, attachments: fingerprintAttachments,
   })));
   return { recipient, to, cc, bcc, subject, body, attachments: flattened, preview_version };
+}
+
+async function ensureOpportunityPreferences(supabase: any, userId: string): Promise<any> {
+  const { data, error } = await supabase.from("ia_opportunity_preferences").upsert(
+    { user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true },
+  ).select("*").maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data) return data;
+  const { data: current, error: readError } = await supabase.from("ia_opportunity_preferences")
+    .select("*").eq("user_id", userId).single();
+  if (readError) throw new Error(readError.message);
+  return current;
+}
+
+async function opportunityState(supabase: any, userId: string): Promise<any> {
+  const preferences = await ensureOpportunityPreferences(supabase, userId);
+  const [{ data: relationships, error: relationshipError }, { data: opportunities, error: opportunityError }, { data: kits, error: kitError }] = await Promise.all([
+    supabase.from("ia_brand_relationships").select("*").eq("user_id", userId).order("updated_at", { ascending: false }).limit(200),
+    supabase.from("ia_opportunities").select("*").eq("user_id", userId).order("match_score", { ascending: false }).limit(200),
+    supabase.from("ia_media_kits").select("id,label,best_for,original_filename,mime_type,byte_size,storage_path,brand_names,sender_domains,keywords,is_default,status")
+      .eq("user_id", userId).eq("status", "active"),
+  ]);
+  if (relationshipError || opportunityError || kitError) throw new Error((relationshipError ?? opportunityError ?? kitError).message);
+  const relationshipByDomain = new Map((relationships ?? []).map((row: any) => [row.brand_domain, row]));
+  const publicKits = (kits ?? []).map(({ storage_path: _path, ...kit }: any) => kit);
+  const matchKits = (kits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for }));
+  const nextOpportunities = [];
+  for (const opportunity of opportunities ?? []) {
+    const relationship = relationshipByDomain.get(opportunity.brand_domain) as any;
+    const result = matchOpportunity(preferences, matchKits, { ...opportunity, relationship_status: relationship?.relationship_status });
+    const recommendedId = result.recommendedKit?.id ?? null;
+    const changed = opportunity.match_score !== result.score || opportunity.recommended_media_kit_id !== recommendedId ||
+      JSON.stringify(opportunity.match_reasons ?? []) !== JSON.stringify(result.reasons);
+    if (changed) {
+      const { data: updated, error } = await supabase.from("ia_opportunities").update({
+        match_score: result.score, match_reasons: result.reasons, recommended_media_kit_id: recommendedId,
+        updated_at: new Date().toISOString(),
+      }).eq("id", opportunity.id).eq("user_id", userId).select("*").single();
+      if (error) throw new Error(error.message);
+      nextOpportunities.push(updated);
+    } else nextOpportunities.push(opportunity);
+  }
+  return { preferences, relationships: relationships ?? [], opportunities: nextOpportunities, kits: publicKits,
+    sourcing: { active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls"], broad_web_discovery: false } };
+}
+
+async function ownedOpportunity(supabase: any, userId: string, id: unknown): Promise<any | null> {
+  const opportunityId = cleanString(id ?? "", "id", 100);
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(opportunityId)) return null;
+  const { data, error } = await supabase.from("ia_opportunities").select("*").eq("id", opportunityId).eq("user_id", userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ?? null;
+}
+
+function opportunityDraftText(profile: any, opportunity: any, kitLabel?: string): string {
+  const displayName = sanitizeHeader(profile?.display_name || "", 100) || "there";
+  const occupation = sanitizeHeader(profile?.occupation || "creator", 120) || "creator";
+  const services = String(profile?.services ?? "").split(",").map((value) => sanitizeHeader(value, 80).trim()).filter(Boolean).slice(0, 3);
+  const brand = sanitizeHeader(opportunity.brand_name, 120);
+  const focus = services.length ? `My work includes ${services.join(", ")}.` : `I work as a ${occupation}.`;
+  const attachmentLine = kitLabel ? ` I’ve attached ${sanitizeHeader(kitLabel, 100)} for relevant examples.` : "";
+  const signoff = sanitizeHeader(profile?.signoff || "Best", 100) || "Best";
+  return `Hello ${brand} team,\n\nI’m ${displayName}, a ${occupation}. ${focus} I’m interested in exploring whether there may be a relevant collaboration with ${brand}.${attachmentLine}\n\nIf useful, I’d be happy to continue the conversation by email.\n\n${signoff}`;
+}
+
+async function opportunityAttachment(supabase: any, userId: string, kitId: string | null): Promise<{ attachment?: { name: string; mime: string; b64: string }; label?: string }> {
+  if (!kitId) return {};
+  const { data: kit, error } = await supabase.from("ia_media_kits").select("id,label,storage_path,original_filename,mime_type,byte_size")
+    .eq("id", kitId).eq("user_id", userId).eq("status", "active").maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!kit) return {};
+  const { data: blob, error: downloadError } = await supabase.storage.from("media-kit").download(kit.storage_path);
+  if (downloadError || !blob) throw new Error("media kit download failed");
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length !== kit.byte_size || bytes.length < 1 || bytes.length > 8_000_000 || !hasMagicBytes(bytes, kit.mime_type)) {
+    throw new Error("media kit validation failed");
+  }
+  return { label: kit.label, attachment: { name: kit.original_filename, mime: kit.mime_type, b64: bytesToBase64(bytes) } };
 }
 
 Deno.serve(async (req: Request) => {
@@ -617,6 +737,199 @@ Deno.serve(async (req: Request) => {
         if (error) throw new Error(error.message);
         if (!profile) return json({ error: "profile not found" }, 404);
         return json({ ok: true, profile });
+      }
+
+      case "opportunities_get":
+      case "opportunity_refresh": {
+        return json(await opportunityState(supabase, user.id));
+      }
+
+      case "opportunity_preferences_set": {
+        const current = await ensureOpportunityPreferences(supabase, user.id);
+        const expectedVersion = Number(body.expected_settings_version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion !== Number(current.settings_version)) {
+          return json({ error: "opportunity settings changed elsewhere", code: "version_conflict" }, 409);
+        }
+        const fields = body.fields ?? {};
+        const updates: Record<string, unknown> = {};
+        if ("enabled" in fields) updates.enabled = fields.enabled === true;
+        for (const [name, limits] of Object.entries({
+          creator_styles: [20, 80], industries: [20, 80], platforms: [20, 80], collaboration_types: [20, 100],
+          regions: [20, 100], desired_brands: [50, 120], excluded_brands: [50, 253],
+        })) {
+          if (name in fields) updates[name] = cleanList(fields[name], limits[0], limits[1]);
+        }
+        if (!Object.keys(updates).length) return json({ error: "no opportunity fields supplied", code: "invalid_request" }, 400);
+        updates.settings_version = expectedVersion + 1;
+        updates.updated_at = new Date().toISOString();
+        const { data, error } = await supabase.from("ia_opportunity_preferences").update(updates)
+          .eq("user_id", user.id).eq("settings_version", expectedVersion).select("*").maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!data) return json({ error: "opportunity settings changed elsewhere", code: "version_conflict" }, 409);
+        return json({ ok: true, preferences: data });
+      }
+
+      case "brand_relationship_set": {
+        const domain = normalizeOpportunityDomain(body.brand_domain);
+        if (!domain) return json({ error: "brand_domain is invalid", code: "invalid_request" }, 400);
+        const brandName = cleanString(body.brand_name ?? domain.split(".")[0], "brand_name", 120);
+        if (!brandName) return json({ error: "brand_name is required", code: "invalid_request" }, 400);
+        const relationshipStatus = cleanString(body.relationship_status ?? "want_to_work_with", "relationship_status", 30);
+        if (!RELATIONSHIP_STATUSES.includes(relationshipStatus as any)) return json({ error: "unsupported relationship status", code: "invalid_request" }, 400);
+        const { data: existing, error: existingError } = await supabase.from("ia_brand_relationships").select("id")
+          .eq("user_id", user.id).eq("brand_domain", domain).maybeSingle();
+        if (existingError) throw new Error(existingError.message);
+        const creatorFields = {
+          brand_name: brandName, relationship_status: relationshipStatus,
+          collaboration_types: cleanList(body.collaboration_types ?? [], 20, 100),
+          notes: cleanString(body.notes ?? "", "notes", 1000), confirmed: body.confirmed !== false,
+          updated_at: new Date().toISOString(),
+        };
+        const query = existing
+          ? supabase.from("ia_brand_relationships").update(creatorFields).eq("id", existing.id).eq("user_id", user.id)
+          : supabase.from("ia_brand_relationships").insert({ user_id: user.id, brand_domain: domain,
+            source_type: "manual", source_ref: `manual:${domain}`, evidence: { entered_by_creator: true }, ...creatorFields });
+        const { data, error } = await query.select("*").single();
+        if (error) throw new Error(error.message);
+        return json({ ok: true, relationship: data });
+      }
+
+      case "opportunity_create": {
+        const preferences = await ensureOpportunityPreferences(supabase, user.id);
+        if (!preferences.enabled) return json({ error: "turn on Opportunities before adding brands", code: "opportunities_disabled" }, 409);
+        const domain = normalizeOpportunityDomain(body.brand_domain);
+        if (!domain) return json({ error: "brand_domain is invalid", code: "invalid_request" }, 400);
+        const brandName = cleanString(body.brand_name ?? "", "brand_name", 120);
+        if (!brandName) return json({ error: "brand_name is required", code: "invalid_request" }, 400);
+        const sourceUrl = normalizeOpportunitySourceUrl(body.source_url, domain);
+        if (body.source_url && !sourceUrl) return json({ error: "source_url must be HTTPS on the brand domain", code: "invalid_request" }, 400);
+        const sourceRef = sourceUrl ?? `manual:${domain}`;
+        const row = {
+          user_id: user.id, brand_name: brandName, brand_domain: domain,
+          contact_email: cleanEmail(body.contact_email), title: cleanString(body.title ?? "", "title", 200),
+          description: cleanString(body.description ?? "", "description", 2000), tags: cleanList(body.tags ?? [], 30, 80),
+          source_type: sourceUrl ? "public_page" : "manual", source_ref: sourceRef, source_url: sourceUrl,
+          evidence: sourceUrl ? { supplied_by_creator: true, url: sourceUrl } : { entered_by_creator: true },
+          updated_at: new Date().toISOString(),
+        };
+        const { data, error } = await supabase.from("ia_opportunities").upsert(row, { onConflict: "user_id,source_type,source_ref" }).select("*").single();
+        if (error) throw new Error(error.message);
+        await supabase.from("ia_opportunity_events").insert({ user_id: user.id, opportunity_id: data.id, event_type: "discovered", metadata: { source_type: row.source_type } });
+        return json({ ok: true, opportunity: data, ...(await opportunityState(supabase, user.id)) });
+      }
+
+      case "opportunity_update": {
+        const opportunity = await ownedOpportunity(supabase, user.id, body.id);
+        if (!opportunity) return json({ error: "not found" }, 404);
+        if (["drafted", "contacted", "replied"].includes(opportunity.status)) {
+          return json({ error: "drafted or contacted opportunities cannot be reclassified", code: "invalid_request" }, 409);
+        }
+        const status = cleanString(body.status ?? "", "status", 30);
+        if (!OPPORTUNITY_STATUSES.includes(status as any) || !["saved", "dismissed", "new"].includes(status)) {
+          return json({ error: "unsupported opportunity status", code: "invalid_request" }, 400);
+        }
+        const { data, error } = await supabase.from("ia_opportunities").update({ status, updated_at: new Date().toISOString() })
+          .eq("id", opportunity.id).eq("user_id", user.id).select("*").single();
+        if (error) throw new Error(error.message);
+        await supabase.from("ia_opportunity_events").insert({ user_id: user.id, opportunity_id: opportunity.id,
+          event_type: status === "dismissed" ? "dismissed" : "saved", metadata: {} });
+        return json({ ok: true, opportunity: data });
+      }
+
+      case "opportunity_prepare_draft": {
+        const opportunity = await ownedOpportunity(supabase, user.id, body.id);
+        if (!opportunity) return json({ error: "not found" }, 404);
+        if (opportunity.gmail_draft_id && opportunity.status === "drafted") {
+          return json({ ok: true, opportunity, created_in_gmail: true, already_created: true, auto_sent: false });
+        }
+        if (!["new", "saved"].includes(opportunity.status)) return json({ error: "opportunity is not draftable", code: "invalid_request" }, 409);
+        const preferences = await ensureOpportunityPreferences(supabase, user.id);
+        if (!preferences.enabled) return json({ error: "Opportunities is off", code: "opportunities_disabled" }, 409);
+        const contactEmail = cleanEmail(opportunity.contact_email, true)!;
+        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts").select("id,refresh_token")
+          .eq("user_id", user.id).limit(1).maybeSingle();
+        if (accountError) throw new Error(accountError.message);
+        if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
+        const { data: profile, error: profileError } = await supabase.from("ia_voice_profiles").select("display_name,occupation,services,signoff")
+          .eq("user_id", user.id).single();
+        if (profileError) throw new Error(profileError.message);
+        const kit = await opportunityAttachment(supabase, user.id, opportunity.recommended_media_kit_id);
+        const subject = `Collaboration idea — ${sanitizeHeader(opportunity.brand_name, 120)}`;
+        const draftText = opportunityDraftText(profile, opportunity, kit.label);
+        if (draftSafetyViolations(draftText).length) return json({ error: "outreach draft failed safety review", code: "review_required" }, 422);
+        const accessToken = await gmailAccessToken(account.refresh_token, CFG);
+        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
+        const draftResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+          method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ message: { raw: buildOpportunityMime(contactEmail, subject, draftText, kit.attachment) } }),
+        });
+        if (!draftResponse.ok) return json({ error: "Gmail draft creation failed", code: "gmail_error" }, 502);
+        const gmailDraft = await draftResponse.json();
+        const now = new Date().toISOString();
+        const { data: updated, error } = await supabase.from("ia_opportunities").update({
+          status: "drafted", gmail_draft_id: gmailDraft.id, gmail_draft_message_id: gmailDraft.message?.id ?? null,
+          draft_to: contactEmail, draft_subject: subject, draft_body: draftText, updated_at: now,
+        }).eq("id", opportunity.id).eq("user_id", user.id).select("*").single();
+        if (error) throw new Error(error.message);
+        await supabase.from("ia_opportunity_events").insert({ user_id: user.id, opportunity_id: opportunity.id,
+          event_type: "drafted", metadata: { gmail_draft_id: gmailDraft.id, media_kit_id: opportunity.recommended_media_kit_id } });
+        return json({ ok: true, opportunity: updated, created_in_gmail: true, auto_sent: false });
+      }
+
+      case "opportunity_draft_get": {
+        const opportunity = await ownedOpportunity(supabase, user.id, body.id);
+        if (!opportunity?.gmail_draft_id) return json({ error: "draft is unavailable" }, opportunity ? 422 : 404);
+        const { data: account, error } = await supabase.from("ia_gmail_accounts").select("refresh_token").eq("user_id", user.id).limit(1).maybeSingle();
+        if (error) throw new Error(error.message);
+        const accessToken = account ? await gmailAccessToken(account.refresh_token, CFG) : null;
+        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
+        const draft = await liveDraft(accessToken, opportunity.gmail_draft_id);
+        if (!draft) return json({ error: "live draft is unavailable", code: "invalid_draft" }, 422);
+        return json({ draft, opportunity: { id: opportunity.id, brand_name: opportunity.brand_name } });
+      }
+
+      case "opportunity_send": {
+        const opportunity = await ownedOpportunity(supabase, user.id, body.id);
+        if (!opportunity?.gmail_draft_id) return json({ error: "draft is unavailable" }, opportunity ? 422 : 404);
+        if (opportunity.status === "contacted" || opportunity.status === "replied") return json({ ok: true, already_sent: true });
+        const previewVersion = cleanString(body.preview_version ?? "", "preview_version", 64);
+        if (!/^[0-9a-f]{64}$/.test(previewVersion)) return json({ error: "preview_version is required", code: "invalid_request" }, 400);
+        const idempotencyKey = cleanString(body.idempotency_key ?? "", "idempotency_key", 200);
+        if (idempotencyKey.length < 8) return json({ error: "idempotency_key is required", code: "invalid_request" }, 400);
+        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts").select("refresh_token").eq("user_id", user.id).limit(1).maybeSingle();
+        if (accountError) throw new Error(accountError.message);
+        const accessToken = account ? await gmailAccessToken(account.refresh_token, CFG) : null;
+        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
+        const current = await liveDraft(accessToken, opportunity.gmail_draft_id);
+        if (!current) return json({ error: "live draft is unavailable", code: "invalid_draft" }, 422);
+        if (current.preview_version !== previewVersion) return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
+        const { data: claim, error: claimError } = await supabase.from("ia_opportunity_send_attempts").insert({
+          user_id: user.id, opportunity_id: opportunity.id, idempotency_key: idempotencyKey,
+        }).select("id").maybeSingle();
+        if (claimError || !claim) return json({ error: "send already in progress", code: "send_in_progress" }, 409);
+        const { data: sending } = await supabase.from("ia_opportunity_send_attempts").update({ status: "sending", updated_at: new Date().toISOString() })
+          .eq("id", claim.id).eq("status", "claimed").select("id").maybeSingle();
+        if (!sending) return json({ error: "send could not be claimed", code: "claim_unavailable" }, 503);
+        const sendResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts/send", {
+          method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ id: opportunity.gmail_draft_id }),
+        });
+        if (!sendResponse.ok) {
+          await supabase.from("ia_opportunity_send_attempts").update({ status: "reconcile", error_code: `gmail_${sendResponse.status}`, updated_at: new Date().toISOString() }).eq("id", claim.id);
+          return json({ error: "Gmail send failed", code: "reconcile_required" }, 502);
+        }
+        const sent = await sendResponse.json();
+        const sentAt = new Date().toISOString();
+        const [opportunityUpdate, attemptUpdate, eventInsert] = await Promise.all([
+          supabase.from("ia_opportunities").update({ status: "contacted", updated_at: sentAt }).eq("id", opportunity.id).eq("user_id", user.id),
+          supabase.from("ia_opportunity_send_attempts").update({ status: "sent", gmail_message_id: sent.id ?? null, updated_at: sentAt }).eq("id", claim.id),
+          supabase.from("ia_opportunity_events").insert({ user_id: user.id, opportunity_id: opportunity.id, event_type: "sent", metadata: { gmail_message_id: sent.id ?? null } }),
+        ]);
+        if (opportunityUpdate.error || attemptUpdate.error || eventInsert.error) {
+          await supabase.from("ia_opportunity_send_attempts").update({ status: "reconcile", error_code: "state_update_failed", updated_at: sentAt }).eq("id", claim.id);
+          return json({ error: "sent by Gmail; state reconciliation required", code: "reconcile_required" }, 503);
+        }
+        return json({ ok: true, gmail_message_id: sent.id ?? null });
       }
 
       case "send_draft": {

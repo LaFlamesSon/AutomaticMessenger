@@ -60,20 +60,52 @@
       <div class="panel-heading">
         <div>
           <h1>Opportunities</h1>
-          <p class="meta">Find brands that fit your work and media kits.</p>
+          <p class="meta">Match with relevant brands. Outreach always requires your review.</p>
         </div>
+        <button id="refreshOpportunities" type="button" class="ghost compact">Refresh</button>
       </div>
-      <div class="opportunity-card">
-        <span class="opportunity-kicker">Designing the first match</span>
-        <h2>Relevant brands, with a reason</h2>
-        <p>CaughtUp will show why a brand fits, which kit applies, and a suggested collaboration angle before any outreach is prepared.</p>
-        <ol class="opportunity-steps">
-          <li>Choose the work and industries you want.</li>
-          <li>Review matched brands and evidence.</li>
-          <li>Approve an outreach draft before it enters Gmail.</li>
-        </ol>
-      </div>
-      <div class="state-card opportunity-state" role="status">Opportunity matching is not active yet. CaughtUp will not contact brands without your approval.</div>
+      <form id="opportunityProfileForm" class="form-card opportunity-form">
+        <label class="toggle-row" for="opportunityEnabled"><span><strong>Find opportunities</strong><small>Uses your Gmail relationship signals and brands you add.</small></span><input id="opportunityEnabled" type="checkbox"></label>
+        <label for="opportunityStyles">Creator styles</label>
+        <input id="opportunityStyles" type="text" maxlength="500" placeholder="fitness, beauty, lifestyle">
+        <label for="opportunityIndustries">Industries</label>
+        <input id="opportunityIndustries" type="text" maxlength="500" placeholder="activewear, skincare, travel">
+        <label for="opportunityPlatforms">Platforms</label>
+        <input id="opportunityPlatforms" type="text" maxlength="500" placeholder="Instagram, TikTok, YouTube">
+        <label for="opportunityTypes">Collaboration types</label>
+        <input id="opportunityTypes" type="text" maxlength="500" placeholder="sponsored post, UGC, ambassador">
+        <label for="opportunityDesired">Brands you want</label>
+        <input id="opportunityDesired" type="text" maxlength="1000" placeholder="Brand One, Brand Two">
+        <label for="opportunityExcluded">Brands to exclude</label>
+        <input id="opportunityExcluded" type="text" maxlength="1000" placeholder="brand-domain.com, Brand Name">
+        <button id="saveOpportunityProfile" type="submit" class="primary">Save match profile</button>
+      </form>
+
+      <details class="form-card opportunity-add">
+        <summary>Add a brand or public opportunity</summary>
+        <form id="opportunityAddForm">
+          <label for="opportunityBrandName">Brand name</label>
+          <input id="opportunityBrandName" type="text" maxlength="120" required>
+          <label for="opportunityBrandDomain">Brand website domain</label>
+          <input id="opportunityBrandDomain" type="text" maxlength="253" placeholder="brand.com" required>
+          <label for="opportunityContactEmail">Business contact email <span class="optional">optional</span></label>
+          <input id="opportunityContactEmail" type="email" maxlength="320" placeholder="partnerships@brand.com">
+          <label for="opportunitySourceUrl">Public source URL <span class="optional">optional</span></label>
+          <input id="opportunitySourceUrl" type="url" maxlength="1000" placeholder="https://brand.com/creators">
+          <label for="opportunityDescription">Opportunity details</label>
+          <textarea id="opportunityDescription" maxlength="2000" rows="3" placeholder="What the brand makes and why it might fit"></textarea>
+          <label for="opportunityTags">Tags</label>
+          <input id="opportunityTags" type="text" maxlength="500" placeholder="fitness, UGC, activewear">
+          <button id="addOpportunity" type="submit" class="primary">Add and match</button>
+        </form>
+      </details>
+
+      <div id="opportunityStatus" class="state-card opportunity-state" role="status" aria-live="polite">Loading opportunities&hellip;</div>
+      <section id="relationshipSuggestions" class="hidden" aria-labelledby="relationshipTitle">
+        <h2 id="relationshipTitle" class="section-title">Confirm Gmail signals</h2>
+        <div id="relationshipList"></div>
+      </section>
+      <div id="opportunityList"></div>
     </section>
 
     <section id="kits" class="panel hidden" role="tabpanel" aria-labelledby="tab-kits" tabindex="0">
@@ -311,6 +343,22 @@
       <div class="button-row">
         <button id="cancelSend" type="submit" value="cancel" class="ghost">Keep draft</button>
         <button id="confirmSend" type="button" class="primary compact">Send reply</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="opportunityDraftDialog" aria-labelledby="opportunityDraftTitle">
+    <form method="dialog" class="dialog-card">
+      <h2 id="opportunityDraftTitle">Review brand outreach</h2>
+      <p id="opportunityDraftTo" class="meta"></p>
+      <h3 id="opportunityDraftSubject"></h3>
+      <pre id="opportunityDraftBody" class="draft-preview"></pre>
+      <p id="opportunityDraftAttachment" class="attachment-note hidden"></p>
+      <p class="warning-copy">Nothing sends until you choose Send outreach below.</p>
+      <p id="opportunityDraftStatus" class="status-text" role="status" aria-live="assertive"></p>
+      <div class="dialog-actions">
+        <button id="cancelOpportunitySend" type="button" class="ghost">Cancel</button>
+        <button id="confirmOpportunitySend" type="button" class="danger">Send outreach</button>
       </div>
     </form>
   </dialog>

@@ -181,6 +181,19 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .opportunity-steps { margin: 11px 0 0; padding-left: 20px; }
 .opportunity-steps li + li { margin-top: 5px; }
 .opportunity-state { margin-top: 10px; }
+.opportunity-form, .opportunity-add { margin-bottom: 12px; }
+.opportunity-add summary { cursor: pointer; font-weight: 800; }
+.opportunity-add form { margin-top: 12px; }
+.opportunity-add textarea { resize: vertical; }
+.section-title { margin: 16px 0 8px; font-size: 15px; }
+.opportunity-result { margin-bottom: 10px; }
+.opportunity-result .score { color: var(--accent); font-weight: 800; }
+.opportunity-result .reasons { margin: 7px 0; padding-left: 18px; color: var(--soft); }
+.opportunity-result .card-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.relationship-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.relationship-row:last-child { border-bottom: 0; }
+.relationship-row .card-actions { display: flex; gap: 7px; margin-top: 7px; }
+.source-note { margin-top: 8px; font-size: 11px; color: var(--soft); }
 
 .form-card { margin-bottom: 12px; background: #fbfaf7; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-weight: 500; }

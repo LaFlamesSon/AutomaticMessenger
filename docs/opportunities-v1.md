@@ -10,8 +10,8 @@ review. Version 1 does not automatically contact a brand.
 
 1. The user opts in and chooses industries, platforms, collaboration types,
    regions, and brands or categories they never want.
-2. The user adds a brand or imports a small controlled list. Gmail relationship
-   history and official opportunity sources can be added later.
+2. The user adds a brand or an HTTPS page on that brand's domain. Future inbox
+   sweeps suggest business-domain relationships for the user to confirm.
 3. CaughtUp evaluates the brand against the user's services, preferences, and
    media-kit metadata.
 4. Opportunities shows the evidence, match score, recommended kit, and one
@@ -119,29 +119,40 @@ addresses.
 
 ## Delivery phases
 
-### Phase A — product shell
+### Phase 1 — creator direction
 
-- Replace the Chat tab with Opportunities.
-- Move the existing Ask CaughtUp control into Today.
-- Show the matching and approval contract without claiming discovery is live.
+- Opt in and save creator styles, industries, platforms, collaboration types,
+  desired brands, and exclusions.
+- Keep Ask CaughtUp in Today so Opportunities remains a focused workflow.
 
-### Phase B — controlled brand list
+### Phase 2 — relationship memory
+
+- Suggest business-domain senders found during ordinary Gmail sweeps.
+- Require the creator to confirm `worked with`, `want to work with`, or
+  `not relevant`; Gmail evidence is preserved when they confirm it.
+
+### Phase 3 — controlled sourcing and matching
 
 - Add the preferences and opportunity tables through a named migration.
 - Add owner-scoped list/create/save/dismiss API actions.
-- Let users add a brand domain and see an evidence-based kit match.
+- Let users add a brand domain or an HTTPS page on that domain and see an
+  evidence-based, deduplicated media-kit match.
 
-### Phase C — draft preparation
+### Phase 4 — routine refresh
+
+- Manual and scheduled inbox sweeps add new confirmation-required Gmail
+  relationship signals when Opportunities is enabled.
+- Refresh recomputes scores and kit recommendations from the current profile,
+  relationships, and active kits.
+- Broad web discovery remains off until a permitted API or licensed source is
+  selected; CaughtUp does not claim that a stored URL was independently verified.
+
+### Phase 5 — outreach preparation
 
 - Add one explicit `Prepare draft` action.
-- Reuse the existing authoritative preview and idempotent manual-send path.
+- Create a Gmail draft, then require an authoritative live preview and an
+  idempotent explicit send action.
 - Attach only the selected owner-controlled kit.
-
-### Phase D — discovery adapters and learning
-
-- Add approved sources one at a time with provenance and deduplication tests.
-- Rank results from saved/dismissed/contacted/replied events.
-- Keep the scoring explanation visible and reversible.
 
 ## Version 1 acceptance gate
 

@@ -27,6 +27,7 @@ import {
 } from "../_shared/policy.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
 import { hasLaterOwnerAction, isOwnerAction } from "../_shared/gmail.ts";
+import { senderBusinessDomain } from "../_shared/opportunities.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
@@ -73,6 +74,12 @@ class GmailReconnectRequiredError extends Error {
     super("gmail_reconnect_required");
     this.name = "GmailReconnectRequiredError";
   }
+}
+
+function suggestedBrandName(from: string, domain: string): string {
+  const display = sanitizeHeader(from.replace(/<[^>]+>/g, "").replace(/^['"]|['"]$/g, "").trim(), 120);
+  if (display && !display.includes("@")) return display;
+  return domain.split(".")[0].split(/[-_]/).filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ").slice(0, 120);
 }
 
 // ---------------------------------------------------------------- helpers
@@ -495,6 +502,9 @@ Deno.serve(async (req: Request) => {
         .select("match_type, match_value, action, priority").eq("user_id", account.user_id)
         .eq("enabled", true).order("priority", { ascending: true });
       if (rulesError) throw new Error(`sender rules: ${rulesError.message}`);
+      const { data: opportunityPreferences, error: opportunityPreferenceError } = await supabase.from("ia_opportunity_preferences")
+        .select("enabled").eq("user_id", account.user_id).maybeSingle();
+      if (opportunityPreferenceError) throw new Error("opportunity preferences unavailable");
 
       let messageRefs: { id: string }[];
       if (targeted) {
@@ -577,6 +587,22 @@ Deno.serve(async (req: Request) => {
           const portfolioRequested = explicitPortfolioRequest(subject, emailBody);
           const fallbackAllowed = legitimateInquiryFallbackAllowed(subject, emailBody);
           const contextualKitRelevant = collaborationMediaKitRelevant(subject, emailBody);
+          const businessDomain = opportunityPreferences?.enabled ? senderBusinessDomain(from) : null;
+          if (businessDomain && triage.category !== "spam_or_poor_fit" &&
+            (fallbackAllowed || contextualKitRelevant || ["urgent", "action_needed"].includes(triage.category))) {
+            const { error: suggestionError } = await supabase.from("ia_brand_relationships").upsert({
+              user_id: account.user_id,
+              brand_name: suggestedBrandName(from, businessDomain),
+              brand_domain: businessDomain,
+              relationship_status: "suggested",
+              source_type: "gmail",
+              source_ref: `gmail:${account.id}:${businessDomain}`,
+              evidence: { gmail_message_id: ref.id, subject: sanitizeHeader(subject, 200), category: triage.category },
+              confirmed: false,
+              last_contact_at: new Date(Number(msg.internalDate ?? Date.now())).toISOString(),
+            }, { onConflict: "user_id,brand_domain", ignoreDuplicates: true });
+            if (suggestionError) throw new Error("opportunity suggestion unavailable");
+          }
           const shouldAttachKit = portfolioRequested || contextualKitRelevant;
           const confirmedAutoMode = profile.reply_mode === "auto_send" && profile.auto_send === true &&
             typeof profile.auto_send_confirmed_at === "string" && profile.auto_send_policy_version === "v1";

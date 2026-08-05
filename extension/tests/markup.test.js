@@ -79,13 +79,20 @@ test("empty Today and successful sweeps use the requested caught-up states", () 
   assert.doesNotMatch(`${html}\n${script}\n${css}`, /duck/i);
 });
 
-test("Ask CaughtUp lives in Today while Opportunities is the top-level destination", () => {
+test("Ask CaughtUp lives in Today while Opportunities is a working approval-only destination", () => {
   const todayPanel = html.match(/<section id="today"[\s\S]*?<section id="opportunities"/)?.[0] ?? "";
   assert.match(todayPanel, /id="askCaughtUpTitle"[^>]*>Ask CaughtUp/);
   assert.match(todayPanel, /id="chatForm"/);
   assert.match(todayPanel, /id="messages"[^>]+class="ask-messages hidden"/);
   assert.match(html, /id="tab-opportunities"[^>]+data-tab="opportunities"[^>]*>Opportunities/);
-  assert.match(html, /Opportunity matching is not active yet/);
+  assert.match(html, /id="opportunityProfileForm"/);
+  assert.match(html, /id="opportunityAddForm"/);
+  assert.match(html, /id="opportunityDraftDialog"/);
+  assert.match(html, /Outreach always requires your review/);
+  assert.match(script, /if \(name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading\) loadOpportunities\(\)/);
+  assert.match(script, /api\("opportunity_prepare_draft"/);
+  assert.match(script, /api\("opportunity_draft_get"/);
+  assert.match(script, /api\("opportunity_send"/);
   assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
   assert.match(script, /\["today", "opportunities", "kits", "calendar", "settings"\]/);
 });
@@ -152,6 +159,8 @@ test("client targets the audited API actions", () => {
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
     "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
+    "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
+    "opportunity_create", "opportunity_update", "opportunity_prepare_draft", "opportunity_draft_get", "opportunity_send",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -258,7 +267,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.12");
+  assert.equal(manifest.version, "0.4.0");
 });
 
 test("focus and reduced-motion styles are present", () => {

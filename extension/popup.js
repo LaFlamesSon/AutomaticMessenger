@@ -33,6 +33,10 @@ let gmailAddress = "";
 let pendingKitEdit = null;
 let gmailReconnectRequired = false;
 let viewCache = {};
+let opportunitiesLoaded = false;
+let opportunitiesLoading = false;
+let currentOpportunityState = null;
+let pendingOpportunityDraft = null;
 
 function create(tag, className, text) {
   const element = document.createElement(tag);
@@ -140,6 +144,209 @@ async function api(action, extra = {}, options = {}) {
     throw error;
   }
 }
+
+function commaList(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function opportunityKitLabel(kitId) {
+  return currentOpportunityState?.kits?.find((kit) => kit.id === kitId)?.label || null;
+}
+
+function renderOpportunities() {
+  const state = currentOpportunityState;
+  if (!state) return;
+  const preferences = state.preferences || {};
+  $("opportunityEnabled").checked = preferences.enabled === true;
+  $("opportunityStyles").value = (preferences.creator_styles || []).join(", ");
+  $("opportunityIndustries").value = (preferences.industries || []).join(", ");
+  $("opportunityPlatforms").value = (preferences.platforms || []).join(", ");
+  $("opportunityTypes").value = (preferences.collaboration_types || []).join(", ");
+  $("opportunityDesired").value = (preferences.desired_brands || []).join(", ");
+  $("opportunityExcluded").value = (preferences.excluded_brands || []).join(", ");
+
+  const suggestions = (state.relationships || []).filter((relationship) => !relationship.confirmed && relationship.relationship_status === "suggested");
+  $("relationshipSuggestions").classList.toggle("hidden", !suggestions.length);
+  const relationshipList = $("relationshipList");
+  relationshipList.replaceChildren();
+  suggestions.forEach((relationship) => {
+    const row = create("div", "relationship-row");
+    row.append(create("strong", "", relationship.brand_name), create("p", "meta", relationship.brand_domain));
+    const actions = create("div", "card-actions");
+    [["Worked together", "worked_with"], ["Want to work with", "want_to_work_with"], ["Not relevant", "not_interested"]].forEach(([label, status]) => {
+      const button = create("button", "ghost compact", label);
+      button.type = "button";
+      button.addEventListener("click", async () => {
+        setBusy(button, true, "Saving…");
+        try {
+          await api("brand_relationship_set", { brand_name: relationship.brand_name, brand_domain: relationship.brand_domain,
+            relationship_status: status, confirmed: true });
+          await loadOpportunities(true);
+        } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+        finally { setBusy(button, false); }
+      });
+      actions.append(button);
+    });
+    row.append(actions);
+    relationshipList.append(row);
+  });
+
+  const list = $("opportunityList");
+  list.replaceChildren();
+  const opportunities = (state.opportunities || []).filter((opportunity) => opportunity.status !== "dismissed");
+  opportunities.forEach((opportunity) => {
+    const card = create("article", "opportunity-card opportunity-result");
+    const top = create("div", "opportunity-kicker", `${opportunity.match_score || 0}% match · ${String(opportunity.source_type || "manual").replaceAll("_", " ")}`);
+    card.append(top, create("h2", "", opportunity.brand_name));
+    if (opportunity.title) card.append(create("strong", "", opportunity.title));
+    if (opportunity.description) card.append(create("p", "", opportunity.description));
+    const reasons = create("ul", "reasons");
+    (opportunity.match_reasons || []).slice(0, 4).forEach((reason) => reasons.append(create("li", "", reason)));
+    card.append(reasons);
+    const kitLabel = opportunityKitLabel(opportunity.recommended_media_kit_id);
+    if (kitLabel) card.append(create("p", "tag", `Kit: ${kitLabel}`));
+    const evidence = opportunity.source_url ? `Evidence: ${opportunity.source_url}` : "Evidence: added by you";
+    card.append(create("p", "source-note", evidence));
+    const actions = create("div", "card-actions");
+    if (opportunity.status === "drafted") {
+      const review = create("button", "primary compact", "Review Gmail draft");
+      review.type = "button";
+      review.addEventListener("click", () => reviewOpportunityDraft(opportunity, review));
+      actions.append(review);
+    } else {
+      const prepare = create("button", "primary compact", "Prepare Gmail draft");
+      prepare.type = "button";
+      prepare.disabled = !opportunity.contact_email;
+      if (!opportunity.contact_email) prepare.title = "Add a business contact email to prepare outreach.";
+      prepare.addEventListener("click", async () => {
+        setBusy(prepare, true, "Preparing…");
+        try {
+          await api("opportunity_prepare_draft", { id: opportunity.id }, { timeout: 30000 });
+          await loadOpportunities(true);
+          const updated = currentOpportunityState.opportunities.find((item) => item.id === opportunity.id) || opportunity;
+          await reviewOpportunityDraft(updated, prepare);
+        } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+        finally { setBusy(prepare, false); }
+      });
+      actions.append(prepare);
+    }
+    if (["new", "saved"].includes(opportunity.status)) {
+      const statusAction = opportunity.status === "saved" ? ["Unsave", "new"] : ["Save", "saved"];
+      const save = create("button", "ghost compact", statusAction[0]);
+      save.type = "button";
+      save.addEventListener("click", () => updateOpportunityStatus(opportunity.id, statusAction[1], save));
+      const dismiss = create("button", "ghost compact", "Dismiss");
+      dismiss.type = "button";
+      dismiss.addEventListener("click", () => updateOpportunityStatus(opportunity.id, "dismissed", dismiss));
+      actions.append(save, dismiss);
+    }
+    card.append(actions);
+    list.append(card);
+  });
+  if (!preferences.enabled) setStatus("opportunityStatus", "Turn on Opportunities and describe the work you want. No brand outreach is automatic.");
+  else if (!opportunities.length) setStatus("opportunityStatus", "No matches yet. Add a brand or let future inbox sweeps suggest business-domain relationships.", "success");
+  else setStatus("opportunityStatus", `${opportunities.length} opportunity${opportunities.length === 1 ? "" : "ies"}. Matches use only your profile, kits, Gmail signals, and URLs you supplied.`, "success");
+}
+
+async function loadOpportunities(force = false) {
+  if (opportunitiesLoading) return;
+  if (opportunitiesLoaded && !force) return;
+  opportunitiesLoading = true;
+  try {
+    currentOpportunityState = await api(force ? "opportunity_refresh" : "opportunities_get", {}, { timeout: 30000 });
+    opportunitiesLoaded = true;
+    renderOpportunities();
+  } catch (error) {
+    setStatus("opportunityStatus", Core.safeErrorMessage(error), "error");
+  } finally { opportunitiesLoading = false; }
+}
+
+async function updateOpportunityStatus(id, status, button) {
+  setBusy(button, true, "Saving…");
+  try { await api("opportunity_update", { id, status }); await loadOpportunities(true); }
+  catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+}
+
+async function reviewOpportunityDraft(opportunity, button) {
+  setBusy(button, true, "Loading…");
+  try {
+    const result = await api("opportunity_draft_get", { id: opportunity.id });
+    pendingOpportunityDraft = { opportunity, draft: result.draft };
+    $("opportunityDraftTo").textContent = `To: ${result.draft.recipient}`;
+    $("opportunityDraftSubject").textContent = result.draft.subject;
+    $("opportunityDraftBody").textContent = result.draft.body;
+    const attachmentCount = result.draft.attachments?.length || 0;
+    $("opportunityDraftAttachment").textContent = attachmentCount ? `${attachmentCount} verified media-kit attachment${attachmentCount === 1 ? "" : "s"}` : "";
+    $("opportunityDraftAttachment").classList.toggle("hidden", !attachmentCount);
+    setStatus("opportunityDraftStatus", "Review the live Gmail draft. You can also edit it in Gmail, then reopen this preview.");
+    $("opportunityDraftDialog").showModal();
+  } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+}
+
+$("opportunityProfileForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("saveOpportunityProfile");
+  setBusy(button, true, "Saving…");
+  try {
+    const fields = {
+      enabled: $("opportunityEnabled").checked,
+      creator_styles: commaList($("opportunityStyles").value), industries: commaList($("opportunityIndustries").value),
+      platforms: commaList($("opportunityPlatforms").value), collaboration_types: commaList($("opportunityTypes").value),
+      desired_brands: commaList($("opportunityDesired").value), excluded_brands: commaList($("opportunityExcluded").value),
+    };
+    await api("opportunity_preferences_set", { fields, expected_settings_version: currentOpportunityState.preferences.settings_version });
+    await loadOpportunities(true);
+  } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+});
+
+$("opportunityAddForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("addOpportunity");
+  setBusy(button, true, "Matching…");
+  try {
+    await api("opportunity_create", {
+      brand_name: $("opportunityBrandName").value, brand_domain: $("opportunityBrandDomain").value,
+      contact_email: $("opportunityContactEmail").value, source_url: $("opportunitySourceUrl").value,
+      description: $("opportunityDescription").value, tags: commaList($("opportunityTags").value),
+    });
+    event.target.reset();
+    await loadOpportunities(true);
+  } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+});
+
+$("refreshOpportunities").addEventListener("click", async () => {
+  const button = $("refreshOpportunities");
+  setBusy(button, true, "Refreshing…");
+  await loadOpportunities(true);
+  setBusy(button, false);
+});
+
+$("cancelOpportunitySend").addEventListener("click", () => {
+  pendingOpportunityDraft = null;
+  $("opportunityDraftDialog").close("cancel");
+});
+
+$("confirmOpportunitySend").addEventListener("click", async () => {
+  if (!pendingOpportunityDraft) return;
+  const button = $("confirmOpportunitySend");
+  setBusy(button, true, "Sending…");
+  setStatus("opportunityDraftStatus", "Sending the reviewed Gmail draft…");
+  try {
+    const keyName = `opportunity:${pendingOpportunityDraft.opportunity.id}`;
+    const idempotencyKey = await getManualSendKey(keyName);
+    await api("opportunity_send", { id: pendingOpportunityDraft.opportunity.id,
+      preview_version: pendingOpportunityDraft.draft.preview_version, idempotency_key: idempotencyKey }, { timeout: 30000 });
+    await forgetManualSendKey(keyName);
+    $("opportunityDraftDialog").close("sent");
+    pendingOpportunityDraft = null;
+    await loadOpportunities(true);
+  } catch (error) { setStatus("opportunityDraftStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+});
 
 async function refreshSession() {
   const refreshed = await fetchApi("auth_refresh", { refresh_token: session?.refresh_token }, { public: true, noRefresh: true });
@@ -261,6 +468,7 @@ function activateTab(name, focus = true) {
   });
   PANELS.forEach((panel) => $(panel).classList.toggle("hidden", panel !== name));
   if (name === "kits" && !kitsLoaded && !kitsLoading) loadKits();
+  if (name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading) loadOpportunities();
   if (name === "calendar" && !calendarLoaded && !calendarLoading) loadCalendar();
   if (name === "settings" && !settingsLoaded) loadProfile();
 }
@@ -309,6 +517,10 @@ $("signOut").addEventListener("click", async () => {
   calendarLoaded = false;
   calendarLoading = false;
   settingsLoaded = false;
+  opportunitiesLoaded = false;
+  opportunitiesLoading = false;
+  currentOpportunityState = null;
+  pendingOpportunityDraft = null;
   appEmail = "";
   gmailAddress = "";
   await Promise.all([
@@ -1403,6 +1615,7 @@ function setupDialogSafety(dialog, cancelButtonId) {
 }
 
 setupDialogSafety($("sendDialog"), "cancelSend");
+setupDialogSafety($("opportunityDraftDialog"), "cancelOpportunitySend");
 setupDialogSafety($("autoSendDialog"), "cancelAutoSend");
 buildRequiredQuestionControls();
 buildAvailabilityRows();
