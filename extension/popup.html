@@ -60,12 +60,20 @@
       <div class="panel-heading">
         <div>
           <h1>Opportunities</h1>
-          <p class="meta">Match with relevant brands. Outreach always requires your review.</p>
+          <p class="meta">Rank relevant brand and affiliate opportunities. Outreach always requires your review.</p>
         </div>
         <button id="refreshOpportunities" type="button" class="ghost compact">Refresh</button>
       </div>
+      <section id="opportunitySourceSummary" class="form-card opportunity-source" aria-labelledby="opportunitySourceTitle">
+        <div class="opportunity-source-head">
+          <strong id="opportunitySourceTitle">Opportunity sources</strong>
+          <span id="opportunitySourceBadge" class="badge source-badge">Checking sources&hellip;</span>
+        </div>
+        <p id="opportunitySourceText" class="meta">Checking which sources are active.</p>
+        <p id="opportunitySourceProviders" class="source-provider-list"></p>
+      </section>
       <form id="opportunityProfileForm" class="form-card opportunity-form">
-        <label class="toggle-row" for="opportunityEnabled"><span><strong>Find opportunities</strong><small>Uses your private match profile, connected sources, and brands you add.</small></span><input id="opportunityEnabled" type="checkbox"></label>
+        <label class="toggle-row" for="opportunityEnabled"><span><strong>Find opportunities</strong><small>Uses your private match profile, Gmail relationship signals, brands and products you add, and any connected marketplace feeds.</small></span><input id="opportunityEnabled" type="checkbox"></label>
         <label for="opportunityStyles">Creator styles</label>
         <input id="opportunityStyles" type="text" maxlength="500" placeholder="fitness, beauty, lifestyle">
         <label for="opportunityIndustries">Industries</label>
@@ -110,8 +118,9 @@
       </details>
 
       <details class="form-card opportunity-add">
-        <summary>Add an affiliate product</summary>
+        <summary>Add an affiliate product manually</summary>
         <form id="affiliateOpportunityForm">
+          <p class="hint">Paste a product you found elsewhere. This ranks it inside CaughtUp; it does not import a marketplace catalog.</p>
           <label for="affiliateBrandName">Brand name</label>
           <input id="affiliateBrandName" type="text" maxlength="120" required>
           <label for="affiliateBrandDomain">Brand domain</label>
@@ -132,7 +141,7 @@
           <input id="affiliateShippingRegions" type="text" maxlength="500" placeholder="US, Canada">
           <label class="toggle-row" for="affiliateApprovalRequired"><span><strong>Seller approval required</strong></span><input id="affiliateApprovalRequired" type="checkbox"></label>
           <label class="toggle-row" for="affiliateSampleAvailable"><span><strong>Sample confirmed available</strong></span><input id="affiliateSampleAvailable" type="checkbox"></label>
-          <button id="addAffiliateOpportunity" type="submit" class="primary">Add and rank</button>
+          <button id="addAffiliateOpportunity" type="submit" class="primary">Add and rank manually</button>
         </form>
       </details>
 

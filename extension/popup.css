@@ -182,6 +182,11 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .opportunity-steps li + li { margin-top: 5px; }
 .opportunity-state { margin-top: 10px; }
 .opportunity-form, .opportunity-add { margin-bottom: 12px; }
+.opportunity-source { border-left: 3px solid var(--accent); }
+.opportunity-source-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.source-badge { color: #704323; background: #fff0e4; }
+.source-badge.connected { color: var(--good); background: var(--good-soft); }
+.source-provider-list { margin-top: 7px; color: var(--soft); font-size: 11.5px; }
 .opportunity-add summary { cursor: pointer; font-weight: 800; }
 .opportunity-add form { margin-top: 12px; }
 .opportunity-add textarea { resize: vertical; }

@@ -157,6 +157,24 @@ function renderOpportunities() {
   const state = currentOpportunityState;
   if (!state) return;
   const preferences = state.preferences || {};
+  const connections = (state.affiliate_connections || []).filter((connection) => connection.status === "connected");
+  const providerLabels = {
+    tiktok_shop: "TikTok Shop", awin: "Awin", cj: "CJ", rakuten: "Rakuten",
+    amazon: "Amazon", ebay: "eBay", impact: "Impact",
+  };
+  const connectedLabels = connections.map((connection) => providerLabels[connection.provider] || String(connection.provider).replaceAll("_", " "));
+  const availableLabels = (state.sourcing?.available_affiliate_providers || [])
+    .map((provider) => providerLabels[provider] || String(provider).replaceAll("_", " "));
+  $("opportunitySourceBadge").textContent = connectedLabels.length
+    ? `${connectedLabels.length} marketplace${connectedLabels.length === 1 ? "" : "s"} connected`
+    : "Manual sources active";
+  $("opportunitySourceBadge").classList.toggle("connected", connectedLabels.length > 0);
+  $("opportunitySourceText").textContent = connectedLabels.length
+    ? `CaughtUp ranks Gmail relationship signals, brands and products you add, and connected feeds from ${connectedLabels.join(", ")}.`
+    : "CaughtUp currently ranks Gmail relationship signals and brands or affiliate products you add. No affiliate marketplace feed is connected yet.";
+  $("opportunitySourceProviders").textContent = availableLabels.length
+    ? `Marketplace connectors available after provider approval: ${availableLabels.join(", ")}.`
+    : "No marketplace connectors are configured.";
   $("opportunityEnabled").checked = preferences.enabled === true;
   $("opportunityStyles").value = (preferences.creator_styles || []).join(", ");
   $("opportunityIndustries").value = (preferences.industries || []).join(", ");
@@ -297,7 +315,7 @@ function renderOpportunities() {
   });
   if (!preferences.enabled) setStatus("opportunityStatus", "Turn on Opportunities and describe the work you want. No brand outreach is automatic.");
   else if (!opportunities.length) setStatus("opportunityStatus", "No matches yet. Add a brand or let future inbox sweeps suggest business-domain relationships.", "success");
-  else setStatus("opportunityStatus", `${opportunities.length} opportunity${opportunities.length === 1 ? "" : "ies"}. Matches use your private profile, metrics, kits, and connected sources.`, "success");
+  else setStatus("opportunityStatus", `${opportunities.length} opportunity${opportunities.length === 1 ? "" : "ies"}. Matches use your private profile, category metrics, media kits, and the active sources shown above.`, "success");
 }
 
 async function loadOpportunities(force = false) {

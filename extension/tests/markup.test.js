@@ -89,6 +89,11 @@ test("Ask CaughtUp lives in Today while Opportunities is a working approval-only
   assert.match(html, /id="opportunityAddForm"/);
   assert.match(html, /id="affiliateMetricForm"/);
   assert.match(html, /id="affiliateOpportunityForm"/);
+  assert.match(html, /id="opportunitySourceSummary"/);
+  assert.match(html, /id="opportunitySourceBadge"/);
+  assert.match(html, /No affiliate marketplace feed is connected yet|Checking which sources are active/);
+  assert.match(html, /Add an affiliate product manually/);
+  assert.match(html, /does not import a marketplace catalog/);
   assert.match(html, /id="opportunityFormats"/);
   assert.match(html, /id="opportunityRegions"/);
   assert.match(html, /id="opportunityDraftDialog"/);
@@ -102,6 +107,9 @@ test("Ask CaughtUp lives in Today while Opportunities is a working approval-only
   assert.match(script, /api\("affiliate_opportunity_create"/);
   assert.match(script, /opportunity\.ease_label/);
   assert.match(script, /opportunity\.score_components/);
+  assert.match(script, /state\.affiliate_connections/);
+  assert.match(script, /available_affiliate_providers/);
+  assert.match(script, /No affiliate marketplace feed is connected yet/);
   assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
   assert.match(script, /\["today", "opportunities", "kits", "calendar", "settings"\]/);
 });
@@ -277,7 +285,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.1");
+  assert.equal(manifest.version, "0.4.2");
 });
 
 test("focus and reduced-motion styles are present", () => {
