@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.4.0** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.4.1** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -53,7 +53,7 @@ bookings; it does not claim or provide Google Calendar synchronization.
 | Function | Version | Purpose |
 |---|---:|---|
 | `agent-sweep` | 33 | Exact/batch Gmail triage plus opt-in, confirmation-required business-domain relationship suggestions for Opportunities |
-| `agent-api` | 15 | Extension API plus creator opportunity preferences, evidence-based matching, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
+| `agent-api` | 16 | Extension API plus creator opportunity preferences, private category metrics, affiliate product matching/ease/earnings estimates, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -203,6 +203,14 @@ double-booking guard; API idempotency and owner checks sit above it.
   applies to opportunity outreach. Migration `20260805011421` is live; source
   and deployed acceptance evidence is in
   `docs/audits/caughtup-opportunities-v1-20260804.md`.
+- Extension source 0.4.1 and `agent-api` v16 add the affiliate-opportunity API:
+  owner-scoped category performance metrics, manual affiliate-product ingestion,
+  separate match and difficulty rankings, evidence-bounded earnings ranges, and
+  media-kit recommendations. Migration `20260805025333` is live; its two new
+  tables have RLS enabled and grant direct access only to `service_role`. Provider
+  OAuth/catalog sync remains open until approved provider credentials exist.
+  Deployment evidence is in
+  `docs/audits/caughtup-affiliate-api-20260804.md`.
 
 ## Repository layout
 
