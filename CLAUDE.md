@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.4.1** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.4.2** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -53,7 +53,7 @@ bookings; it does not claim or provide Google Calendar synchronization.
 | Function | Version | Purpose |
 |---|---:|---|
 | `agent-sweep` | 33 | Exact/batch Gmail triage plus opt-in, confirmation-required business-domain relationship suggestions for Opportunities |
-| `agent-api` | 16 | Extension API plus creator opportunity preferences, private category metrics, affiliate product matching/ease/earnings estimates, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
+| `agent-api` | 17 | Extension API plus creator opportunity preferences, private category metrics, synonym- and boundary-aware affiliate product matching/ease/earnings estimates, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -211,6 +211,13 @@ double-booking guard; API idempotency and owner checks sit above it.
   OAuth/catalog sync remains open until approved provider credentials exist.
   Deployment evidence is in
   `docs/audits/caughtup-affiliate-api-20260804.md`.
+- A 50-case affiliate opportunity benchmark improved from 27/50 to 50/50 after
+  eliminating cross-category metric leakage, loose substring and region matching,
+  cross-platform follower borrowing, and false zero-valued earnings evidence.
+  `agent-api` v17 is deployed with those matcher fixes. Extension source 0.4.2
+  now makes active manual/private sources and the absence of a connected live
+  marketplace feed explicit in the Opportunities tab. Evidence is in
+  `docs/audits/caughtup-affiliate-50-stress-20260804.md`.
 
 ## Repository layout
 

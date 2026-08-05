@@ -38,7 +38,11 @@ comparative ranking cases.
 
 - The test used deterministic local fixtures; it did not create production
   opportunities, contact brands, send email, alter Auto-send, or read secrets.
-- Source improvements are committed locally. Production `agent-api` remains
-  version 16 until the improved matcher is explicitly authorized for deployment.
+- Source improvements were committed as `8e520a4`; production `agent-api` v17
+  now contains the improved matcher. A live unsigned Opportunities request
+  returned HTTP 401, confirming the function remained reachable and authenticated.
+- Extension source 0.4.2 adds an explicit source-status card and manual-product
+  wording. Its 400×600 visual fixture passed inspection, and Chrome must reload
+  the unpacked extension before the updated UI is visible.
 - Live provider catalog quality remains open because no approved TikTok Shop,
   Awin, CJ, or other provider connection is configured yet.
