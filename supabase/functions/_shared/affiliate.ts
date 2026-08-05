@@ -58,8 +58,59 @@ function list(value: unknown): string[] {
   return Array.isArray(value) ? value.map(text).filter(Boolean) : [];
 }
 
-function containsAny(haystack: string, values: unknown): string[] {
-  return list(values).filter((value) => value.length >= 2 && haystack.includes(value));
+const CATEGORY_TERMS: Record<string, string[]> = {
+  fitness: ["fitness", "workout", "workouts", "gym", "yoga", "exercise", "activewear", "sports"],
+  beauty: ["beauty", "skincare", "skin care", "serum", "makeup", "cosmetic", "cosmetics", "lashes", "eyelash", "haircare"],
+  technology: ["technology", "tech", "gadget", "gadgets", "smartphone", "electronics", "software", "app", "apps"],
+  food: ["food", "cooking", "recipe", "recipes", "snack", "snacks", "beverage", "beverages", "kitchen", "meal prep"],
+  gaming: ["gaming", "video game", "video games", "esports", "console", "consoles", "pc gaming"],
+  finance: ["finance", "financial", "budgeting", "investing", "banking", "fintech", "credit card", "credit cards"],
+  fashion: ["fashion", "clothing", "outfit", "outfits", "accessories", "jewelry", "streetwear", "apparel"],
+  travel: ["travel", "hotel", "hotels", "flight", "flights", "luggage", "tourism", "destination", "destinations"],
+  home: ["home", "home decor", "decor", "furniture", "cleaning", "organization", "appliance", "appliances"],
+  pets: ["pet", "pets", "dog", "dogs", "cat", "cats", "pet care", "animal supplies", "dog treats"],
+};
+
+function normalizedPhrase(value: unknown): string {
+  return text(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+}
+
+function containsPhrase(haystack: string, needle: string): boolean {
+  const normalizedNeedle = normalizedPhrase(needle);
+  return normalizedNeedle.length >= 2 && ` ${normalizedPhrase(haystack)} `.includes(` ${normalizedNeedle} `);
+}
+
+function categoryTerms(value: string): string[] {
+  const normalized = normalizedPhrase(value);
+  const canonical = Object.entries(CATEGORY_TERMS)
+    .find(([name, aliases]) => name === normalized || aliases.some((alias) => normalizedPhrase(alias) === normalized));
+  return canonical ? [canonical[0], ...canonical[1]] : [normalized];
+}
+
+function containsCategory(haystack: string, value: string): boolean {
+  return categoryTerms(value).some((term) => containsPhrase(haystack, term));
+}
+
+function containsAny(haystack: string, values: unknown, semanticCategories = false): string[] {
+  return list(values).filter((value) => semanticCategories ? containsCategory(haystack, value) : containsPhrase(haystack, value));
+}
+
+function platformKey(value: unknown): string {
+  const normalized = normalizedPhrase(value);
+  if (["tiktok", "tik tok", "tiktok shop"].includes(normalized)) return "tiktok";
+  if (["instagram", "ig"].includes(normalized)) return "instagram";
+  if (["youtube", "you tube", "youtube shorts"].includes(normalized)) return "youtube";
+  return normalized;
+}
+
+function regionKey(value: unknown): string {
+  const normalized = normalizedPhrase(value);
+  if (["us", "usa", "united states", "united states of america"].includes(normalized)) return "US";
+  if (["uk", "gb", "gbr", "united kingdom", "great britain"].includes(normalized)) return "GB";
+  if (["ca", "can", "canada"].includes(normalized)) return "CA";
+  if (["au", "aus", "australia"].includes(normalized)) return "AU";
+  return normalized.toLocaleUpperCase();
 }
 
 function clamp(value: number, min = 0, max = 100): number {
@@ -67,6 +118,7 @@ function clamp(value: number, min = 0, max = 100): number {
 }
 
 function finite(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const number = typeof value === "number" ? value : Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -84,13 +136,14 @@ function chooseRelevantMetric(
   let bestScore = -1;
   for (const metric of metrics) {
     const category = text(metric.category);
-    const platform = text(metric.platform);
-    let score = category && opportunityText.includes(category) ? 8 : 0;
-    if (platform && ((provider === "tiktok_shop" && platform === "tiktok") || opportunityText.includes(platform))) score += 4;
+    const platform = platformKey(metric.platform);
+    if (!category || !containsCategory(opportunityText, category)) continue;
+    let score = 8;
+    if (platform && ((provider === "tiktok_shop" && platform === "tiktok") || containsPhrase(opportunityText, platform))) score += 4;
     score += Math.min(3, Math.log10(Math.max(1, finite(metric.sample_size) ?? 0) + 1));
     if (score > bestScore) { best = metric; bestScore = score; }
   }
-  return bestScore >= 4 ? best : null;
+  return bestScore >= 8 ? best : null;
 }
 
 export function matchAffiliateOpportunity(
@@ -114,7 +167,7 @@ export function matchAffiliateOpportunity(
     opportunity.brand_name, opportunity.product_name, opportunity.product_category,
     opportunity.title, opportunity.description, ...(opportunity.tags ?? []),
   ].map(text).join(" ");
-  const industryMatches = containsAny(opportunityText, preferences?.industries);
+  const industryMatches = containsAny(opportunityText, preferences?.industries, true);
   const styleMatches = containsAny(opportunityText, preferences?.creator_styles);
   const formatMatches = containsAny(opportunityText, preferences?.content_formats);
   const desiredMatches = containsAny(opportunityText, preferences?.desired_brands);
@@ -123,7 +176,7 @@ export function matchAffiliateOpportunity(
 
   const creatorRegions = list(preferences?.regions);
   const shippingRegions = list(opportunity.shipping_regions);
-  const regionMatches = creatorRegions.filter((region) => shippingRegions.some((shipping) => shipping.includes(region) || region.includes(shipping)));
+  const regionMatches = creatorRegions.filter((region) => shippingRegions.some((shipping) => regionKey(shipping) === regionKey(region)));
   const audienceFit = !creatorRegions.length || !shippingRegions.length ? 8 : regionMatches.length ? 20 : 0;
 
   const relevantMetric = chooseRelevantMetric(metrics, opportunityText, provider);
@@ -148,10 +201,10 @@ export function matchAffiliateOpportunity(
   else if ((commissionPerSale ?? 0) > 0) economics += 2;
   economics = clamp(economics, 0, 15);
 
-  const platforms = list(preferences?.platforms);
+  const platforms = list(preferences?.platforms).map(platformKey);
   const providerPlatform = provider === "tiktok_shop" ? "tiktok" : "";
-  const platformFit = !platforms.length ? 5 : providerPlatform && platforms.some((platform) => platform.includes(providerPlatform)) ? 10 :
-    platforms.some((platform) => opportunityText.includes(platform)) ? 10 : 0;
+  const platformFit = !platforms.length ? 5 : providerPlatform && platforms.includes(providerPlatform) ? 10 :
+    platforms.some((platform) => containsPhrase(opportunityText, platform)) ? 10 : 0;
   const unitsSold = finite(opportunity.product_metrics?.units_sold) ?? 0;
   const confidence = clamp((opportunity.provider_verified ? 3 : 0) + (opportunity.sample_available ? 1 : 0) + (unitsSold > 0 ? 1 : 0), 0, 5);
   const components = {
@@ -174,10 +227,13 @@ export function matchAffiliateOpportunity(
   if (opportunity.collaboration_model === "targeted") { easeScore -= 15; easeReasons.push("Targeted invitation"); }
   if (creatorRegions.length && shippingRegions.length && !regionMatches.length) { easeScore -= 25; easeReasons.push("Shipping region mismatch"); }
   const minFollowers = finite(opportunity.requirements?.min_followers);
-  const knownFollowers = Math.max(0, ...metrics.map((metric) => finite(metric.followers) ?? 0));
+  const requiredPlatform = platformKey(opportunity.requirements?.required_platform);
+  const eligibilityMetrics = requiredPlatform
+    ? metrics.filter((metric) => platformKey(metric.platform) === requiredPlatform)
+    : metrics;
+  const knownFollowers = Math.max(0, ...eligibilityMetrics.map((metric) => finite(metric.followers) ?? 0));
   if (minFollowers !== null && knownFollowers < minFollowers) { easeScore -= 30; easeReasons.push(`Requires ${Math.round(minFollowers).toLocaleString()} followers`); }
-  const requiredPlatform = text(opportunity.requirements?.required_platform);
-  if (requiredPlatform && platforms.length && !platforms.some((platform) => platform.includes(requiredPlatform))) {
+  if (requiredPlatform && !platforms.includes(requiredPlatform)) {
     easeScore -= 25; easeReasons.push(`Requires ${requiredPlatform}`);
   }
   if (!opportunity.product_url) { easeScore -= 5; easeReasons.push("Application link unavailable"); }
