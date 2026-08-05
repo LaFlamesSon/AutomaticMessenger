@@ -19,7 +19,7 @@
 
   <nav id="tabs" class="tabs" role="tablist" aria-label="CaughtUp sections">
     <button id="tab-today" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="today" tabindex="0" data-tab="today">Today</button>
-    <button id="tab-chat" class="tab" type="button" role="tab" aria-selected="false" aria-controls="chat" tabindex="-1" data-tab="chat">Chat</button>
+    <button id="tab-opportunities" class="tab" type="button" role="tab" aria-selected="false" aria-controls="opportunities" tabindex="-1" data-tab="opportunities">Opportunities</button>
     <button id="tab-kits" class="tab" type="button" role="tab" aria-selected="false" aria-controls="kits" tabindex="-1" data-tab="kits">Kits</button>
     <button id="tab-calendar" class="tab" type="button" role="tab" aria-selected="false" aria-controls="calendar" tabindex="-1" data-tab="calendar">Calendar</button>
     <button id="tab-settings" class="tab" type="button" role="tab" aria-selected="false" aria-controls="settings" tabindex="-1" data-tab="settings">Settings</button>
@@ -42,26 +42,38 @@
         </div>
         <span id="modeBadge" class="mode-badge">Review mode</span>
       </div>
+      <section class="ask-card" aria-labelledby="askCaughtUpTitle">
+        <h2 id="askCaughtUpTitle" class="ask-title">Ask CaughtUp</h2>
+        <form id="chatForm">
+          <label class="sr-only" for="chatInput">Ask about your inbox or teach CaughtUp a preference</label>
+          <input id="chatInput" type="text" placeholder="Ask about email or teach a preference" autocomplete="off" maxlength="4000">
+          <button id="chatSend" type="submit" class="primary compact">Ask</button>
+        </form>
+        <div id="messages" class="ask-messages hidden" role="log" aria-live="polite" aria-label="CaughtUp answers"></div>
+        <p id="chatStatus" class="status-text" role="status" aria-live="polite"></p>
+      </section>
       <div id="todayStatus" class="state-card" role="status" aria-live="polite">Loading your inbox&hellip;</div>
       <div id="digest" class="hidden"></div>
     </section>
 
-    <section id="chat" class="panel hidden" role="tabpanel" aria-labelledby="tab-chat" tabindex="0">
+    <section id="opportunities" class="panel hidden" role="tabpanel" aria-labelledby="tab-opportunities" tabindex="0">
       <div class="panel-heading">
         <div>
-          <h1>Chat</h1>
-          <p class="meta">Ask about email or teach CaughtUp a preference.</p>
+          <h1>Opportunities</h1>
+          <p class="meta">Find brands that fit your work and media kits.</p>
         </div>
       </div>
-      <div id="messages" role="log" aria-live="polite" aria-label="Chat messages">
-        <div class="msg agent">What should I help you catch up on?</div>
+      <div class="opportunity-card">
+        <span class="opportunity-kicker">Designing the first match</span>
+        <h2>Relevant brands, with a reason</h2>
+        <p>CaughtUp will show why a brand fits, which kit applies, and a suggested collaboration angle before any outreach is prepared.</p>
+        <ol class="opportunity-steps">
+          <li>Choose the work and industries you want.</li>
+          <li>Review matched brands and evidence.</li>
+          <li>Approve an outreach draft before it enters Gmail.</li>
+        </ol>
       </div>
-      <form id="chatForm">
-        <label class="sr-only" for="chatInput">Message your agent</label>
-        <input id="chatInput" type="text" placeholder="e.g. Be more casual" autocomplete="off" maxlength="4000">
-        <button id="chatSend" type="submit" class="primary compact">Send</button>
-      </form>
-      <p id="chatStatus" class="status-text" role="status" aria-live="polite"></p>
+      <div class="state-card opportunity-state" role="status">Opportunity matching is not active yet. CaughtUp will not contact brands without your approval.</div>
     </section>
 
     <section id="kits" class="panel hidden" role="tabpanel" aria-labelledby="tab-kits" tabindex="0">

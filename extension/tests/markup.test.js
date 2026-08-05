@@ -17,7 +17,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.js
 
 test("popup exposes exactly the five approved tabs and matching accessible panels", () => {
   const tabs = [...html.matchAll(/role="tab"[^>]+data-tab="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(tabs, ["today", "chat", "kits", "calendar", "settings"]);
+  assert.deepEqual(tabs, ["today", "opportunities", "kits", "calendar", "settings"]);
   tabs.forEach((id) => {
     assert.match(html, new RegExp(`id="${id}"[^>]+role="tabpanel"`));
     assert.match(html, new RegExp(`aria-controls="${id}"`));
@@ -77,6 +77,17 @@ test("empty Today and successful sweeps use the requested caught-up states", () 
   assert.match(css, /\.global-status\.success/);
   assert.match(script, /Core\.deliveryState\(email\) !== "sent"/);
   assert.doesNotMatch(`${html}\n${script}\n${css}`, /duck/i);
+});
+
+test("Ask CaughtUp lives in Today while Opportunities is the top-level destination", () => {
+  const todayPanel = html.match(/<section id="today"[\s\S]*?<section id="opportunities"/)?.[0] ?? "";
+  assert.match(todayPanel, /id="askCaughtUpTitle"[^>]*>Ask CaughtUp/);
+  assert.match(todayPanel, /id="chatForm"/);
+  assert.match(todayPanel, /id="messages"[^>]+class="ask-messages hidden"/);
+  assert.match(html, /id="tab-opportunities"[^>]+data-tab="opportunities"[^>]*>Opportunities/);
+  assert.match(html, /Opportunity matching is not active yet/);
+  assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
+  assert.match(script, /\["today", "opportunities", "kits", "calendar", "settings"\]/);
 });
 
 test("secondary tabs hydrate from cache and refresh without duplicate requests", () => {
@@ -247,7 +258,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.11");
+  assert.equal(manifest.version, "0.3.12");
 });
 
 test("focus and reduced-motion styles are present", () => {

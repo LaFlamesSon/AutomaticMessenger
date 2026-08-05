@@ -56,7 +56,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   border-bottom: 3px solid transparent;
   color: var(--soft);
   background: transparent;
-  font-size: 11.5px;
+  font-size: 10.5px;
   font-weight: 700;
 }
 .tab:hover { color: var(--ink); background: #faf9f6; }
@@ -159,7 +159,9 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .card-status.error { color: var(--bad); }
 .sendbtn { min-height: 28px; padding: 3px 10px; border: 0; border-radius: 99px; color: var(--cream); background: var(--ink); font-size: 12px; }
 
-#messages { min-height: 290px; max-height: 390px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; margin-bottom: 12px; }
+.ask-card { margin: 0 0 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.ask-title { margin-bottom: 6px; font-size: 12px; }
+#messages { max-height: 140px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; margin-top: 8px; }
 .msg { max-width: 86%; padding: 8px 11px; border-radius: 12px; animation: msg-in .2s ease-out; }
 .msg.user { align-self: flex-end; color: var(--cream); background: var(--ink); border-bottom-right-radius: 4px; }
 .msg.agent { align-self: flex-start; border: 1px solid var(--line); background: #fff; border-bottom-left-radius: 4px; }
@@ -170,6 +172,15 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .typing i:nth-child(3) { animation-delay: .3s; }
 #chatForm { display: flex; gap: 8px; }
 #chatForm input { min-width: 0; flex: 1; }
+.ask-card .status-text:empty { display: none; }
+
+.opportunity-card { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.opportunity-kicker { color: var(--accent); font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.opportunity-card h2 { margin-top: 4px; }
+.opportunity-card > p { margin-top: 5px; color: var(--soft); }
+.opportunity-steps { margin: 11px 0 0; padding-left: 20px; }
+.opportunity-steps li + li { margin-top: 5px; }
+.opportunity-state { margin-top: 10px; }
 
 .form-card { margin-bottom: 12px; background: #fbfaf7; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-weight: 500; }

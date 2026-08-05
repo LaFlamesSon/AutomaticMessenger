@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension is version **0.3.11** with five tabs: Today, Chat, Kits, Calendar,
+The extension is version **0.3.12** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -195,6 +195,11 @@ double-booking guard; API idempotency and owner checks sit above it.
   quiet background refreshes run; Settings reuses the already-fetched startup
   profile instead of making a duplicate first-tab request. The experimental
   animated inbox mascot was removed completely after visual review.
+- Extension 0.3.12 moves the existing Ask CaughtUp preference and inbox control
+  into a compact Today card and replaces the top-level Chat tab with an honest
+  Opportunities product shell. Opportunity discovery and outreach are not yet
+  active; the owner-scoped, evidence-first, approval-required version 1 design
+  is documented in `docs/opportunities-v1.md`.
 
 ## Repository layout
 

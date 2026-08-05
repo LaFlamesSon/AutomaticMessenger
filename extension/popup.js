@@ -3,7 +3,7 @@
 const API = "https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/agent-api";
 const Core = globalThis.CaughtUpCore;
 const $ = (id) => document.getElementById(id);
-const PANELS = ["today", "chat", "kits", "calendar", "settings"];
+const PANELS = ["today", "opportunities", "kits", "calendar", "settings"];
 const PROFILE_FIELDS = ["display_name", "occupation", "services", "tone", "signoff", "custom_rules"];
 const MANUAL_SEND_KEYS_STORAGE = "caughtup_manual_send_keys";
 const MANUAL_SWEEP_ID_STORAGE = "caughtup_manual_sweep_request_id";
@@ -660,6 +660,7 @@ $("sweepBtn").addEventListener("click", async () => {
 });
 
 function addMessage(kind, text) {
+  $("messages").classList.remove("hidden");
   const message = create("div", `msg ${kind}`, text);
   $("messages").appendChild(message);
   $("messages").scrollTop = $("messages").scrollHeight;
@@ -667,6 +668,7 @@ function addMessage(kind, text) {
 }
 
 function showTyping() {
+  $("messages").classList.remove("hidden");
   const typing = create("div", "msg agent typing");
   typing.id = "typing";
   typing.setAttribute("aria-label", "CaughtUp is typing");
