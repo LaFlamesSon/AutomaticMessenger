@@ -16,6 +16,10 @@ import {
   matchOpportunity, normalizeOpportunityDomain, normalizeOpportunitySourceUrl,
   OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
 } from "../_shared/opportunities.ts";
+import {
+  AFFILIATE_PROVIDERS, matchAffiliateOpportunity, type AffiliateOpportunityInput,
+  type CreatorCategoryMetric,
+} from "../_shared/affiliate.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -125,6 +129,76 @@ function cleanEmail(value: unknown, required = false): string | null {
   const email = cleanString(value, "contact_email", 320).toLocaleLowerCase();
   if (!parseStrictRecipient(email)) throw new InputError("contact_email is invalid");
   return email;
+}
+
+function cleanOptionalNumber(value: unknown, name: string, min: number, max: number): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number) || number < min || number > max) throw new InputError(`${name} is invalid`);
+  return number;
+}
+
+function cleanOptionalInteger(value: unknown, name: string, min: number, max: number): number | null {
+  const number = cleanOptionalNumber(value, name, min, max);
+  if (number !== null && !Number.isInteger(number)) throw new InputError(`${name} must be a whole number`);
+  return number;
+}
+
+function cleanCurrency(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const currency = cleanString(value, "currency", 3).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new InputError("currency must be a three-letter code");
+  return currency;
+}
+
+function cleanHttpsUrl(value: unknown, name: string): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const raw = cleanString(value, name, 1000);
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new InputError(`${name} must be a valid HTTPS URL`); }
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
+    throw new InputError(`${name} must be a valid HTTPS URL`);
+  }
+  url.hash = "";
+  return url.toString();
+}
+
+function affiliateOpportunityInput(body: any, forceManual = false): AffiliateOpportunityInput {
+  const domain = normalizeOpportunityDomain(body.brand_domain);
+  if (!domain) throw new InputError("brand_domain is invalid");
+  const brandName = cleanString(body.brand_name ?? "", "brand_name", 120);
+  const productName = cleanString(body.product_name ?? "", "product_name", 300);
+  if (!brandName || !productName) throw new InputError("brand_name and product_name are required");
+  const provider = forceManual ? "manual" : cleanString(body.affiliate_provider ?? "manual", "affiliate_provider", 30);
+  if (!AFFILIATE_PROVIDERS.includes(provider as any)) throw new InputError("affiliate_provider is unsupported");
+  const collaborationModel = body.collaboration_model === null || body.collaboration_model === undefined || body.collaboration_model === ""
+    ? null : cleanString(body.collaboration_model, "collaboration_model", 20);
+  if (collaborationModel && !["open", "targeted", "program"].includes(collaborationModel)) {
+    throw new InputError("collaboration_model is unsupported");
+  }
+  const requirements = body.requirements && typeof body.requirements === "object" && !Array.isArray(body.requirements)
+    ? {
+      min_followers: cleanOptionalInteger(body.requirements.min_followers, "min_followers", 0, 10_000_000_000),
+      required_platform: body.requirements.required_platform ? cleanString(body.requirements.required_platform, "required_platform", 40).toLocaleLowerCase() : null,
+      deliverables: cleanList(body.requirements.deliverables ?? [], 20, 160),
+    } : {};
+  const unitsSold = cleanOptionalInteger(body.product_metrics?.units_sold, "units_sold", 0, 10_000_000_000);
+  return {
+    brand_name: brandName, brand_domain: domain, product_name: productName,
+    product_category: cleanString(body.product_category ?? "", "product_category", 160),
+    title: cleanString(body.title ?? productName.slice(0, 200), "title", 200),
+    description: cleanString(body.description ?? "", "description", 2000),
+    tags: cleanList(body.tags ?? [], 30, 80), affiliate_provider: provider,
+    price_amount: cleanOptionalNumber(body.price_amount, "price_amount", 0, 1_000_000_000),
+    currency: cleanCurrency(body.currency),
+    commission_rate: cleanOptionalNumber(body.commission_rate, "commission_rate", 0, 100),
+    commission_amount: cleanOptionalNumber(body.commission_amount, "commission_amount", 0, 1_000_000_000),
+    collaboration_model: collaborationModel, approval_required: body.approval_required === true,
+    sample_available: typeof body.sample_available === "boolean" ? body.sample_available : null,
+    shipping_regions: cleanList(body.shipping_regions ?? [], 50, 100), requirements,
+    product_metrics: unitsSold === null ? {} : { units_sold: unitsSold },
+    product_url: cleanHttpsUrl(body.product_url, "product_url"), provider_verified: false,
+  };
 }
 
 function b64urlEncode(value: string): string {
@@ -368,34 +442,78 @@ async function ensureOpportunityPreferences(supabase: any, userId: string): Prom
 
 async function opportunityState(supabase: any, userId: string): Promise<any> {
   const preferences = await ensureOpportunityPreferences(supabase, userId);
-  const [{ data: relationships, error: relationshipError }, { data: opportunities, error: opportunityError }, { data: kits, error: kitError }] = await Promise.all([
+  const [
+    { data: relationships, error: relationshipError },
+    { data: opportunities, error: opportunityError },
+    { data: kits, error: kitError },
+    { data: categoryMetrics, error: metricError },
+    { data: affiliateConnections, error: connectionError },
+  ] = await Promise.all([
     supabase.from("ia_brand_relationships").select("*").eq("user_id", userId).order("updated_at", { ascending: false }).limit(200),
     supabase.from("ia_opportunities").select("*").eq("user_id", userId).order("match_score", { ascending: false }).limit(200),
     supabase.from("ia_media_kits").select("id,label,best_for,original_filename,mime_type,byte_size,storage_path,brand_names,sender_domains,keywords,is_default,status")
       .eq("user_id", userId).eq("status", "active"),
+    supabase.from("ia_creator_category_metrics").select("*").eq("user_id", userId).order("observed_at", { ascending: false }).limit(200),
+    supabase.from("ia_affiliate_connections").select("id,provider,external_account_ref,status,scopes,last_synced_at,error_code")
+      .eq("user_id", userId).order("updated_at", { ascending: false }).limit(50),
   ]);
-  if (relationshipError || opportunityError || kitError) throw new Error((relationshipError ?? opportunityError ?? kitError).message);
+  if (relationshipError || opportunityError || kitError || metricError || connectionError) {
+    throw new Error((relationshipError ?? opportunityError ?? kitError ?? metricError ?? connectionError).message);
+  }
   const relationshipByDomain = new Map((relationships ?? []).map((row: any) => [row.brand_domain, row]));
   const publicKits = (kits ?? []).map(({ storage_path: _path, ...kit }: any) => kit);
   const matchKits = (kits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for }));
   const nextOpportunities = [];
   for (const opportunity of opportunities ?? []) {
     const relationship = relationshipByDomain.get(opportunity.brand_domain) as any;
-    const result = matchOpportunity(preferences, matchKits, { ...opportunity, relationship_status: relationship?.relationship_status });
+    const isAffiliate = opportunity.opportunity_kind === "affiliate_product";
+    const result = isAffiliate
+      ? matchAffiliateOpportunity(preferences, matchKits, categoryMetrics ?? [], {
+        ...opportunity, relationship_status: relationship?.relationship_status,
+        provider_verified: opportunity.evidence?.provider_verified === true,
+      })
+      : matchOpportunity(preferences, matchKits, { ...opportunity, relationship_status: relationship?.relationship_status });
     const recommendedId = result.recommendedKit?.id ?? null;
     const changed = opportunity.match_score !== result.score || opportunity.recommended_media_kit_id !== recommendedId ||
-      JSON.stringify(opportunity.match_reasons ?? []) !== JSON.stringify(result.reasons);
+      JSON.stringify(opportunity.match_reasons ?? []) !== JSON.stringify(result.reasons) ||
+      (isAffiliate && (
+        Number(opportunity.ease_score ?? 0) !== Number((result as any).easeScore) ||
+        opportunity.ease_label !== (result as any).easeLabel ||
+        JSON.stringify(opportunity.ease_reasons ?? []) !== JSON.stringify((result as any).easeReasons) ||
+        JSON.stringify(opportunity.score_components ?? {}) !== JSON.stringify((result as any).components) ||
+        opportunity.relevant_metric_id !== ((result as any).relevantMetric?.id ?? null) ||
+        Number(opportunity.estimated_earnings_low ?? -1) !== Number((result as any).estimatedEarningsLow ?? -1) ||
+        Number(opportunity.estimated_earnings_high ?? -1) !== Number((result as any).estimatedEarningsHigh ?? -1) ||
+        opportunity.earnings_confidence !== (result as any).earningsConfidence
+      ));
     if (changed) {
-      const { data: updated, error } = await supabase.from("ia_opportunities").update({
+      const updates: Record<string, unknown> = {
         match_score: result.score, match_reasons: result.reasons, recommended_media_kit_id: recommendedId,
         updated_at: new Date().toISOString(),
-      }).eq("id", opportunity.id).eq("user_id", userId).select("*").single();
+      };
+      if (isAffiliate) Object.assign(updates, {
+        ease_score: (result as any).easeScore, ease_label: (result as any).easeLabel,
+        ease_reasons: (result as any).easeReasons, score_components: (result as any).components,
+        relevant_metric_id: (result as any).relevantMetric?.id ?? null,
+        estimated_earnings_low: (result as any).estimatedEarningsLow,
+        estimated_earnings_high: (result as any).estimatedEarningsHigh,
+        earnings_confidence: (result as any).earningsConfidence,
+      });
+      const { data: updated, error } = await supabase.from("ia_opportunities").update(updates)
+        .eq("id", opportunity.id).eq("user_id", userId).select("*").single();
       if (error) throw new Error(error.message);
       nextOpportunities.push(updated);
     } else nextOpportunities.push(opportunity);
   }
-  return { preferences, relationships: relationships ?? [], opportunities: nextOpportunities, kits: publicKits,
-    sourcing: { active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls"], broad_web_discovery: false } };
+  return {
+    preferences, relationships: relationships ?? [], opportunities: nextOpportunities, kits: publicKits,
+    category_metrics: categoryMetrics ?? [], affiliate_connections: affiliateConnections ?? [],
+    sourcing: {
+      active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls", "manual_affiliate_products"],
+      available_affiliate_providers: AFFILIATE_PROVIDERS.filter((provider) => provider !== "manual"),
+      broad_web_discovery: false,
+    },
+  };
 }
 
 async function ownedOpportunity(supabase: any, userId: string, id: unknown): Promise<any | null> {
@@ -739,6 +857,110 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, profile });
       }
 
+      case "affiliate_sources_get": {
+        const { data, error } = await supabase.from("ia_affiliate_connections")
+          .select("id,provider,external_account_ref,status,scopes,last_synced_at,error_code")
+          .eq("user_id", user.id).order("updated_at", { ascending: false }).limit(50);
+        if (error) throw new Error(error.message);
+        return json({
+          connections: data ?? [],
+          supported_providers: AFFILIATE_PROVIDERS.filter((provider) => provider !== "manual"),
+          credential_storage: "supabase_vault_reference",
+        });
+      }
+
+      case "affiliate_metrics_get": {
+        const { data, error } = await supabase.from("ia_creator_category_metrics").select("*")
+          .eq("user_id", user.id).order("observed_at", { ascending: false }).limit(200);
+        if (error) throw new Error(error.message);
+        return json({ metrics: data ?? [] });
+      }
+
+      case "affiliate_metric_upsert": {
+        const platform = cleanString(body.platform ?? "", "platform", 20).toLocaleLowerCase();
+        if (!["tiktok", "instagram", "youtube", "other"].includes(platform)) throw new InputError("platform is unsupported");
+        const category = cleanString(body.category ?? "", "category", 160).toLocaleLowerCase();
+        if (category.length < 2) throw new InputError("category is required");
+        const rate = (name: string) => {
+          const value = cleanOptionalNumber(body[name], name, 0, 100);
+          return value === null ? null : value / 100;
+        };
+        const sourceRef = `manual:${platform}:${category}`;
+        const row = {
+          user_id: user.id, platform, category,
+          sample_size: cleanOptionalInteger(body.sample_size, "sample_size", 0, 1_000_000) ?? 0,
+          followers: cleanOptionalInteger(body.followers, "followers", 0, 10_000_000_000),
+          median_views: cleanOptionalInteger(body.median_views, "median_views", 0, 10_000_000_000),
+          engagement_rate: rate("engagement_rate_percent"), click_through_rate: rate("click_through_rate_percent"),
+          conversion_rate: rate("conversion_rate_percent"),
+          revenue_per_thousand_views: cleanOptionalNumber(body.revenue_per_thousand_views, "revenue_per_thousand_views", 0, 1_000_000_000),
+          source_type: "manual", source_ref: sourceRef, evidence: { entered_by_creator: true },
+          observed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        };
+        const { data, error } = await supabase.from("ia_creator_category_metrics").upsert(row, {
+          onConflict: "user_id,platform,category,source_ref",
+        }).select("*").single();
+        if (error) throw new Error(error.message);
+        return json({ ok: true, metric: data });
+      }
+
+      case "affiliate_metric_delete": {
+        const metricId = cleanString(body.id ?? "", "id", 100);
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(metricId)) return json({ error: "not found" }, 404);
+        const { data, error } = await supabase.from("ia_creator_category_metrics").delete()
+          .eq("id", metricId).eq("user_id", user.id).select("id").maybeSingle();
+        if (error) throw new Error(error.message);
+        return data ? json({ ok: true }) : json({ error: "not found" }, 404);
+      }
+
+      case "affiliate_opportunity_preview": {
+        const preferences = await ensureOpportunityPreferences(supabase, user.id);
+        const [{ data: kits, error: kitError }, { data: metrics, error: metricError }] = await Promise.all([
+          supabase.from("ia_media_kits").select("id,label,best_for,brand_names,sender_domains,keywords,is_default,status")
+            .eq("user_id", user.id).eq("status", "active"),
+          supabase.from("ia_creator_category_metrics").select("*").eq("user_id", user.id),
+        ]);
+        const loadError = kitError ?? metricError;
+        if (loadError) throw new Error(loadError.message);
+        const input = affiliateOpportunityInput(body, false);
+        const result = matchAffiliateOpportunity(preferences, (kits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for })), metrics ?? [], input);
+        return json({ match: {
+          score: result.score, reasons: result.reasons, components: result.components,
+          ease_score: result.easeScore, ease_label: result.easeLabel, ease_reasons: result.easeReasons,
+          relevant_metric_id: result.relevantMetric?.id ?? null,
+          recommended_media_kit_id: result.recommendedKit?.id ?? null,
+          estimated_earnings_low: result.estimatedEarningsLow, estimated_earnings_high: result.estimatedEarningsHigh,
+          earnings_confidence: result.earningsConfidence,
+        } });
+      }
+
+      case "affiliate_opportunity_create": {
+        const preferences = await ensureOpportunityPreferences(supabase, user.id);
+        if (!preferences.enabled) return json({ error: "turn on Opportunities before adding products", code: "opportunities_disabled" }, 409);
+        const input = affiliateOpportunityInput(body, true);
+        const now = new Date().toISOString();
+        const row = {
+          user_id: user.id, brand_name: input.brand_name, brand_domain: input.brand_domain,
+          title: input.title, description: input.description, tags: input.tags,
+          source_type: "marketplace", source_ref: `manual-affiliate:${crypto.randomUUID()}`,
+          source_url: input.product_url, evidence: { entered_by_creator: true, provider_verified: false },
+          opportunity_kind: "affiliate_product", affiliate_provider: "manual",
+          product_name: input.product_name, product_category: input.product_category,
+          product_url: input.product_url, price_amount: input.price_amount, currency: input.currency,
+          commission_rate: input.commission_rate, commission_amount: input.commission_amount,
+          collaboration_model: input.collaboration_model, approval_required: input.approval_required,
+          sample_available: input.sample_available, shipping_regions: input.shipping_regions,
+          requirements: input.requirements, product_metrics: input.product_metrics, updated_at: now,
+        };
+        const { data, error } = await supabase.from("ia_opportunities").insert(row).select("*").single();
+        if (error) throw new Error(error.message);
+        await supabase.from("ia_opportunity_events").insert({
+          user_id: user.id, opportunity_id: data.id, event_type: "discovered",
+          metadata: { source_type: "marketplace", affiliate_provider: "manual" },
+        });
+        return json({ ok: true, opportunity: data, ...(await opportunityState(supabase, user.id)) });
+      }
+
       case "opportunities_get":
       case "opportunity_refresh": {
         return json(await opportunityState(supabase, user.id));
@@ -754,7 +976,7 @@ Deno.serve(async (req: Request) => {
         const updates: Record<string, unknown> = {};
         if ("enabled" in fields) updates.enabled = fields.enabled === true;
         for (const [name, limits] of Object.entries({
-          creator_styles: [20, 80], industries: [20, 80], platforms: [20, 80], collaboration_types: [20, 100],
+          creator_styles: [20, 80], industries: [20, 80], platforms: [20, 80], collaboration_types: [20, 100], content_formats: [20, 100],
           regions: [20, 100], desired_brands: [50, 120], excluded_brands: [50, 253],
         })) {
           if (name in fields) updates[name] = cleanList(fields[name], limits[0], limits[1]);

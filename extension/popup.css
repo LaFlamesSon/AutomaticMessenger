@@ -190,6 +190,12 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .opportunity-result .score { color: var(--accent); font-weight: 800; }
 .opportunity-result .reasons { margin: 7px 0; padding-left: 18px; color: var(--soft); }
 .opportunity-result .card-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.metric-list { margin-top: 10px; }
+.metric-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.metric-row p { margin: 2px 0 0; }
+.score-breakdown { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.score-breakdown .tag { margin: 0; }
+.opportunity-link { display: inline-flex; align-items: center; text-decoration: none; }
 .relationship-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .relationship-row:last-child { border-bottom: 0; }
 .relationship-row .card-actions { display: flex; gap: 7px; margin-top: 7px; }

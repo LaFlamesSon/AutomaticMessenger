@@ -162,8 +162,32 @@ function renderOpportunities() {
   $("opportunityIndustries").value = (preferences.industries || []).join(", ");
   $("opportunityPlatforms").value = (preferences.platforms || []).join(", ");
   $("opportunityTypes").value = (preferences.collaboration_types || []).join(", ");
+  $("opportunityFormats").value = (preferences.content_formats || []).join(", ");
+  $("opportunityRegions").value = (preferences.regions || []).join(", ");
   $("opportunityDesired").value = (preferences.desired_brands || []).join(", ");
   $("opportunityExcluded").value = (preferences.excluded_brands || []).join(", ");
+
+  const metricList = $("affiliateMetricList");
+  metricList.replaceChildren();
+  (state.category_metrics || []).forEach((metric) => {
+    const row = create("div", "metric-row");
+    const summary = create("div");
+    summary.append(create("strong", "", `${metric.category} · ${metric.platform}`));
+    const facts = [];
+    if (metric.median_views !== null) facts.push(`${Number(metric.median_views).toLocaleString()} median views`);
+    if (metric.engagement_rate !== null) facts.push(`${(Number(metric.engagement_rate) * 100).toFixed(2)}% engagement`);
+    summary.append(create("p", "meta", facts.join(" · ") || "No performance values yet"));
+    const remove = create("button", "ghost compact", "Remove");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      setBusy(remove, true, "Removing…");
+      try { await api("affiliate_metric_delete", { id: metric.id }); await loadOpportunities(true); }
+      catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+      finally { setBusy(remove, false); }
+    });
+    row.append(summary, remove);
+    metricList.append(row);
+  });
 
   const suggestions = (state.relationships || []).filter((relationship) => !relationship.confirmed && relationship.relationship_status === "suggested");
   $("relationshipSuggestions").classList.toggle("hidden", !suggestions.length);
@@ -196,10 +220,32 @@ function renderOpportunities() {
   const opportunities = (state.opportunities || []).filter((opportunity) => opportunity.status !== "dismissed");
   opportunities.forEach((opportunity) => {
     const card = create("article", "opportunity-card opportunity-result");
-    const top = create("div", "opportunity-kicker", `${opportunity.match_score || 0}% match · ${String(opportunity.source_type || "manual").replaceAll("_", " ")}`);
+    const isAffiliate = opportunity.opportunity_kind === "affiliate_product";
+    const sourceLabel = String(opportunity.affiliate_provider || opportunity.source_type || "manual").replaceAll("_", " ");
+    const easeLabel = isAffiliate && opportunity.ease_label ? ` · ${opportunity.ease_label}` : "";
+    const top = create("div", "opportunity-kicker", `${opportunity.match_score || 0}% match${easeLabel} · ${sourceLabel}`);
     card.append(top, create("h2", "", opportunity.brand_name));
-    if (opportunity.title) card.append(create("strong", "", opportunity.title));
+    if (isAffiliate && opportunity.product_name) card.append(create("strong", "", opportunity.product_name));
+    else if (opportunity.title) card.append(create("strong", "", opportunity.title));
     if (opportunity.description) card.append(create("p", "", opportunity.description));
+    if (isAffiliate) {
+      const economics = [];
+      if (opportunity.price_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.price_amount).toFixed(2)} product`);
+      if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
+      if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
+      if (economics.length) card.append(create("p", "tag", economics.join(" · ")));
+      if (opportunity.estimated_earnings_low !== null && opportunity.estimated_earnings_high !== null) {
+        card.append(create("p", "", `Estimated ${opportunity.currency || "USD"} ${Number(opportunity.estimated_earnings_low).toFixed(2)}–${Number(opportunity.estimated_earnings_high).toFixed(2)} per related post · ${opportunity.earnings_confidence || "low"} confidence`));
+      }
+      const breakdown = create("div", "score-breakdown");
+      Object.entries(opportunity.score_components || {}).forEach(([name, value]) => {
+        breakdown.append(create("span", "tag", `${name.replaceAll("_", " ")}: ${value}`));
+      });
+      if (breakdown.childElementCount) card.append(breakdown);
+      const easeReasons = create("ul", "reasons");
+      (opportunity.ease_reasons || []).slice(0, 3).forEach((reason) => easeReasons.append(create("li", "", reason)));
+      if (easeReasons.childElementCount) card.append(easeReasons);
+    }
     const reasons = create("ul", "reasons");
     (opportunity.match_reasons || []).slice(0, 4).forEach((reason) => reasons.append(create("li", "", reason)));
     card.append(reasons);
@@ -208,12 +254,18 @@ function renderOpportunities() {
     const evidence = opportunity.source_url ? `Evidence: ${opportunity.source_url}` : "Evidence: added by you";
     card.append(create("p", "source-note", evidence));
     const actions = create("div", "card-actions");
-    if (opportunity.status === "drafted") {
+    if (isAffiliate && opportunity.product_url) {
+      const apply = create("a", "primary compact opportunity-link", "View opportunity");
+      apply.href = opportunity.product_url;
+      apply.target = "_blank";
+      apply.rel = "noopener noreferrer";
+      actions.append(apply);
+    } else if (!isAffiliate && opportunity.status === "drafted") {
       const review = create("button", "primary compact", "Review Gmail draft");
       review.type = "button";
       review.addEventListener("click", () => reviewOpportunityDraft(opportunity, review));
       actions.append(review);
-    } else {
+    } else if (!isAffiliate) {
       const prepare = create("button", "primary compact", "Prepare Gmail draft");
       prepare.type = "button";
       prepare.disabled = !opportunity.contact_email;
@@ -245,7 +297,7 @@ function renderOpportunities() {
   });
   if (!preferences.enabled) setStatus("opportunityStatus", "Turn on Opportunities and describe the work you want. No brand outreach is automatic.");
   else if (!opportunities.length) setStatus("opportunityStatus", "No matches yet. Add a brand or let future inbox sweeps suggest business-domain relationships.", "success");
-  else setStatus("opportunityStatus", `${opportunities.length} opportunity${opportunities.length === 1 ? "" : "ies"}. Matches use only your profile, kits, Gmail signals, and URLs you supplied.`, "success");
+  else setStatus("opportunityStatus", `${opportunities.length} opportunity${opportunities.length === 1 ? "" : "ies"}. Matches use your private profile, metrics, kits, and connected sources.`, "success");
 }
 
 async function loadOpportunities(force = false) {
@@ -294,6 +346,7 @@ $("opportunityProfileForm").addEventListener("submit", async (event) => {
       enabled: $("opportunityEnabled").checked,
       creator_styles: commaList($("opportunityStyles").value), industries: commaList($("opportunityIndustries").value),
       platforms: commaList($("opportunityPlatforms").value), collaboration_types: commaList($("opportunityTypes").value),
+      content_formats: commaList($("opportunityFormats").value), regions: commaList($("opportunityRegions").value),
       desired_brands: commaList($("opportunityDesired").value), excluded_brands: commaList($("opportunityExcluded").value),
     };
     await api("opportunity_preferences_set", { fields, expected_settings_version: currentOpportunityState.preferences.settings_version });
@@ -311,6 +364,46 @@ $("opportunityAddForm").addEventListener("submit", async (event) => {
       brand_name: $("opportunityBrandName").value, brand_domain: $("opportunityBrandDomain").value,
       contact_email: $("opportunityContactEmail").value, source_url: $("opportunitySourceUrl").value,
       description: $("opportunityDescription").value, tags: commaList($("opportunityTags").value),
+    });
+    event.target.reset();
+    await loadOpportunities(true);
+  } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+});
+
+$("affiliateMetricForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("saveAffiliateMetric");
+  setBusy(button, true, "Saving…");
+  try {
+    await api("affiliate_metric_upsert", {
+      platform: $("affiliateMetricPlatform").value, category: $("affiliateMetricCategory").value,
+      followers: $("affiliateMetricFollowers").value, median_views: $("affiliateMetricViews").value,
+      engagement_rate_percent: $("affiliateMetricEngagement").value,
+      click_through_rate_percent: $("affiliateMetricCtr").value,
+      conversion_rate_percent: $("affiliateMetricConversion").value,
+      sample_size: $("affiliateMetricSampleSize").value,
+    });
+    event.target.reset();
+    await loadOpportunities(true);
+  } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
+});
+
+$("affiliateOpportunityForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("addAffiliateOpportunity");
+  setBusy(button, true, "Ranking…");
+  try {
+    await api("affiliate_opportunity_create", {
+      brand_name: $("affiliateBrandName").value, brand_domain: $("affiliateBrandDomain").value,
+      product_name: $("affiliateProductName").value, product_category: $("affiliateProductCategory").value,
+      description: $("affiliateProductDescription").value, product_url: $("affiliateProductUrl").value,
+      price_amount: $("affiliateProductPrice").value, currency: "USD",
+      commission_rate: $("affiliateCommissionRate").value,
+      shipping_regions: commaList($("affiliateShippingRegions").value), collaboration_model: "open",
+      approval_required: $("affiliateApprovalRequired").checked,
+      sample_available: $("affiliateSampleAvailable").checked ? true : null,
     });
     event.target.reset();
     await loadOpportunities(true);

@@ -65,7 +65,7 @@
         <button id="refreshOpportunities" type="button" class="ghost compact">Refresh</button>
       </div>
       <form id="opportunityProfileForm" class="form-card opportunity-form">
-        <label class="toggle-row" for="opportunityEnabled"><span><strong>Find opportunities</strong><small>Uses your Gmail relationship signals and brands you add.</small></span><input id="opportunityEnabled" type="checkbox"></label>
+        <label class="toggle-row" for="opportunityEnabled"><span><strong>Find opportunities</strong><small>Uses your private match profile, connected sources, and brands you add.</small></span><input id="opportunityEnabled" type="checkbox"></label>
         <label for="opportunityStyles">Creator styles</label>
         <input id="opportunityStyles" type="text" maxlength="500" placeholder="fitness, beauty, lifestyle">
         <label for="opportunityIndustries">Industries</label>
@@ -74,12 +74,67 @@
         <input id="opportunityPlatforms" type="text" maxlength="500" placeholder="Instagram, TikTok, YouTube">
         <label for="opportunityTypes">Collaboration types</label>
         <input id="opportunityTypes" type="text" maxlength="500" placeholder="sponsored post, UGC, ambassador">
+        <label for="opportunityFormats">Content formats</label>
+        <input id="opportunityFormats" type="text" maxlength="500" placeholder="tutorial, review, unboxing, livestream">
+        <label for="opportunityRegions">Audience regions</label>
+        <input id="opportunityRegions" type="text" maxlength="500" placeholder="US, Canada, UK">
         <label for="opportunityDesired">Brands you want</label>
         <input id="opportunityDesired" type="text" maxlength="1000" placeholder="Brand One, Brand Two">
         <label for="opportunityExcluded">Brands to exclude</label>
         <input id="opportunityExcluded" type="text" maxlength="1000" placeholder="brand-domain.com, Brand Name">
         <button id="saveOpportunityProfile" type="submit" class="primary">Save match profile</button>
       </form>
+
+      <details class="form-card opportunity-add">
+        <summary>Add category performance</summary>
+        <form id="affiliateMetricForm">
+          <label for="affiliateMetricPlatform">Platform</label>
+          <select id="affiliateMetricPlatform"><option value="tiktok">TikTok</option><option value="instagram">Instagram</option><option value="youtube">YouTube</option><option value="other">Other</option></select>
+          <label for="affiliateMetricCategory">Content category</label>
+          <input id="affiliateMetricCategory" type="text" maxlength="160" placeholder="fitness" required>
+          <label for="affiliateMetricFollowers">Followers</label>
+          <input id="affiliateMetricFollowers" type="number" min="0" step="1">
+          <label for="affiliateMetricViews">Median views</label>
+          <input id="affiliateMetricViews" type="number" min="0" step="1">
+          <label for="affiliateMetricEngagement">Engagement rate (%)</label>
+          <input id="affiliateMetricEngagement" type="number" min="0" max="100" step="0.01">
+          <label for="affiliateMetricCtr">Link click rate (%) <span class="optional">optional</span></label>
+          <input id="affiliateMetricCtr" type="number" min="0" max="100" step="0.01">
+          <label for="affiliateMetricConversion">Conversion rate (%) <span class="optional">optional</span></label>
+          <input id="affiliateMetricConversion" type="number" min="0" max="100" step="0.01">
+          <label for="affiliateMetricSampleSize">Related posts measured</label>
+          <input id="affiliateMetricSampleSize" type="number" min="0" step="1">
+          <button id="saveAffiliateMetric" type="submit" class="primary">Save performance</button>
+        </form>
+        <div id="affiliateMetricList" class="metric-list"></div>
+      </details>
+
+      <details class="form-card opportunity-add">
+        <summary>Add an affiliate product</summary>
+        <form id="affiliateOpportunityForm">
+          <label for="affiliateBrandName">Brand name</label>
+          <input id="affiliateBrandName" type="text" maxlength="120" required>
+          <label for="affiliateBrandDomain">Brand domain</label>
+          <input id="affiliateBrandDomain" type="text" maxlength="253" placeholder="brand.com" required>
+          <label for="affiliateProductName">Product</label>
+          <input id="affiliateProductName" type="text" maxlength="300" required>
+          <label for="affiliateProductCategory">Category</label>
+          <input id="affiliateProductCategory" type="text" maxlength="160" placeholder="fitness">
+          <label for="affiliateProductDescription">Product details</label>
+          <textarea id="affiliateProductDescription" maxlength="2000" rows="3"></textarea>
+          <label for="affiliateProductUrl">Opportunity URL <span class="optional">optional</span></label>
+          <input id="affiliateProductUrl" type="url" maxlength="1000" placeholder="https://...">
+          <label for="affiliateProductPrice">Price</label>
+          <input id="affiliateProductPrice" type="number" min="0" step="0.01">
+          <label for="affiliateCommissionRate">Commission (%)</label>
+          <input id="affiliateCommissionRate" type="number" min="0" max="100" step="0.01">
+          <label for="affiliateShippingRegions">Shipping regions</label>
+          <input id="affiliateShippingRegions" type="text" maxlength="500" placeholder="US, Canada">
+          <label class="toggle-row" for="affiliateApprovalRequired"><span><strong>Seller approval required</strong></span><input id="affiliateApprovalRequired" type="checkbox"></label>
+          <label class="toggle-row" for="affiliateSampleAvailable"><span><strong>Sample confirmed available</strong></span><input id="affiliateSampleAvailable" type="checkbox"></label>
+          <button id="addAffiliateOpportunity" type="submit" class="primary">Add and rank</button>
+        </form>
+      </details>
 
       <details class="form-card opportunity-add">
         <summary>Add a brand or public opportunity</summary>
