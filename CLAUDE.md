@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.4.2** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.4.3** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -218,6 +218,12 @@ double-booking guard; API idempotency and owner checks sit above it.
   now makes active manual/private sources and the absence of a connected live
   marketplace feed explicit in the Opportunities tab. Evidence is in
   `docs/audits/caughtup-affiliate-50-stress-20260804.md`.
+- Extension source 0.4.3 makes Opportunities an affiliate-products-first feed.
+  Product cards now show only match, difficulty, commission/earnings, one fit
+  reason, the relevant media kit, and actions. Profile, metric, and manual-entry
+  controls are collapsed under `Tune your matches`; non-affiliate brand records
+  no longer appear in the primary feed. The 400x600 visual pass, 81 source/API
+  contracts, and the 50-case matching benchmark remained green.
 
 ## Repository layout
 

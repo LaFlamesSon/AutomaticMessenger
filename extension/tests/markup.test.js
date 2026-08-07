@@ -79,7 +79,7 @@ test("empty Today and successful sweeps use the requested caught-up states", () 
   assert.doesNotMatch(`${html}\n${script}\n${css}`, /duck/i);
 });
 
-test("Ask CaughtUp lives in Today while Opportunities is a working approval-only destination", () => {
+test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-first destination", () => {
   const todayPanel = html.match(/<section id="today"[\s\S]*?<section id="opportunities"/)?.[0] ?? "";
   assert.match(todayPanel, /id="askCaughtUpTitle"[^>]*>Ask CaughtUp/);
   assert.match(todayPanel, /id="chatForm"/);
@@ -89,27 +89,26 @@ test("Ask CaughtUp lives in Today while Opportunities is a working approval-only
   assert.match(html, /id="opportunityAddForm"/);
   assert.match(html, /id="affiliateMetricForm"/);
   assert.match(html, /id="affiliateOpportunityForm"/);
-  assert.match(html, /id="opportunitySourceSummary"/);
-  assert.match(html, /id="opportunitySourceBadge"/);
-  assert.match(html, /No affiliate marketplace feed is connected yet|Checking which sources are active/);
+  assert.match(html, /id="opportunityControls"/);
+  assert.match(html, /Tune your matches/);
+  assert.ok(html.indexOf('id="opportunityList"') < html.indexOf('id="opportunityControls"'), "product results must come before configuration");
   assert.match(html, /Add an affiliate product manually/);
   assert.match(html, /does not import a marketplace catalog/);
   assert.match(html, /id="opportunityFormats"/);
   assert.match(html, /id="opportunityRegions"/);
   assert.match(html, /id="opportunityDraftDialog"/);
-  assert.match(html, /Outreach always requires your review/);
+  assert.match(html, /Affiliate products selected for your content and audience/);
   assert.match(script, /if \(name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading\) loadOpportunities\(\)/);
-  assert.match(script, /api\("opportunity_prepare_draft"/);
   assert.match(script, /api\("opportunity_draft_get"/);
   assert.match(script, /api\("opportunity_send"/);
   assert.match(script, /api\("affiliate_metric_upsert"/);
   assert.match(script, /api\("affiliate_metric_delete"/);
   assert.match(script, /api\("affiliate_opportunity_create"/);
   assert.match(script, /opportunity\.ease_label/);
-  assert.match(script, /opportunity\.score_components/);
   assert.match(script, /state\.affiliate_connections/);
-  assert.match(script, /available_affiliate_providers/);
-  assert.match(script, /No affiliate marketplace feed is connected yet/);
+  assert.match(script, /opportunity\.opportunity_kind === "affiliate_product"/);
+  assert.match(script, /affiliate product.*selected for you/);
+  assert.doesNotMatch(script, /Object\.entries\(opportunity\.score_components/);
   assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
   assert.match(script, /\["today", "opportunities", "kits", "calendar", "settings"\]/);
 });
@@ -177,7 +176,7 @@ test("client targets the audited API actions", () => {
     "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
-    "opportunity_create", "opportunity_update", "opportunity_prepare_draft", "opportunity_draft_get", "opportunity_send",
+    "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
@@ -285,7 +284,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.2");
+  assert.equal(manifest.version, "0.4.3");
 });
 
 test("focus and reduced-motion styles are present", () => {

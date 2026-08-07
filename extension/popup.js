@@ -158,23 +158,6 @@ function renderOpportunities() {
   if (!state) return;
   const preferences = state.preferences || {};
   const connections = (state.affiliate_connections || []).filter((connection) => connection.status === "connected");
-  const providerLabels = {
-    tiktok_shop: "TikTok Shop", awin: "Awin", cj: "CJ", rakuten: "Rakuten",
-    amazon: "Amazon", ebay: "eBay", impact: "Impact",
-  };
-  const connectedLabels = connections.map((connection) => providerLabels[connection.provider] || String(connection.provider).replaceAll("_", " "));
-  const availableLabels = (state.sourcing?.available_affiliate_providers || [])
-    .map((provider) => providerLabels[provider] || String(provider).replaceAll("_", " "));
-  $("opportunitySourceBadge").textContent = connectedLabels.length
-    ? `${connectedLabels.length} marketplace${connectedLabels.length === 1 ? "" : "s"} connected`
-    : "Manual sources active";
-  $("opportunitySourceBadge").classList.toggle("connected", connectedLabels.length > 0);
-  $("opportunitySourceText").textContent = connectedLabels.length
-    ? `CaughtUp ranks Gmail relationship signals, brands and products you add, and connected feeds from ${connectedLabels.join(", ")}.`
-    : "CaughtUp currently ranks Gmail relationship signals and brands or affiliate products you add. No affiliate marketplace feed is connected yet.";
-  $("opportunitySourceProviders").textContent = availableLabels.length
-    ? `Marketplace connectors available after provider approval: ${availableLabels.join(", ")}.`
-    : "No marketplace connectors are configured.";
   $("opportunityEnabled").checked = preferences.enabled === true;
   $("opportunityStyles").value = (preferences.creator_styles || []).join(", ");
   $("opportunityIndustries").value = (preferences.industries || []).join(", ");
@@ -235,70 +218,34 @@ function renderOpportunities() {
 
   const list = $("opportunityList");
   list.replaceChildren();
-  const opportunities = (state.opportunities || []).filter((opportunity) => opportunity.status !== "dismissed");
-  opportunities.forEach((opportunity) => {
+  const affiliateProducts = (state.opportunities || []).filter((opportunity) =>
+    opportunity.status !== "dismissed" && opportunity.opportunity_kind === "affiliate_product");
+  affiliateProducts.forEach((opportunity) => {
     const card = create("article", "opportunity-card opportunity-result");
-    const isAffiliate = opportunity.opportunity_kind === "affiliate_product";
     const sourceLabel = String(opportunity.affiliate_provider || opportunity.source_type || "manual").replaceAll("_", " ");
-    const easeLabel = isAffiliate && opportunity.ease_label ? ` · ${opportunity.ease_label}` : "";
+    const easeLabel = opportunity.ease_label ? ` · ${opportunity.ease_label}` : "";
     const top = create("div", "opportunity-kicker", `${opportunity.match_score || 0}% match${easeLabel} · ${sourceLabel}`);
-    card.append(top, create("h2", "", opportunity.brand_name));
-    if (isAffiliate && opportunity.product_name) card.append(create("strong", "", opportunity.product_name));
-    else if (opportunity.title) card.append(create("strong", "", opportunity.title));
+    card.append(top, create("h2", "", opportunity.product_name || opportunity.title || "Affiliate product"));
+    card.append(create("p", "product-brand", `by ${opportunity.brand_name}`));
     if (opportunity.description) card.append(create("p", "", opportunity.description));
-    if (isAffiliate) {
-      const economics = [];
-      if (opportunity.price_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.price_amount).toFixed(2)} product`);
-      if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
-      if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
-      if (economics.length) card.append(create("p", "tag", economics.join(" · ")));
-      if (opportunity.estimated_earnings_low !== null && opportunity.estimated_earnings_high !== null) {
-        card.append(create("p", "", `Estimated ${opportunity.currency || "USD"} ${Number(opportunity.estimated_earnings_low).toFixed(2)}–${Number(opportunity.estimated_earnings_high).toFixed(2)} per related post · ${opportunity.earnings_confidence || "low"} confidence`));
-      }
-      const breakdown = create("div", "score-breakdown");
-      Object.entries(opportunity.score_components || {}).forEach(([name, value]) => {
-        breakdown.append(create("span", "tag", `${name.replaceAll("_", " ")}: ${value}`));
-      });
-      if (breakdown.childElementCount) card.append(breakdown);
-      const easeReasons = create("ul", "reasons");
-      (opportunity.ease_reasons || []).slice(0, 3).forEach((reason) => easeReasons.append(create("li", "", reason)));
-      if (easeReasons.childElementCount) card.append(easeReasons);
+    const economics = [];
+    if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
+    if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
+    if (economics.length) card.append(create("p", "product-economics", economics.join(" · ")));
+    if (opportunity.estimated_earnings_low !== null && opportunity.estimated_earnings_high !== null) {
+      card.append(create("p", "product-estimate", `Est. ${opportunity.currency || "USD"} ${Number(opportunity.estimated_earnings_low).toFixed(2)}–${Number(opportunity.estimated_earnings_high).toFixed(2)} per related post`));
     }
-    const reasons = create("ul", "reasons");
-    (opportunity.match_reasons || []).slice(0, 4).forEach((reason) => reasons.append(create("li", "", reason)));
-    card.append(reasons);
+    const fitReason = (opportunity.match_reasons || [])[0];
+    if (fitReason) card.append(create("p", "fit-reason", `Why it fits: ${fitReason}`));
     const kitLabel = opportunityKitLabel(opportunity.recommended_media_kit_id);
     if (kitLabel) card.append(create("p", "tag", `Kit: ${kitLabel}`));
-    const evidence = opportunity.source_url ? `Evidence: ${opportunity.source_url}` : "Evidence: added by you";
-    card.append(create("p", "source-note", evidence));
     const actions = create("div", "card-actions");
-    if (isAffiliate && opportunity.product_url) {
+    if (opportunity.product_url) {
       const apply = create("a", "primary compact opportunity-link", "View opportunity");
       apply.href = opportunity.product_url;
       apply.target = "_blank";
       apply.rel = "noopener noreferrer";
       actions.append(apply);
-    } else if (!isAffiliate && opportunity.status === "drafted") {
-      const review = create("button", "primary compact", "Review Gmail draft");
-      review.type = "button";
-      review.addEventListener("click", () => reviewOpportunityDraft(opportunity, review));
-      actions.append(review);
-    } else if (!isAffiliate) {
-      const prepare = create("button", "primary compact", "Prepare Gmail draft");
-      prepare.type = "button";
-      prepare.disabled = !opportunity.contact_email;
-      if (!opportunity.contact_email) prepare.title = "Add a business contact email to prepare outreach.";
-      prepare.addEventListener("click", async () => {
-        setBusy(prepare, true, "Preparing…");
-        try {
-          await api("opportunity_prepare_draft", { id: opportunity.id }, { timeout: 30000 });
-          await loadOpportunities(true);
-          const updated = currentOpportunityState.opportunities.find((item) => item.id === opportunity.id) || opportunity;
-          await reviewOpportunityDraft(updated, prepare);
-        } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
-        finally { setBusy(prepare, false); }
-      });
-      actions.append(prepare);
     }
     if (["new", "saved"].includes(opportunity.status)) {
       const statusAction = opportunity.status === "saved" ? ["Unsave", "new"] : ["Save", "saved"];
@@ -313,9 +260,10 @@ function renderOpportunities() {
     card.append(actions);
     list.append(card);
   });
-  if (!preferences.enabled) setStatus("opportunityStatus", "Turn on Opportunities and describe the work you want. No brand outreach is automatic.");
-  else if (!opportunities.length) setStatus("opportunityStatus", "No matches yet. Add a brand or let future inbox sweeps suggest business-domain relationships.", "success");
-  else setStatus("opportunityStatus", `${opportunities.length} opportunity${opportunities.length === 1 ? "" : "ies"}. Matches use your private profile, category metrics, media kits, and the active sources shown above.`, "success");
+  if (!preferences.enabled) setStatus("opportunityStatus", "Turn on affiliate matches under Tune your matches.");
+  else if (!affiliateProducts.length && connections.length) setStatus("opportunityStatus", "No matching affiliate products yet. Refresh to check connected marketplaces.");
+  else if (!affiliateProducts.length) setStatus("opportunityStatus", "No affiliate products yet. A marketplace catalog still needs to be connected.");
+  else setStatus("opportunityStatus", `${affiliateProducts.length} affiliate product${affiliateProducts.length === 1 ? "" : "s"} selected for you.`, "success");
 }
 
 async function loadOpportunities(force = false) {
