@@ -60,29 +60,16 @@
       <div class="panel-heading">
         <div>
           <h1>Opportunities</h1>
-          <p class="meta">Affiliate products selected for your content and audience.</p>
+          <p class="meta">Products and commissions matched to your brand.</p>
         </div>
         <button id="refreshOpportunities" type="button" class="ghost compact">Refresh</button>
       </div>
       <div id="opportunityStatus" class="state-card opportunity-state" role="status" aria-live="polite">Finding products for you&hellip;</div>
       <div id="opportunityList" class="opportunity-list"></div>
 
-      <details id="opportunityControls" class="form-card opportunity-controls">
+      <details id="opportunityControls" class="form-card opportunity-controls hidden" hidden>
         <summary>Tune your matches</summary>
         <p class="hint">Update what you create and add performance data when you want more accurate product rankings.</p>
-      <section class="opportunity-source" aria-labelledby="ebaySourceTitle">
-        <h2 id="ebaySourceTitle" class="section-title">eBay products</h2>
-        <p class="hint">Connect your eBay Partner Network campaign ID. CaughtUp uses it to create tracked product links; your eBay password is never requested.</p>
-        <form id="ebayConnectionForm">
-          <label for="ebayCampaignId">10-digit campaign ID</label>
-          <input id="ebayCampaignId" type="text" inputmode="numeric" pattern="[0-9]{10}" minlength="10" maxlength="10" autocomplete="off" placeholder="1234567890" required>
-          <div class="card-actions">
-            <button id="connectEbay" type="submit" class="primary compact">Connect eBay</button>
-            <button id="disconnectEbay" type="button" class="ghost compact hidden">Disconnect</button>
-          </div>
-        </form>
-        <p id="ebayConnectionStatus" class="status-text" role="status" aria-live="polite"></p>
-      </section>
       <form id="opportunityProfileForm" class="form-card opportunity-form">
         <label class="toggle-row" for="opportunityEnabled"><span><strong>Show affiliate matches</strong><small>Uses your private creator profile and performance.</small></span><input id="opportunityEnabled" type="checkbox"></label>
         <label for="opportunityStyles">Creator styles</label>

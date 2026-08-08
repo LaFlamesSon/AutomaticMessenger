@@ -157,18 +157,6 @@ function renderOpportunities() {
   const state = currentOpportunityState;
   if (!state) return;
   const preferences = state.preferences || {};
-  const connections = (state.affiliate_connections || []).filter((connection) => connection.status === "connected");
-  const ebayConnection = (state.affiliate_connections || []).find((connection) => connection.provider === "ebay" && connection.status !== "disabled");
-  $("ebayCampaignId").value = ebayConnection?.external_account_ref || "";
-  $("connectEbay").textContent = ebayConnection?.status === "connected" ? "Update eBay" : "Connect eBay";
-  $("disconnectEbay").classList.toggle("hidden", !ebayConnection);
-  if (!ebayConnection) setStatus("ebayConnectionStatus", "Not connected.");
-  else if (ebayConnection.status === "connected" && ebayConnection.error_code) {
-    setStatus("ebayConnectionStatus", "Connected, but the latest product refresh failed. Try Refresh again.", "error");
-  } else if (ebayConnection.status === "connected") {
-    const synced = ebayConnection.last_synced_at ? ` Last refreshed ${new Date(ebayConnection.last_synced_at).toLocaleString()}.` : "";
-    setStatus("ebayConnectionStatus", `Connected.${synced}`, "success");
-  } else setStatus("ebayConnectionStatus", "Campaign ID saved. CaughtUp still needs approved eBay catalog access before products can load.");
   $("opportunityEnabled").checked = preferences.enabled === true;
   $("opportunityStyles").value = (preferences.creator_styles || []).join(", ");
   $("opportunityIndustries").value = (preferences.industries || []).join(", ");
@@ -231,26 +219,16 @@ function renderOpportunities() {
   list.replaceChildren();
   const affiliateProducts = (state.opportunities || []).filter((opportunity) =>
     opportunity.status !== "dismissed" && opportunity.opportunity_kind === "affiliate_product" &&
-    Number(opportunity.match_score || 0) >= 30).slice(0, 20);
+    Number(opportunity.match_score || 0) >= 30 &&
+    (opportunity.commission_rate !== null || opportunity.commission_amount !== null)).slice(0, 20);
   affiliateProducts.forEach((opportunity) => {
     const card = create("article", "opportunity-card opportunity-result");
-    const sourceLabel = String(opportunity.affiliate_provider || opportunity.source_type || "manual").replaceAll("_", " ");
-    const easeLabel = opportunity.ease_label ? ` · ${opportunity.ease_label}` : "";
-    const top = create("div", "opportunity-kicker", `${opportunity.match_score || 0}% match${easeLabel} · ${sourceLabel}`);
-    card.append(top, create("h2", "", opportunity.product_name || opportunity.title || "Affiliate product"));
-    card.append(create("p", "product-brand", `by ${opportunity.brand_name}`));
-    if (opportunity.description) card.append(create("p", "", opportunity.description));
+    card.append(create("h2", "", opportunity.product_name || opportunity.title || "Affiliate product"));
+    card.append(create("p", "product-brand", opportunity.brand_name));
     const economics = [];
     if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
     if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
-    if (economics.length) card.append(create("p", "product-economics", economics.join(" · ")));
-    if (opportunity.estimated_earnings_low !== null && opportunity.estimated_earnings_high !== null) {
-      card.append(create("p", "product-estimate", `Est. ${opportunity.currency || "USD"} ${Number(opportunity.estimated_earnings_low).toFixed(2)}–${Number(opportunity.estimated_earnings_high).toFixed(2)} per related post`));
-    }
-    const fitReason = (opportunity.match_reasons || [])[0];
-    if (fitReason) card.append(create("p", "fit-reason", `Why it fits: ${fitReason}`));
-    const kitLabel = opportunityKitLabel(opportunity.recommended_media_kit_id);
-    if (kitLabel) card.append(create("p", "tag", `Kit: ${kitLabel}`));
+    card.append(create("p", "product-economics", economics.join(" · ")));
     const actions = create("div", "card-actions");
     if (opportunity.product_url) {
       const apply = create("a", "primary compact opportunity-link", "View opportunity");
@@ -259,22 +237,11 @@ function renderOpportunities() {
       apply.rel = "noopener noreferrer";
       actions.append(apply);
     }
-    if (["new", "saved"].includes(opportunity.status)) {
-      const statusAction = opportunity.status === "saved" ? ["Unsave", "new"] : ["Save", "saved"];
-      const save = create("button", "ghost compact", statusAction[0]);
-      save.type = "button";
-      save.addEventListener("click", () => updateOpportunityStatus(opportunity.id, statusAction[1], save));
-      const dismiss = create("button", "ghost compact", "Dismiss");
-      dismiss.type = "button";
-      dismiss.addEventListener("click", () => updateOpportunityStatus(opportunity.id, "dismissed", dismiss));
-      actions.append(save, dismiss);
-    }
     card.append(actions);
     list.append(card);
   });
-  if (!preferences.enabled) setStatus("opportunityStatus", "Turn on affiliate matches under Tune your matches.");
-  else if (!affiliateProducts.length && connections.length) setStatus("opportunityStatus", "No matching affiliate products yet. Refresh to check connected marketplaces.");
-  else if (!affiliateProducts.length) setStatus("opportunityStatus", "No affiliate products yet. Connect eBay under Tune your matches, then refresh.");
+  if (!preferences.enabled) setStatus("opportunityStatus", "CaughtUp is preparing affiliate matches for your brand.");
+  else if (!affiliateProducts.length) setStatus("opportunityStatus", "No commission-verified products match your brand yet. Check back soon.");
   else setStatus("opportunityStatus", `${affiliateProducts.length} affiliate product${affiliateProducts.length === 1 ? "" : "s"} selected for you.`, "success");
 }
 
@@ -330,31 +297,6 @@ $("opportunityProfileForm").addEventListener("submit", async (event) => {
     await api("opportunity_preferences_set", { fields, expected_settings_version: currentOpportunityState.preferences.settings_version });
     await loadOpportunities(true);
   } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
-  finally { setBusy(button, false); }
-});
-
-$("ebayConnectionForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = $("connectEbay");
-  setBusy(button, true, "Connecting…");
-  try {
-    currentOpportunityState = await api("affiliate_ebay_connection_set", {
-      campaign_id: $("ebayCampaignId").value,
-    }, { timeout: 30000 });
-    opportunitiesLoaded = true;
-    renderOpportunities();
-  } catch (error) { setStatus("ebayConnectionStatus", Core.safeErrorMessage(error), "error"); }
-  finally { setBusy(button, false); }
-});
-
-$("disconnectEbay").addEventListener("click", async () => {
-  const button = $("disconnectEbay");
-  setBusy(button, true, "Disconnecting…");
-  try {
-    currentOpportunityState = await api("affiliate_ebay_disconnect");
-    opportunitiesLoaded = true;
-    renderOpportunities();
-  } catch (error) { setStatus("ebayConnectionStatus", Core.safeErrorMessage(error), "error"); }
   finally { setBusy(button, false); }
 });
 

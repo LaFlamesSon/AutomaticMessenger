@@ -90,29 +90,26 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(html, /id="affiliateMetricForm"/);
   assert.match(html, /id="affiliateOpportunityForm"/);
   assert.match(html, /id="opportunityControls"/);
-  assert.match(html, /id="ebayConnectionForm"/);
-  assert.match(html, /id="ebayCampaignId"[^>]+pattern="\[0-9\]\{10\}"/);
-  assert.match(script, /api\("affiliate_ebay_connection_set"/);
-  assert.match(script, /api\("affiliate_ebay_disconnect"/);
-  assert.match(html, /Tune your matches/);
+  assert.doesNotMatch(html, /id="ebayConnectionForm"|id="ebayCampaignId"/);
+  assert.match(html, /id="opportunityControls"[^>]+hidden/);
   assert.ok(html.indexOf('id="opportunityList"') < html.indexOf('id="opportunityControls"'), "product results must come before configuration");
   assert.match(html, /Add an affiliate product manually/);
   assert.match(html, /does not import a marketplace catalog/);
   assert.match(html, /id="opportunityFormats"/);
   assert.match(html, /id="opportunityRegions"/);
   assert.match(html, /id="opportunityDraftDialog"/);
-  assert.match(html, /Affiliate products selected for your content and audience/);
+  assert.match(html, /Products and commissions matched to your brand/);
   assert.match(script, /if \(name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading\) loadOpportunities\(\)/);
   assert.match(script, /api\("opportunity_draft_get"/);
   assert.match(script, /api\("opportunity_send"/);
   assert.match(script, /api\("affiliate_metric_upsert"/);
   assert.match(script, /api\("affiliate_metric_delete"/);
   assert.match(script, /api\("affiliate_opportunity_create"/);
-  assert.match(script, /opportunity\.ease_label/);
-  assert.match(script, /state\.affiliate_connections/);
   assert.match(script, /opportunity\.opportunity_kind === "affiliate_product"/);
   assert.match(script, /Number\(opportunity\.match_score \|\| 0\) >= 30/);
   assert.match(script, /\.slice\(0, 20\)/);
+  assert.match(script, /opportunity\.commission_rate !== null \|\| opportunity\.commission_amount !== null/);
+  assert.doesNotMatch(script, /Why it fits:|Est\. .*per related post/);
   assert.match(script, /affiliate product.*selected for you/);
   assert.doesNotMatch(script, /Object\.entries\(opportunity\.score_components/);
   assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
@@ -184,7 +181,6 @@ test("client targets the audited API actions", () => {
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
-    "affiliate_ebay_connection_set", "affiliate_ebay_disconnect",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -291,7 +287,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.4");
+  assert.equal(manifest.version, "0.4.5");
 });
 
 test("focus and reduced-motion styles are present", () => {
