@@ -107,15 +107,16 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(script, /api\("affiliate_opportunity_create"/);
   assert.match(script, /opportunity\.opportunity_kind === "affiliate_product"/);
   assert.match(script, /Number\(opportunity\.match_score \|\| 0\) >= 30/);
-  assert.match(script, /\.slice\(0, 20\)/);
+  assert.match(script, /\.slice\(0, 10\)/);
   assert.match(script, /opportunity\.commission_rate !== null \|\| opportunity\.commission_amount !== null/);
   assert.match(script, /opportunity\.platform_eligible !== false/);
   assert.match(script, /opportunity\.creator_relevant === true/);
-  assert.match(script, /Required on/);
-  assert.match(script, /Recommended for/);
-  assert.match(script, /platformLabel\(opportunity\.recommended_platform\)/);
+  assert.match(script, /Required platform/);
+  assert.match(script, /Listing platforms/);
+  assert.match(script, /platformLabel/);
+  assert.doesNotMatch(script, /Recommended for/);
   assert.doesNotMatch(script, /Why it fits:|Est\. .*per related post/);
-  assert.match(script, /affiliate product.*selected for you/);
+  assert.match(script, /new affiliate opportunit/);
   assert.doesNotMatch(script, /Object\.entries\(opportunity\.score_components/);
   assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
   assert.match(script, /\["today", "opportunities", "kits", "calendar", "settings"\]/);
@@ -292,7 +293,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.6");
+  assert.equal(manifest.version, "0.4.7");
 });
 
 test("focus and reduced-motion styles are present", () => {

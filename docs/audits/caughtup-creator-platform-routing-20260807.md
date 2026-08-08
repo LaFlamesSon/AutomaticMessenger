@@ -1,30 +1,37 @@
-# Creator-specific affiliate platform routing — 2026-08-07
+# Listing-backed affiliate channels and daily feed — 2026-08-07
 
-## Goal
+## Corrected product rule
 
-For every commission-verified affiliate product, distinguish evidence-backed channel requirements from CaughtUp's creator-specific recommendation. Show the creator where to promote the product without adding provider-account friction or cluttering the product feed.
+Creator profile and performance data decide whether an affiliate product is relevant. They do not decide where a product should be posted. The extension shows a channel only when the provider listing or programme supplies that evidence.
+
+Awin's standard product-feed columns contain catalog information rather than a product-level TikTok/Instagram placement field. Publisher promotional type and advertiser programme rules are separate. Therefore, an ordinary Awin feed record without explicit programme evidence must display no platform instruction.
 
 ## Pass conditions
 
-1. A provider- or brand-required platform is authoritative and labeled `Required on`.
-2. An Awin-style cross-platform product routes to the creator's strongest related platform metric and is labeled `Recommended for`.
-3. A creator who does not use a required platform does not see that product in the feed.
-4. High commission by itself cannot make a product from an unrelated category visible.
-5. Unknown or unsupported platform values fail validation rather than becoming matching evidence.
-6. Provider evidence, creator recommendation basis, eligibility, and reasons are stored separately on owner-scoped opportunity rows.
-7. Product cards remain limited to product, company, commission, platform direction, and the product link.
+1. The same Awin listing exposes the same listing platforms regardless of creator performance.
+2. Awin products without explicit listing/programme channel evidence show no platform instruction.
+3. Native TikTok Shop products and explicit listing requirements remain authoritative.
+4. High commission alone cannot make an unrelated product visible.
+5. At most ten new relevant, commission-bearing products are surfaced per creator per local calendar day.
+6. Daily allocation is atomic under concurrent requests and remains owner-scoped.
+7. Cards stay limited to product, company, commission, optional listing-backed platform, and product link.
 
 ## Closed-loop evidence
 
-The first focused test run failed because the affiliate match result did not expose a recommended platform or distinguish required/provider-native evidence from creator performance. The implementation added deterministic routing and a named migration, then wired the result through `agent-api` and the extension.
+The initial focused tests failed because the previous implementation derived a posting recommendation from the creator's strongest platform and had no daily batching primitive. That model was removed before deployment.
 
-Source verification after the fix:
+Current focused verification:
 
-- `npx.cmd --yes deno test supabase/tests/*.ts`: 96 passed, 0 failed, including the existing 50-case affiliate benchmark and seven focused affiliate tests.
+- `npx.cmd --yes deno test supabase/tests/affiliate.test.ts`: 9 passed, 0 failed.
 - `npx.cmd --yes deno check supabase/functions/agent-api/index.ts`: passed.
-- `node --check extension/popup.js`: passed.
-- `node --test extension/tests/*.test.js supabase/tests/*-contract.test.mjs`: 86 passed, 0 failed.
+- `node --test extension/tests/markup.test.js supabase/tests/platform-routing-source-contract.test.mjs`: 29 passed, 0 failed.
+
+Full regression verification:
+
+- `npx.cmd --yes deno test supabase/tests/*.ts`: 98 passed, 0 failed, including the existing 50-case affiliate benchmark.
+- `node --check extension/popup.js` plus all extension/API source contracts: 87 passed, 0 failed.
+- `npx.cmd --yes supabase@latest db push --dry-run`: passed and identified only this pending migration.
 
 ## Current boundary
 
-The implementation is complete and verified in source. Migration `20260808045255_creator_platform_routing.sql` and the updated `agent-api` remain undeployed pending explicit live-change authorization. Extension source is version 0.4.6 and will need an unpacked-extension reload after deployment.
+Migration `20260808045255_creator_platform_routing.sql` has not been deployed. It now contains only listing-backed channel evidence, relevance/eligibility fields, daily surfacing timestamps, and a service-role-only atomic allocation function keyed to the creator's configured local date. Extension source is version 0.4.7 and requires an unpacked-extension reload after the backend is deployed.

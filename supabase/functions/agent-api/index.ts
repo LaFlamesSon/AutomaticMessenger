@@ -83,6 +83,19 @@ function cleanTimezone(value: unknown): string {
   return timezone;
 }
 
+function localDateKey(timezone: unknown): string {
+  const zone = typeof timezone === "string" && timezone ? timezone : "UTC";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${value.year}-${value.month}-${value.day}`;
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
 function cleanPhone(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   const phone = cleanString(value, "phone_number", 16);
@@ -548,6 +561,7 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
     { data: kits, error: kitError },
     { data: categoryMetrics, error: metricError },
     { data: affiliateConnections, error: connectionError },
+    { data: voiceProfile, error: voiceError },
   ] = await Promise.all([
     supabase.from("ia_brand_relationships").select("*").eq("user_id", userId).order("updated_at", { ascending: false }).limit(200),
     supabase.from("ia_opportunities").select("*").eq("user_id", userId).order("match_score", { ascending: false }).limit(200),
@@ -556,9 +570,10 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
     supabase.from("ia_creator_category_metrics").select("*").eq("user_id", userId).order("observed_at", { ascending: false }).limit(200),
     supabase.from("ia_affiliate_connections").select("id,provider,external_account_ref,status,scopes,last_synced_at,error_code")
       .eq("user_id", userId).order("updated_at", { ascending: false }).limit(50),
+    supabase.from("ia_voice_profiles").select("timezone").eq("user_id", userId).maybeSingle(),
   ]);
-  if (relationshipError || opportunityError || kitError || metricError || connectionError) {
-    throw new Error((relationshipError ?? opportunityError ?? kitError ?? metricError ?? connectionError).message);
+  if (relationshipError || opportunityError || kitError || metricError || connectionError || voiceError) {
+    throw new Error((relationshipError ?? opportunityError ?? kitError ?? metricError ?? connectionError ?? voiceError).message);
   }
   const relationshipByDomain = new Map((relationships ?? []).map((row: any) => [row.brand_domain, row]));
   const publicKits = (kits ?? []).map(({ storage_path: _path, ...kit }: any) => kit);
@@ -585,9 +600,6 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
         Number(opportunity.estimated_earnings_low ?? -1) !== Number((result as any).estimatedEarningsLow ?? -1) ||
         Number(opportunity.estimated_earnings_high ?? -1) !== Number((result as any).estimatedEarningsHigh ?? -1) ||
         opportunity.earnings_confidence !== (result as any).earningsConfidence ||
-        opportunity.recommended_platform !== (result as any).recommendedPlatform ||
-        opportunity.platform_recommendation_basis !== (result as any).platformBasis ||
-        JSON.stringify(opportunity.platform_reasons ?? []) !== JSON.stringify((result as any).platformReasons) ||
         opportunity.platform_eligible !== (result as any).platformEligible ||
         opportunity.creator_relevant !== (result as any).creatorRelevant
       ));
@@ -603,9 +615,6 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
         estimated_earnings_low: (result as any).estimatedEarningsLow,
         estimated_earnings_high: (result as any).estimatedEarningsHigh,
         earnings_confidence: (result as any).earningsConfidence,
-        recommended_platform: (result as any).recommendedPlatform,
-        platform_recommendation_basis: (result as any).platformBasis,
-        platform_reasons: (result as any).platformReasons,
         platform_eligible: (result as any).platformEligible,
         creator_relevant: (result as any).creatorRelevant,
       });
@@ -615,14 +624,25 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
       nextOpportunities.push(updated);
     } else nextOpportunities.push(opportunity);
   }
+  let surfacedAffiliateIds = new Set<string>();
+  if (preferences.enabled) {
+    const { data: surfaced, error: surfaceError } = await supabase.rpc("ia_surface_daily_affiliate_opportunities", {
+      p_user_id: userId, p_surface_date: localDateKey(voiceProfile?.timezone), p_daily_limit: 10,
+    });
+    if (surfaceError) throw new Error(surfaceError.message);
+    surfacedAffiliateIds = new Set((surfaced ?? []).map((id: unknown) => String(id)));
+  }
+  const visibleOpportunities = nextOpportunities.filter((opportunity: any) =>
+    opportunity.opportunity_kind !== "affiliate_product" || surfacedAffiliateIds.has(String(opportunity.id)));
   return {
-    preferences, relationships: relationships ?? [], opportunities: nextOpportunities, kits: publicKits,
+    preferences, relationships: relationships ?? [], opportunities: visibleOpportunities, kits: publicKits,
     category_metrics: categoryMetrics ?? [], affiliate_connections: affiliateConnections ?? [],
     sourcing: {
       active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls", "manual_affiliate_products",
         ...((affiliateConnections ?? []).some((connection: any) => connection.provider === "ebay" && connection.status === "connected") ? ["ebay_catalog"] : [])],
       available_affiliate_providers: AFFILIATE_PROVIDERS.filter((provider) => provider !== "manual"),
       broad_web_discovery: false,
+      daily_affiliate_limit: 10,
     },
   };
 }
@@ -1074,9 +1094,8 @@ Deno.serve(async (req: Request) => {
           recommended_media_kit_id: result.recommendedKit?.id ?? null,
           estimated_earnings_low: result.estimatedEarningsLow, estimated_earnings_high: result.estimatedEarningsHigh,
           earnings_confidence: result.earningsConfidence,
-          recommended_platform: result.recommendedPlatform,
-          platform_recommendation_basis: result.platformBasis,
-          platform_reasons: result.platformReasons,
+          listing_platforms: result.listingPlatforms,
+          listing_platform_requirement: result.listingPlatformRequirement,
           platform_eligible: result.platformEligible,
           creator_relevant: result.creatorRelevant,
         } });

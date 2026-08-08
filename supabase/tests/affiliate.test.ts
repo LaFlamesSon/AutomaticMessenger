@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert";
-import { matchAffiliateOpportunity } from "../functions/_shared/affiliate.ts";
+import { matchAffiliateOpportunity, selectAffiliateDailyBatch } from "../functions/_shared/affiliate.ts";
 
 const kits = [
   { id: "fitness", label: "Fitness Kit", description: "fitness gym activewear", keywords: ["fitness"], is_default: false },
@@ -50,7 +50,7 @@ Deno.test("excluded affiliate brands never receive a recommendation", () => {
   assertEquals(result.recommendedKit, null);
 });
 
-Deno.test("the same Awin product routes to each creator's strongest eligible platform", () => {
+Deno.test("listing platforms do not change with creator performance", () => {
   const product = {
     brand_name: "MoveWell", brand_domain: "movewell.example", product_name: "Resistance bands",
     product_category: "fitness", affiliate_provider: "awin", allowed_platforms: ["tiktok", "instagram"],
@@ -70,9 +70,9 @@ Deno.test("the same Awin product routes to each creator's strongest eligible pla
       { platform: "instagram", category: "fitness", sample_size: 20, median_views: 30_000, engagement_rate: 0.07 },
     ], product,
   );
-  assertEquals(tiktokCreator.recommendedPlatform, "tiktok");
-  assertEquals(tiktokCreator.platformBasis, "creator_performance");
-  assertEquals(instagramCreator.recommendedPlatform, "instagram");
+  assertEquals(tiktokCreator.listingPlatforms, ["tiktok", "instagram"]);
+  assertEquals(instagramCreator.listingPlatforms, ["tiktok", "instagram"]);
+  assertEquals(tiktokCreator.listingPlatformRequirement, "allowed");
 });
 
 Deno.test("brand-required and provider-native platforms are authoritative", () => {
@@ -82,25 +82,36 @@ Deno.test("brand-required and provider-native platforms are authoritative", () =
     { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
       affiliate_provider: "awin", required_platform: "tiktok", allowed_platforms: ["tiktok"], commission_rate: 10 },
   );
-  assertEquals(required.recommendedPlatform, "tiktok");
-  assertEquals(required.platformBasis, "brand_required");
+  assertEquals(required.listingPlatforms, ["tiktok"]);
+  assertEquals(required.listingPlatformRequirement, "required");
   const native = matchAffiliateOpportunity(
     { industries: ["beauty"], platforms: ["TikTok"] }, kits, [],
     { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
       affiliate_provider: "tiktok_shop", commission_rate: 10 },
   );
-  assertEquals(native.recommendedPlatform, "tiktok");
-  assertEquals(native.platformBasis, "provider_native");
+  assertEquals(native.listingPlatforms, ["tiktok"]);
+  assertEquals(native.listingPlatformRequirement, "required");
 });
 
-Deno.test("a creator is not recommended an unavailable required platform", () => {
+Deno.test("a creator is ineligible for a listing-required unavailable platform", () => {
   const result = matchAffiliateOpportunity(
     { industries: ["beauty"], platforms: ["Instagram"] }, kits, [],
     { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
       affiliate_provider: "awin", required_platform: "tiktok", allowed_platforms: ["tiktok"], commission_rate: 10 },
   );
   assertEquals(result.platformEligible, false);
-  assertEquals(result.recommendedPlatform, null);
+  assertEquals(result.listingPlatforms, ["tiktok"]);
+});
+
+Deno.test("Awin products without listing channel evidence show no platform instruction", () => {
+  const result = matchAffiliateOpportunity(
+    { industries: ["beauty"], platforms: ["TikTok", "Instagram"] }, kits,
+    [{ platform: "instagram", category: "beauty", median_views: 100_000 }],
+    { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
+      affiliate_provider: "awin", commission_rate: 10 },
+  );
+  assertEquals(result.listingPlatforms, []);
+  assertEquals(result.listingPlatformRequirement, null);
 });
 
 Deno.test("high commission alone does not make an unrelated product relevant", () => {
@@ -116,4 +127,20 @@ Deno.test("high commission alone does not make an unrelated product relevant", (
       product_category: "finance", affiliate_provider: "awin", allowed_platforms: ["tiktok"], commission_rate: 50 },
   );
   assertEquals(desired.creatorRelevant, true);
+});
+
+Deno.test("daily batches surface no more than ten new relevant commission products", () => {
+  const products = Array.from({ length: 25 }, (_, index) => ({
+    id: `product-${index}`, match_score: 100 - index, creator_relevant: true,
+    platform_eligible: true, commission_rate: 10, commission_amount: null, surfaced_on: null,
+  }));
+  const first = selectAffiliateDailyBatch(products, "2026-08-07", 10);
+  assertEquals(first.visibleIds.length, 10);
+  assertEquals(first.surfaceIds, products.slice(0, 10).map((product) => product.id));
+  const nextState = products.map((product) => first.surfaceIds.includes(product.id) ? { ...product, surfaced_on: "2026-08-07" } : product);
+  const sameDay = selectAffiliateDailyBatch(nextState, "2026-08-07", 10);
+  assertEquals(sameDay.surfaceIds, []);
+  assertEquals(sameDay.visibleIds.length, 10);
+  const nextDay = selectAffiliateDailyBatch(nextState, "2026-08-08", 10);
+  assertEquals(nextDay.surfaceIds, products.slice(10, 20).map((product) => product.id));
 });

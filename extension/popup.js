@@ -226,7 +226,7 @@ function renderOpportunities() {
     opportunity.status !== "dismissed" && opportunity.opportunity_kind === "affiliate_product" &&
     opportunity.platform_eligible !== false && opportunity.creator_relevant === true &&
     Number(opportunity.match_score || 0) >= 30 &&
-    (opportunity.commission_rate !== null || opportunity.commission_amount !== null)).slice(0, 20);
+    (opportunity.commission_rate !== null || opportunity.commission_amount !== null)).slice(0, 10);
   affiliateProducts.forEach((opportunity) => {
     const card = create("article", "opportunity-card opportunity-result");
     card.append(create("h2", "", opportunity.product_name || opportunity.title || "Affiliate product"));
@@ -235,9 +235,10 @@ function renderOpportunities() {
     if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
     if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
     card.append(create("p", "product-economics", economics.join(" · ")));
-    if (opportunity.recommended_platform) {
-      const authoritative = ["brand_required", "provider_native"].includes(opportunity.platform_recommendation_basis);
-      card.append(create("p", "product-platform", `${authoritative ? "Required on" : "Recommended for"} ${platformLabel(opportunity.recommended_platform)}`));
+    const listingPlatforms = opportunity.required_platform ? [opportunity.required_platform] : (opportunity.allowed_platforms || []);
+    if (listingPlatforms.length) {
+      const label = listingPlatforms.map(platformLabel).join(", ");
+      card.append(create("p", "product-platform", `${opportunity.required_platform ? "Required platform" : "Listing platforms"}: ${label}`));
     }
     const actions = create("div", "card-actions");
     if (opportunity.product_url) {
@@ -252,7 +253,7 @@ function renderOpportunities() {
   });
   if (!preferences.enabled) setStatus("opportunityStatus", "CaughtUp is preparing affiliate matches for your brand.");
   else if (!affiliateProducts.length) setStatus("opportunityStatus", "No commission-verified products match your brand yet. Check back soon.");
-  else setStatus("opportunityStatus", `${affiliateProducts.length} affiliate product${affiliateProducts.length === 1 ? "" : "s"} selected for you.`, "success");
+  else setStatus("opportunityStatus", `${affiliateProducts.length} new affiliate opportunit${affiliateProducts.length === 1 ? "y" : "ies"} selected for you today.`, "success");
 }
 
 async function loadOpportunities(force = false, sync = false) {

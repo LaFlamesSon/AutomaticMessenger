@@ -37,9 +37,6 @@ export interface AffiliateOpportunityInput extends OpportunityMatchInput {
   required_platform?: string | null;
 }
 
-export type PlatformRecommendationBasis =
-  | "brand_required" | "provider_native" | "creator_performance" | "creator_preference" | "brand_allowed";
-
 export interface AffiliateMatchResult {
   score: number;
   reasons: string[];
@@ -53,11 +50,36 @@ export interface AffiliateMatchResult {
   estimatedEarningsLow: number | null;
   estimatedEarningsHigh: number | null;
   earningsConfidence: "low" | "medium" | "high" | null;
-  recommendedPlatform: string | null;
-  platformBasis: PlatformRecommendationBasis | null;
-  platformReasons: string[];
+  listingPlatforms: string[];
+  listingPlatformRequirement: "required" | "allowed" | null;
   platformEligible: boolean;
   creatorRelevant: boolean;
+}
+
+export interface AffiliateFeedCandidate {
+  id: string;
+  match_score?: number | null;
+  creator_relevant?: boolean;
+  platform_eligible?: boolean;
+  commission_rate?: number | null;
+  commission_amount?: number | null;
+  surfaced_on?: string | null;
+}
+
+export function selectAffiliateDailyBatch(
+  opportunities: AffiliateFeedCandidate[], today: string, dailyLimit = 10,
+): { visibleIds: string[]; surfaceIds: string[] } {
+  const limit = Math.max(1, Math.min(10, Math.floor(dailyLimit)));
+  const eligible = opportunities.filter((opportunity) => opportunity.creator_relevant === true &&
+    opportunity.platform_eligible !== false && Number(opportunity.match_score ?? 0) >= 30 &&
+    (opportunity.commission_rate !== null && opportunity.commission_rate !== undefined ||
+      opportunity.commission_amount !== null && opportunity.commission_amount !== undefined));
+  const visibleIds = eligible.filter((opportunity) => opportunity.surfaced_on === today).map((opportunity) => opportunity.id).slice(0, limit);
+  const slots = Math.max(0, limit - visibleIds.length);
+  const surfaceIds = eligible.filter((opportunity) => !opportunity.surfaced_on)
+    .sort((left, right) => Number(right.match_score ?? 0) - Number(left.match_score ?? 0))
+    .slice(0, slots).map((opportunity) => opportunity.id);
+  return { visibleIds: [...visibleIds, ...surfaceIds], surfaceIds };
 }
 
 function text(value: unknown): string {
@@ -162,25 +184,13 @@ function chooseRelevantMetric(
   return bestScore >= 8 ? best : null;
 }
 
-function metricPlatformScore(metric: CreatorCategoryMetric): number {
-  const views = finite(metric.median_views) ?? 0;
-  const engagement = finite(metric.engagement_rate) ?? 0;
-  const clicks = finite(metric.click_through_rate) ?? 0;
-  const conversions = finite(metric.conversion_rate) ?? 0;
-  const sample = finite(metric.sample_size) ?? 0;
-  return Math.log10(views + 1) * 4 + engagement * 100 + clicks * 100 + conversions * 100 + Math.log10(sample + 1);
-}
-
-function routePlatform(
+function listingPlatformEvidence(
   preferences: Record<string, unknown> | null,
-  metrics: CreatorCategoryMetric[],
   opportunity: AffiliateOpportunityInput,
-  opportunityText: string,
   provider: string,
 ): {
-  platform: string | null;
-  basis: PlatformRecommendationBasis | null;
-  reasons: string[];
+  platforms: string[];
+  requirement: "required" | "allowed" | null;
   eligible: boolean;
 } {
   const creatorPlatforms = Array.from(new Set(list(preferences?.platforms).map(canonicalPlatform).filter(Boolean))) as string[];
@@ -189,37 +199,13 @@ function routePlatform(
   const nativeRequired = provider === "tiktok_shop" ? "tiktok" : null;
   const required = explicitRequired ?? nativeRequired;
   if (required) {
-    const eligible = !creatorPlatforms.length || creatorPlatforms.includes(required);
-    return eligible
-      ? { platform: required, basis: explicitRequired ? "brand_required" : "provider_native",
-        reasons: [explicitRequired ? `Brand requires ${required}` : `Native ${required} affiliate product`], eligible: true }
-      : { platform: null, basis: null, reasons: [`Requires ${required}, which is not in the creator's platforms`], eligible: false };
+    return { platforms: [required], requirement: "required", eligible: !creatorPlatforms.length || creatorPlatforms.includes(required) };
   }
-  const candidates = creatorPlatforms.length
-    ? (allowedPlatforms.length ? creatorPlatforms.filter((platform) => allowedPlatforms.includes(platform)) : creatorPlatforms)
-    : allowedPlatforms;
-  if (!candidates.length) {
-    return allowedPlatforms.length && creatorPlatforms.length
-      ? { platform: null, basis: null, reasons: ["No creator platform is allowed by this program"], eligible: false }
-      : { platform: null, basis: null, reasons: ["Platform evidence is not available"], eligible: true };
-  }
-  const performance = metrics.filter((metric) => {
-    const platform = canonicalPlatform(metric.platform);
-    return platform && candidates.includes(platform) && containsCategory(opportunityText, text(metric.category));
-  }).sort((left, right) => metricPlatformScore(right) - metricPlatformScore(left));
-  const performancePlatform = performance.length ? canonicalPlatform(performance[0].platform) : null;
-  if (performancePlatform) return {
-    platform: performancePlatform, basis: "creator_performance",
-    reasons: [`Strongest related creator performance is on ${performancePlatform}`], eligible: true,
+  if (allowedPlatforms.length) return {
+    platforms: allowedPlatforms, requirement: "allowed",
+    eligible: !creatorPlatforms.length || creatorPlatforms.some((platform) => allowedPlatforms.includes(platform)),
   };
-  if (creatorPlatforms.length) return {
-    platform: candidates[0], basis: "creator_preference",
-    reasons: [`Matches the creator's ${candidates[0]} preference`], eligible: true,
-  };
-  return {
-    platform: candidates[0], basis: "brand_allowed",
-    reasons: [`The program allows ${candidates[0]}`], eligible: true,
-  };
+  return { platforms: [], requirement: null, eligible: true };
 }
 
 export function matchAffiliateOpportunity(
@@ -235,7 +221,7 @@ export function matchAffiliateOpportunity(
       components: { content_fit: 0, audience_fit: 0, historical_performance: 0, economics: 0, platform_fit: 0, confidence: 0 },
       easeScore: 0, easeLabel: "competitive", easeReasons: ["Excluded by the creator"], relevantMetric: null,
       estimatedEarningsLow: null, estimatedEarningsHigh: null, earningsConfidence: null,
-      recommendedPlatform: null, platformBasis: null, platformReasons: [], platformEligible: false,
+      listingPlatforms: [], listingPlatformRequirement: null, platformEligible: false,
       creatorRelevant: false,
     };
   }
@@ -245,7 +231,7 @@ export function matchAffiliateOpportunity(
     opportunity.brand_name, opportunity.product_name, opportunity.product_category,
     opportunity.title, opportunity.description, ...(opportunity.tags ?? []),
   ].map(text).join(" ");
-  const platformRoute = routePlatform(preferences, metrics, opportunity, opportunityText, provider);
+  const platformEvidence = listingPlatformEvidence(preferences, opportunity, provider);
   const industryMatches = containsAny(opportunityText, preferences?.industries, true);
   const styleMatches = containsAny(opportunityText, preferences?.creator_styles);
   const formatMatches = containsAny(opportunityText, preferences?.content_formats);
@@ -282,8 +268,7 @@ export function matchAffiliateOpportunity(
   economics = clamp(economics, 0, 15);
 
   const platforms = list(preferences?.platforms).map(platformKey);
-  const platformFit = !platformRoute.eligible ? 0 : platformRoute.basis === "creator_performance" ? 10 :
-    platformRoute.platform ? 7 : 3;
+  const platformFit = !platformEvidence.eligible ? 0 : platformEvidence.platforms.length ? 7 : 3;
   const unitsSold = finite(opportunity.product_metrics?.units_sold) ?? 0;
   const confidence = clamp((opportunity.provider_verified ? 3 : 0) + (opportunity.sample_available ? 1 : 0) + (unitsSold > 0 ? 1 : 0), 0, 5);
   const components = {
@@ -342,8 +327,8 @@ export function matchAffiliateOpportunity(
     score, reasons: Array.from(new Set(reasons)).slice(0, 8), recommendedKit: base.recommendedKit, excluded: false,
     components, easeScore, easeLabel, easeReasons, relevantMetric,
     estimatedEarningsLow, estimatedEarningsHigh, earningsConfidence,
-    recommendedPlatform: platformRoute.platform, platformBasis: platformRoute.basis,
-    platformReasons: platformRoute.reasons, platformEligible: platformRoute.eligible,
+    listingPlatforms: platformEvidence.platforms, listingPlatformRequirement: platformEvidence.requirement,
+    platformEligible: platformEvidence.eligible,
     creatorRelevant,
   };
 }
