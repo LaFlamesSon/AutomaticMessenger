@@ -53,7 +53,7 @@ bookings; it does not claim or provide Google Calendar synchronization.
 | Function | Version | Purpose |
 |---|---:|---|
 | `agent-sweep` | 33 | Exact/batch Gmail triage plus opt-in, confirmation-required business-domain relationship suggestions for Opportunities |
-| `agent-api` | 17 | Extension API plus creator opportunity preferences, private category metrics, synonym- and boundary-aware affiliate product matching/ease/earnings estimates, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
+| `agent-api` | 19 | Extension API plus creator opportunity preferences, private category metrics, listing-backed affiliate channels, creator-local daily opportunity batching, product matching/ease/earnings estimates, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -229,8 +229,8 @@ double-booking guard; API idempotency and owner checks sit above it.
   labels appear only from listing/programme evidence; standard Awin product feeds
   without that evidence show no platform instruction. An atomic server-side daily
   surface operation releases at most ten new relevant, commission-bearing products
-  to each creator per configured local day. The named migration and updated API are source-verified
-  but not yet deployed; evidence is in
+  to each creator per configured local day. Both migrations and `agent-api` v19
+  are deployed and live-verified; evidence is in
   `docs/audits/caughtup-creator-platform-routing-20260807.md`.
 
 ## Repository layout

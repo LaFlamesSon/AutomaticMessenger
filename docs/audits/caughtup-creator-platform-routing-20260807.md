@@ -34,4 +34,16 @@ Full regression verification:
 
 ## Current boundary
 
-Migration `20260808045255_creator_platform_routing.sql` and `agent-api` v19 were deployed. A harmless call using a nonexistent user then exposed that the allocator referenced a timestamp column absent from `ia_opportunities`; no user rows changed. Named follow-up migration `20260808052904_fix_affiliate_daily_surface_order.sql` switches the order to `created_at` and is awaiting deployment and live re-verification. Extension source is version 0.4.7.
+Migration `20260808045255_creator_platform_routing.sql` and `agent-api` v19 were deployed. A harmless call using a nonexistent user then exposed that the allocator referenced a timestamp column absent from `ia_opportunities`; no user rows changed. Named follow-up migration `20260808052904_fix_affiliate_daily_surface_order.sql` switched the order to `created_at`.
+
+Live closeout evidence:
+
+- The follow-up migration is applied and the remote database reports no pending migrations.
+- `agent-api` version 19 is `ACTIVE`.
+- All seven new columns exist with their expected database types.
+- The allocator is `SECURITY INVOKER`; its ACL grants execution to `postgres` and `service_role`, not `anon` or `authenticated`.
+- Calling it with a nonexistent user succeeds and returns zero rows.
+- The live invariant query reports zero creator/day groups above ten surfaced opportunities.
+- Supabase security advisors reported no issue on the new function. Existing unrelated warnings remain for `pg_net`, `rls_auto_enable()`, and disabled leaked-password protection.
+
+Extension source is version 0.4.7 and must be reloaded as an unpacked extension to display the new cards.
