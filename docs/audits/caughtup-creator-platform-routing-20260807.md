@@ -34,4 +34,4 @@ Full regression verification:
 
 ## Current boundary
 
-Migration `20260808045255_creator_platform_routing.sql` has not been deployed. It now contains only listing-backed channel evidence, relevance/eligibility fields, daily surfacing timestamps, and a service-role-only atomic allocation function keyed to the creator's configured local date. Extension source is version 0.4.7 and requires an unpacked-extension reload after the backend is deployed.
+Migration `20260808045255_creator_platform_routing.sql` and `agent-api` v19 were deployed. A harmless call using a nonexistent user then exposed that the allocator referenced a timestamp column absent from `ia_opportunities`; no user rows changed. Named follow-up migration `20260808052904_fix_affiliate_daily_surface_order.sql` switches the order to `created_at` and is awaiting deployment and live re-verification. Extension source is version 0.4.7.

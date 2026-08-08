@@ -6,6 +6,7 @@ const api = fs.readFileSync(new URL("../functions/agent-api/index.ts", import.me
 const matcher = fs.readFileSync(new URL("../functions/_shared/affiliate.ts", import.meta.url), "utf8");
 const popup = fs.readFileSync(new URL("../../extension/popup.js", import.meta.url), "utf8");
 const migration = fs.readFileSync(new URL("../migrations/20260808045255_creator_platform_routing.sql", import.meta.url), "utf8");
+const orderingFix = fs.readFileSync(new URL("../migrations/20260808052904_fix_affiliate_daily_surface_order.sql", import.meta.url), "utf8");
 
 test("posting platforms come only from listing or provider evidence", () => {
   for (const field of ["allowed_platforms", "required_platform", "platform_eligible", "creator_relevant", "channel_evidence"]) {
@@ -34,6 +35,8 @@ test("database atomically surfaces at most ten new products per creator per loca
   assert.match(migration, /security invoker/);
   assert.match(migration, /revoke all on function .* from public, anon, authenticated/);
   assert.match(api, /p_user_id: userId, p_surface_date: localDateKey\(voiceProfile\?\.timezone\), p_daily_limit: 10/);
+  assert.match(orderingFix, /order by match_score desc, created_at desc, id/);
+  assert.doesNotMatch(orderingFix, /observed_at/);
 });
 
 test("extension shows listing-backed platforms only and caps the daily feed at ten", () => {
