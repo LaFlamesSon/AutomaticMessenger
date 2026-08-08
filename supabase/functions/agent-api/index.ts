@@ -17,7 +17,7 @@ import {
   OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
 } from "../_shared/opportunities.ts";
 import {
-  AFFILIATE_PROVIDERS, matchAffiliateOpportunity, type AffiliateOpportunityInput,
+  AFFILIATE_PROVIDERS, canonicalPlatform, matchAffiliateOpportunity, type AffiliateOpportunityInput,
   type CreatorCategoryMetric,
 } from "../_shared/affiliate.ts";
 import { fetchEbayProducts, normalizeEbayCampaignId } from "../_shared/ebay.ts";
@@ -122,6 +122,13 @@ function cleanList(value: unknown, maxItems: number, maxLength: number): string[
   }
 }
 
+function cleanPlatforms(value: unknown, name: string): string[] {
+  const raw = cleanList(value, 5, 40);
+  const platforms = raw.map(canonicalPlatform);
+  if (platforms.some((platform) => !platform)) throw new InputError(`${name} contains an unsupported platform`);
+  return Array.from(new Set(platforms as string[]));
+}
+
 function cleanEmail(value: unknown, required = false): string | null {
   if (value === null || value === undefined || value === "") {
     if (required) throw new InputError("contact_email is required");
@@ -177,10 +184,21 @@ function affiliateOpportunityInput(body: any, forceManual = false): AffiliateOpp
   if (collaborationModel && !["open", "targeted", "program"].includes(collaborationModel)) {
     throw new InputError("collaboration_model is unsupported");
   }
+  const legacyRequiredPlatform = body.requirements?.required_platform
+    ? canonicalPlatform(cleanString(body.requirements.required_platform, "required_platform", 40)) : null;
+  if (body.requirements?.required_platform && !legacyRequiredPlatform) throw new InputError("required_platform is unsupported");
+  const directRequiredPlatform = body.required_platform
+    ? canonicalPlatform(cleanString(body.required_platform, "required_platform", 40)) : null;
+  if (body.required_platform && !directRequiredPlatform) throw new InputError("required_platform is unsupported");
+  const requiredPlatform = directRequiredPlatform ?? legacyRequiredPlatform;
+  const allowedPlatforms = cleanPlatforms(body.allowed_platforms ?? [], "allowed_platforms");
+  if (requiredPlatform && allowedPlatforms.length && !allowedPlatforms.includes(requiredPlatform)) {
+    throw new InputError("required_platform must be included in allowed_platforms");
+  }
   const requirements = body.requirements && typeof body.requirements === "object" && !Array.isArray(body.requirements)
     ? {
       min_followers: cleanOptionalInteger(body.requirements.min_followers, "min_followers", 0, 10_000_000_000),
-      required_platform: body.requirements.required_platform ? cleanString(body.requirements.required_platform, "required_platform", 40).toLocaleLowerCase() : null,
+      required_platform: requiredPlatform,
       deliverables: cleanList(body.requirements.deliverables ?? [], 20, 160),
     } : {};
   const unitsSold = cleanOptionalInteger(body.product_metrics?.units_sold, "units_sold", 0, 10_000_000_000);
@@ -199,6 +217,7 @@ function affiliateOpportunityInput(body: any, forceManual = false): AffiliateOpp
     shipping_regions: cleanList(body.shipping_regions ?? [], 50, 100), requirements,
     product_metrics: unitsSold === null ? {} : { units_sold: unitsSold },
     product_url: cleanHttpsUrl(body.product_url, "product_url"), provider_verified: false,
+    allowed_platforms: allowedPlatforms, required_platform: requiredPlatform,
   };
 }
 
@@ -565,7 +584,12 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
         opportunity.relevant_metric_id !== ((result as any).relevantMetric?.id ?? null) ||
         Number(opportunity.estimated_earnings_low ?? -1) !== Number((result as any).estimatedEarningsLow ?? -1) ||
         Number(opportunity.estimated_earnings_high ?? -1) !== Number((result as any).estimatedEarningsHigh ?? -1) ||
-        opportunity.earnings_confidence !== (result as any).earningsConfidence
+        opportunity.earnings_confidence !== (result as any).earningsConfidence ||
+        opportunity.recommended_platform !== (result as any).recommendedPlatform ||
+        opportunity.platform_recommendation_basis !== (result as any).platformBasis ||
+        JSON.stringify(opportunity.platform_reasons ?? []) !== JSON.stringify((result as any).platformReasons) ||
+        opportunity.platform_eligible !== (result as any).platformEligible ||
+        opportunity.creator_relevant !== (result as any).creatorRelevant
       ));
     if (changed) {
       const updates: Record<string, unknown> = {
@@ -579,6 +603,11 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
         estimated_earnings_low: (result as any).estimatedEarningsLow,
         estimated_earnings_high: (result as any).estimatedEarningsHigh,
         earnings_confidence: (result as any).earningsConfidence,
+        recommended_platform: (result as any).recommendedPlatform,
+        platform_recommendation_basis: (result as any).platformBasis,
+        platform_reasons: (result as any).platformReasons,
+        platform_eligible: (result as any).platformEligible,
+        creator_relevant: (result as any).creatorRelevant,
       });
       const { data: updated, error } = await supabase.from("ia_opportunities").update(updates)
         .eq("id", opportunity.id).eq("user_id", userId).select("*").single();
@@ -1045,6 +1074,11 @@ Deno.serve(async (req: Request) => {
           recommended_media_kit_id: result.recommendedKit?.id ?? null,
           estimated_earnings_low: result.estimatedEarningsLow, estimated_earnings_high: result.estimatedEarningsHigh,
           earnings_confidence: result.earningsConfidence,
+          recommended_platform: result.recommendedPlatform,
+          platform_recommendation_basis: result.platformBasis,
+          platform_reasons: result.platformReasons,
+          platform_eligible: result.platformEligible,
+          creator_relevant: result.creatorRelevant,
         } });
       }
 
@@ -1065,6 +1099,8 @@ Deno.serve(async (req: Request) => {
           collaboration_model: input.collaboration_model, approval_required: input.approval_required,
           sample_available: input.sample_available, shipping_regions: input.shipping_regions,
           requirements: input.requirements, product_metrics: input.product_metrics, updated_at: now,
+          allowed_platforms: input.allowed_platforms, required_platform: input.required_platform,
+          channel_evidence: input.required_platform || input.allowed_platforms?.length ? { entered_by_creator: true } : {},
         };
         const { data, error } = await supabase.from("ia_opportunities").insert(row).select("*").single();
         if (error) throw new Error(error.message);

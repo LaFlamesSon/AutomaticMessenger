@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.4.3** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.4.6** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 
@@ -224,6 +224,13 @@ double-booking guard; API idempotency and owner checks sit above it.
   controls are collapsed under `Tune your matches`; non-affiliate brand records
   no longer appear in the primary feed. The 400x600 visual pass, 81 source/API
   contracts, and the 50-case matching benchmark remained green.
+- Extension source 0.4.6 adds creator-specific platform routing for affiliate
+  products. Provider/brand requirements remain evidence-backed and are labeled
+  `Required on`; otherwise related category performance selects a distinct
+  `Recommended for` platform. Products requiring a platform outside the creator's
+  profile are hidden. The named migration and updated API are source-verified but
+  not yet deployed; evidence is in
+  `docs/audits/caughtup-creator-platform-routing-20260807.md`.
 
 ## Repository layout
 

@@ -199,6 +199,7 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .metric-row p { margin: 2px 0 0; }
 .product-brand { color: var(--soft); font-size: 12px; }
 .product-economics { color: var(--good) !important; font-weight: 750; }
+.product-platform { color: var(--ink) !important; font-weight: 700; }
 .product-estimate { color: var(--ink) !important; font-weight: 650; }
 .fit-reason { padding: 7px 8px; border-radius: 8px; color: var(--soft) !important; background: #f1eee8; font-size: 12px; }
 .opportunity-link { display: inline-flex; align-items: center; text-decoration: none; }

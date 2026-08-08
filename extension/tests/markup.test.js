@@ -109,6 +109,11 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(script, /Number\(opportunity\.match_score \|\| 0\) >= 30/);
   assert.match(script, /\.slice\(0, 20\)/);
   assert.match(script, /opportunity\.commission_rate !== null \|\| opportunity\.commission_amount !== null/);
+  assert.match(script, /opportunity\.platform_eligible !== false/);
+  assert.match(script, /opportunity\.creator_relevant === true/);
+  assert.match(script, /Required on/);
+  assert.match(script, /Recommended for/);
+  assert.match(script, /platformLabel\(opportunity\.recommended_platform\)/);
   assert.doesNotMatch(script, /Why it fits:|Est\. .*per related post/);
   assert.match(script, /affiliate product.*selected for you/);
   assert.doesNotMatch(script, /Object\.entries\(opportunity\.score_components/);
@@ -287,7 +292,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.5");
+  assert.equal(manifest.version, "0.4.6");
 });
 
 test("focus and reduced-motion styles are present", () => {

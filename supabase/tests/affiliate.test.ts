@@ -49,3 +49,71 @@ Deno.test("excluded affiliate brands never receive a recommendation", () => {
   assertEquals(result.excluded, true);
   assertEquals(result.recommendedKit, null);
 });
+
+Deno.test("the same Awin product routes to each creator's strongest eligible platform", () => {
+  const product = {
+    brand_name: "MoveWell", brand_domain: "movewell.example", product_name: "Resistance bands",
+    product_category: "fitness", affiliate_provider: "awin", allowed_platforms: ["tiktok", "instagram"],
+    commission_rate: 12, provider_verified: true,
+  };
+  const tiktokCreator = matchAffiliateOpportunity(
+    { industries: ["fitness"], platforms: ["TikTok", "Instagram"] }, kits,
+    [
+      { platform: "tiktok", category: "fitness", sample_size: 20, median_views: 20_000, engagement_rate: 0.06 },
+      { platform: "instagram", category: "fitness", sample_size: 20, median_views: 2_000, engagement_rate: 0.02 },
+    ], product,
+  );
+  const instagramCreator = matchAffiliateOpportunity(
+    { industries: ["fitness"], platforms: ["TikTok", "Instagram"] }, kits,
+    [
+      { platform: "tiktok", category: "fitness", sample_size: 20, median_views: 1_000, engagement_rate: 0.01 },
+      { platform: "instagram", category: "fitness", sample_size: 20, median_views: 30_000, engagement_rate: 0.07 },
+    ], product,
+  );
+  assertEquals(tiktokCreator.recommendedPlatform, "tiktok");
+  assertEquals(tiktokCreator.platformBasis, "creator_performance");
+  assertEquals(instagramCreator.recommendedPlatform, "instagram");
+});
+
+Deno.test("brand-required and provider-native platforms are authoritative", () => {
+  const required = matchAffiliateOpportunity(
+    { industries: ["beauty"], platforms: ["Instagram", "TikTok"] }, kits,
+    [{ platform: "instagram", category: "beauty", median_views: 100_000 }],
+    { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
+      affiliate_provider: "awin", required_platform: "tiktok", allowed_platforms: ["tiktok"], commission_rate: 10 },
+  );
+  assertEquals(required.recommendedPlatform, "tiktok");
+  assertEquals(required.platformBasis, "brand_required");
+  const native = matchAffiliateOpportunity(
+    { industries: ["beauty"], platforms: ["TikTok"] }, kits, [],
+    { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
+      affiliate_provider: "tiktok_shop", commission_rate: 10 },
+  );
+  assertEquals(native.recommendedPlatform, "tiktok");
+  assertEquals(native.platformBasis, "provider_native");
+});
+
+Deno.test("a creator is not recommended an unavailable required platform", () => {
+  const result = matchAffiliateOpportunity(
+    { industries: ["beauty"], platforms: ["Instagram"] }, kits, [],
+    { brand_name: "Glow", brand_domain: "glow.example", product_name: "Serum", product_category: "beauty",
+      affiliate_provider: "awin", required_platform: "tiktok", allowed_platforms: ["tiktok"], commission_rate: 10 },
+  );
+  assertEquals(result.platformEligible, false);
+  assertEquals(result.recommendedPlatform, null);
+});
+
+Deno.test("high commission alone does not make an unrelated product relevant", () => {
+  const unrelated = matchAffiliateOpportunity(
+    { industries: ["fitness"], platforms: ["TikTok"] }, kits, [],
+    { brand_name: "LedgerPro", brand_domain: "ledger.example", product_name: "Business tax software",
+      product_category: "finance", affiliate_provider: "awin", allowed_platforms: ["tiktok"], commission_rate: 50 },
+  );
+  assertEquals(unrelated.creatorRelevant, false);
+  const desired = matchAffiliateOpportunity(
+    { industries: ["fitness"], platforms: ["TikTok"], desired_brands: ["LedgerPro"] }, kits, [],
+    { brand_name: "LedgerPro", brand_domain: "ledger.example", product_name: "Business tax software",
+      product_category: "finance", affiliate_provider: "awin", allowed_platforms: ["tiktok"], commission_rate: 50 },
+  );
+  assertEquals(desired.creatorRelevant, true);
+});

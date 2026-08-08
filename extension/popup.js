@@ -153,6 +153,11 @@ function opportunityKitLabel(kitId) {
   return currentOpportunityState?.kits?.find((kit) => kit.id === kitId)?.label || null;
 }
 
+function platformLabel(value) {
+  const labels = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube", facebook: "Facebook", pinterest: "Pinterest" };
+  return labels[String(value || "").toLowerCase()] || String(value || "");
+}
+
 function renderOpportunities() {
   const state = currentOpportunityState;
   if (!state) return;
@@ -219,6 +224,7 @@ function renderOpportunities() {
   list.replaceChildren();
   const affiliateProducts = (state.opportunities || []).filter((opportunity) =>
     opportunity.status !== "dismissed" && opportunity.opportunity_kind === "affiliate_product" &&
+    opportunity.platform_eligible !== false && opportunity.creator_relevant === true &&
     Number(opportunity.match_score || 0) >= 30 &&
     (opportunity.commission_rate !== null || opportunity.commission_amount !== null)).slice(0, 20);
   affiliateProducts.forEach((opportunity) => {
@@ -229,6 +235,10 @@ function renderOpportunities() {
     if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
     if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
     card.append(create("p", "product-economics", economics.join(" · ")));
+    if (opportunity.recommended_platform) {
+      const authoritative = ["brand_required", "provider_native"].includes(opportunity.platform_recommendation_basis);
+      card.append(create("p", "product-platform", `${authoritative ? "Required on" : "Recommended for"} ${platformLabel(opportunity.recommended_platform)}`));
+    }
     const actions = create("div", "card-actions");
     if (opportunity.product_url) {
       const apply = create("a", "primary compact opportunity-link", "View opportunity");
