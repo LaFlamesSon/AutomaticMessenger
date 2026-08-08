@@ -17,10 +17,11 @@ import {
   OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
 } from "../_shared/opportunities.ts";
 import {
-  AFFILIATE_PROVIDERS, canonicalPlatform, matchAffiliateOpportunity, type AffiliateOpportunityInput,
-  type CreatorCategoryMetric,
+  AFFILIATE_PROVIDERS, canonicalPlatform, deriveInboxAffiliateAffinity, matchAffiliateOpportunity,
+  preferencesWithInboxAffinity, type AffiliateOpportunityInput, type CreatorCategoryMetric,
 } from "../_shared/affiliate.ts";
 import { fetchEbayProducts, normalizeEbayCampaignId } from "../_shared/ebay.ts";
+import { fetchTikTokProducts, normalizeGrantedScopes, TIKTOK_CREATOR_SCOPE, tokenExpiryIso } from "../_shared/tiktok.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -477,9 +478,99 @@ function ebayConfigured(config: Record<string, string>): boolean {
   return Boolean(config["ia_ebay_client_id"] && config["ia_ebay_client_secret"]);
 }
 
+function tiktokConfigured(config: Record<string, string>): boolean {
+  return Boolean(config["ia_tiktok_app_key"] && config["ia_tiktok_app_secret"]);
+}
+
 function providerErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "provider_error";
-  return /^ebay_[a-z0-9_]+$/.test(message) ? message.slice(0, 100) : "ebay_provider_error";
+  if (/^ebay_[a-z0-9_]+$/.test(message)) return message.slice(0, 100);
+  if (/^tiktok_[a-z0-9_]+$/.test(message)) return message.slice(0, 100);
+  return "provider_error";
+}
+
+async function tiktokCredential(supabase: any, userId: string, config: Record<string, string>): Promise<any | null> {
+  const { data, error } = await supabase.rpc("ia_get_tiktok_credential", { p_user_id: userId }).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data || data.status !== "connected") return null;
+  const credential = data.credential ?? {};
+  if (!normalizeGrantedScopes(data.scopes).includes(TIKTOK_CREATOR_SCOPE)) throw new Error("tiktok_creator_scope_missing");
+  if (new Date(String(credential.access_expires_at ?? 0)).getTime() > Date.now() + 5 * 60_000) return data;
+  const refreshUrl = new URL("https://auth.tiktok-shops.com/api/v2/token/refresh");
+  refreshUrl.search = new URLSearchParams({
+    app_key: config["ia_tiktok_app_key"], app_secret: config["ia_tiktok_app_secret"],
+    refresh_token: String(credential.refresh_token ?? ""), grant_type: "refresh_token",
+  }).toString();
+  const response = await fetch(refreshUrl);
+  const payload = await response.json().catch(() => ({}));
+  const tokens = payload?.data ?? {};
+  const scopes = normalizeGrantedScopes(tokens.granted_scopes);
+  if (!response.ok || Number(payload?.code ?? -1) !== 0 || Number(tokens.user_type) !== 1 ||
+      String(tokens.open_id ?? "") !== String(data.external_account_ref) || !scopes.includes(TIKTOK_CREATOR_SCOPE) ||
+      !tokens.access_token || !tokens.refresh_token) throw new Error("tiktok_reauthorization_required");
+  const nextCredential = {
+    access_token: String(tokens.access_token), refresh_token: String(tokens.refresh_token),
+    access_expires_at: tokenExpiryIso(tokens.access_token_expire_in),
+    refresh_expires_at: tokenExpiryIso(tokens.refresh_token_expire_in),
+  };
+  const { error: saveError } = await supabase.rpc("ia_upsert_tiktok_connection", {
+    p_user_id: userId, p_external_account_ref: String(tokens.open_id), p_credential: nextCredential,
+    p_scopes: scopes, p_metadata: data.metadata ?? {},
+  });
+  if (saveError) throw new Error(saveError.message);
+  return { ...data, scopes, credential: nextCredential };
+}
+
+async function syncTikTokCatalog(supabase: any, userId: string, preferences: any, config: Record<string, string>): Promise<void> {
+  if (!preferences?.enabled || !tiktokConfigured(config)) return;
+  let connection: any = null;
+  try {
+    connection = await tiktokCredential(supabase, userId, config);
+    if (!connection) return;
+    const result = await fetchTikTokProducts({
+      appKey: config["ia_tiktok_app_key"], appSecret: config["ia_tiktok_app_secret"],
+      accessToken: connection.credential.access_token, preferences,
+    });
+    const refs = result.products.map((product) => product.source_ref);
+    const { data: existing, error: existingError } = refs.length
+      ? await supabase.from("ia_opportunities").select("id,source_ref,status").eq("user_id", userId).in("source_ref", refs)
+      : { data: [], error: null };
+    if (existingError) throw new Error(existingError.message);
+    const existingByRef = new Map<string, any>((existing ?? []).map((row: any) => [row.source_ref, row]));
+    const now = new Date().toISOString();
+    const rows = result.products.map((product) => ({
+      user_id: userId, ...product, brand_domain: "tiktok.com", source_url: product.product_url,
+      opportunity_kind: "affiliate_product", provider_opportunity_id: String(product.source_ref).replace(/^tiktok:/, ""),
+      requirements: {}, sample_available: null, tags: [product.product_category].filter(Boolean),
+      status: existingByRef.get(product.source_ref)?.status ?? "new", last_verified_at: now, updated_at: now,
+      channel_evidence: { provider_native: true, provider: "tiktok_shop" },
+    }));
+    if (rows.length) {
+      const { data: saved, error: saveError } = await supabase.from("ia_opportunities").upsert(rows, {
+        onConflict: "user_id,source_type,source_ref",
+      }).select("id,source_ref");
+      if (saveError) throw new Error(saveError.message);
+      const discovered = (saved ?? []).filter((row: any) => !existingByRef.has(row.source_ref));
+      if (discovered.length) await supabase.from("ia_opportunity_events").insert(discovered.map((row: any) => ({
+        user_id: userId, opportunity_id: row.id, event_type: "discovered",
+        metadata: { source_type: "marketplace", affiliate_provider: "tiktok_shop" },
+      })));
+    }
+    const { error: updateError } = await supabase.from("ia_affiliate_connections").update({
+      last_synced_at: now, error_code: null, updated_at: now,
+    }).eq("id", connection.connection_id).eq("user_id", userId);
+    if (updateError) throw new Error(updateError.message);
+  } catch (error) {
+    if (!connection?.connection_id) {
+      const { data } = await supabase.from("ia_affiliate_connections").select("id").eq("user_id", userId)
+        .eq("provider", "tiktok_shop").limit(1).maybeSingle();
+      connection = data ? { connection_id: data.id } : null;
+    }
+    if (connection?.connection_id) await supabase.from("ia_affiliate_connections").update({
+      status: providerErrorCode(error).includes("reauthorization") || providerErrorCode(error).includes("scope") ? "reauthorize" : "connected",
+      error_code: providerErrorCode(error), updated_at: new Date().toISOString(),
+    }).eq("id", connection.connection_id).eq("user_id", userId);
+  }
 }
 
 async function syncEbayCatalog(
@@ -553,6 +644,23 @@ async function syncEbayCatalog(
   }
 }
 
+const INBOX_AFFINITY_WINDOW_DAYS = 90;
+
+async function inboxAffiliateAffinity(supabase: any, userId: string): Promise<any> {
+  const { data: accounts, error: accountError } = await supabase.from("ia_gmail_accounts")
+    .select("id").eq("user_id", userId);
+  if (accountError) throw new Error(accountError.message);
+  const accountIds = (accounts ?? []).map((account: any) => account.id);
+  if (!accountIds.length) return deriveInboxAffiliateAffinity([]);
+  const since = new Date(Date.now() - INBOX_AFFINITY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const { data: emails, error: emailError } = await supabase.from("ia_processed_emails")
+    .select("sender,subject,summary,category,processed_at")
+    .in("gmail_account_id", accountIds).gte("processed_at", since)
+    .order("processed_at", { ascending: false }).limit(500);
+  if (emailError) throw new Error(emailError.message);
+  return deriveInboxAffiliateAffinity(emails ?? []);
+}
+
 async function opportunityState(supabase: any, userId: string): Promise<any> {
   const preferences = await ensureOpportunityPreferences(supabase, userId);
   const [
@@ -562,6 +670,7 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
     { data: categoryMetrics, error: metricError },
     { data: affiliateConnections, error: connectionError },
     { data: voiceProfile, error: voiceError },
+    inboxAffinity,
   ] = await Promise.all([
     supabase.from("ia_brand_relationships").select("*").eq("user_id", userId).order("updated_at", { ascending: false }).limit(200),
     supabase.from("ia_opportunities").select("*").eq("user_id", userId).order("match_score", { ascending: false }).limit(200),
@@ -571,6 +680,7 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
     supabase.from("ia_affiliate_connections").select("id,provider,external_account_ref,status,scopes,last_synced_at,error_code")
       .eq("user_id", userId).order("updated_at", { ascending: false }).limit(50),
     supabase.from("ia_voice_profiles").select("timezone").eq("user_id", userId).maybeSingle(),
+    inboxAffiliateAffinity(supabase, userId),
   ]);
   if (relationshipError || opportunityError || kitError || metricError || connectionError || voiceError) {
     throw new Error((relationshipError ?? opportunityError ?? kitError ?? metricError ?? connectionError ?? voiceError).message);
@@ -578,12 +688,13 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
   const relationshipByDomain = new Map((relationships ?? []).map((row: any) => [row.brand_domain, row]));
   const publicKits = (kits ?? []).map(({ storage_path: _path, ...kit }: any) => kit);
   const matchKits = (kits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for }));
+  const affiliatePreferences = preferencesWithInboxAffinity(preferences, inboxAffinity);
   const nextOpportunities = [];
   for (const opportunity of opportunities ?? []) {
     const relationship = relationshipByDomain.get(opportunity.brand_domain) as any;
     const isAffiliate = opportunity.opportunity_kind === "affiliate_product";
     const result = isAffiliate
-      ? matchAffiliateOpportunity(preferences, matchKits, categoryMetrics ?? [], {
+      ? matchAffiliateOpportunity(affiliatePreferences, matchKits, categoryMetrics ?? [], {
         ...opportunity, relationship_status: relationship?.relationship_status,
         provider_verified: opportunity.evidence?.provider_verified === true,
       })
@@ -633,12 +744,16 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
     surfacedAffiliateIds = new Set((surfaced ?? []).map((id: unknown) => String(id)));
   }
   const visibleOpportunities = nextOpportunities.filter((opportunity: any) =>
-    opportunity.opportunity_kind !== "affiliate_product" || surfacedAffiliateIds.has(String(opportunity.id)));
+    opportunity.opportunity_kind !== "affiliate_product" || (surfacedAffiliateIds.has(String(opportunity.id)) &&
+      (opportunity.affiliate_provider !== "tiktok_shop" || (affiliateConnections ?? []).some((connection: any) =>
+        connection.provider === "tiktok_shop" && connection.status === "connected"))));
   return {
     preferences, relationships: relationships ?? [], opportunities: visibleOpportunities, kits: publicKits,
     category_metrics: categoryMetrics ?? [], affiliate_connections: affiliateConnections ?? [],
+    inbox_affinity: { ...inboxAffinity, windowDays: INBOX_AFFINITY_WINDOW_DAYS },
     sourcing: {
       active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls", "manual_affiliate_products",
+        ...((affiliateConnections ?? []).some((connection: any) => connection.provider === "tiktok_shop" && connection.status === "connected") ? ["tiktok_shop_catalog"] : []),
         ...((affiliateConnections ?? []).some((connection: any) => connection.provider === "ebay" && connection.status === "connected") ? ["ebay_catalog"] : [])],
       available_affiliate_providers: AFFILIATE_PROVIDERS.filter((provider) => provider !== "manual"),
       broad_web_discovery: false,
@@ -1000,6 +1115,31 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      case "tiktok_connect_start": {
+        if (!tiktokConfigured(CFG)) return json({ error: "TikTok Shop is not configured", code: "tiktok_not_configured" }, 503);
+        const redirectUri = cleanString(body.redirect_url, "redirect_url", 500);
+        if (!allowedChromeRedirect(redirectUri, CFG["ia_allowed_extension_ids"] ?? "")) {
+          return json({ error: "redirect_url must be a Chrome identity callback" }, 400);
+        }
+        await ensureOpportunityPreferences(supabase, user.id);
+        const state = crypto.randomUUID() + crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+        const { error } = await supabase.from("ia_tiktok_oauth_states").insert({
+          user_id: user.id, state_hash: await sha256(state), redirect_uri: redirectUri, expires_at: expiresAt,
+        });
+        if (error) throw new Error(error.message);
+        const consent = new URL("https://shop.tiktok.com/alliance/creator/auth");
+        consent.searchParams.set("app_key", CFG["ia_tiktok_app_key"]);
+        consent.searchParams.set("state", state);
+        return json({ authorization_url: consent.toString(), expires_at: expiresAt });
+      }
+
+      case "tiktok_disconnect": {
+        const { error } = await supabase.rpc("ia_disconnect_tiktok_connection", { p_user_id: user.id });
+        if (error) throw new Error(error.message);
+        return json({ ok: true, ...(await opportunityState(supabase, user.id)) });
+      }
+
       case "affiliate_ebay_connection_set": {
         const campaignId = normalizeEbayCampaignId(body.campaign_id);
         if (!campaignId) throw new InputError("campaign_id must be the 10-digit eBay Partner Network campaign ID");
@@ -1136,7 +1276,10 @@ Deno.serve(async (req: Request) => {
 
       case "opportunity_refresh": {
         const preferences = await ensureOpportunityPreferences(supabase, user.id);
-        await syncEbayCatalog(supabase, user.id, preferences, CFG);
+        const affinity = await inboxAffiliateAffinity(supabase, user.id);
+        const affiliatePreferences = preferencesWithInboxAffinity(preferences, affinity);
+        await syncTikTokCatalog(supabase, user.id, affiliatePreferences, CFG);
+        await syncEbayCatalog(supabase, user.id, affiliatePreferences, CFG);
         return json(await opportunityState(supabase, user.id));
       }
 

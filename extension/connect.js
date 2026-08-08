@@ -5,6 +5,7 @@ const SUPABASE_AUTH = "https://xkrpxvswdkreglmefuot.supabase.co/auth/v1/authoriz
 const GMAIL_RECONNECT_STORAGE = "caughtup_gmail_reconnect_required";
 const Core = globalThis.CaughtUpCore;
 const $ = (id) => document.getElementById(id);
+const flow = new URL(location.href).searchParams.get("flow") || "google";
 
 let session = null;
 let running = false;
@@ -98,7 +99,7 @@ async function launchAuthFlow(url) {
     chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
       const runtimeError = chrome.runtime.lastError;
       if (runtimeError || !redirectUrl) {
-        reject(new Core.ApiError("Google connection was canceled or could not finish.", 0, "oauth_canceled"));
+        reject(new Core.ApiError(`${flow === "tiktok" ? "TikTok" : "Google"} connection was canceled or could not finish.`, 0, "oauth_canceled"));
         return;
       }
       resolve(redirectUrl);
@@ -136,7 +137,7 @@ async function signInWithGoogle() {
   return { providerTokens, redirectUrl };
 }
 
-async function connect() {
+async function connectGoogle() {
   if (running) return;
   running = true;
   $("retry").classList.add("hidden");
@@ -217,6 +218,49 @@ async function connect() {
   } finally {
     running = false;
   }
+}
+
+async function connectTikTok() {
+  if (running) return;
+  running = true;
+  $("retry").classList.add("hidden");
+  $("close").classList.add("hidden");
+  $("title").textContent = "Connecting TikTok Shop";
+  $("message").textContent = "Keep this page open while TikTok verifies your creator account.";
+  setProgress(12, "Checking your CaughtUp sessionâ€¦");
+  try {
+    const stored = await chrome.storage.local.get("caughtup_session");
+    session = stored.caughtup_session || null;
+    if (!session) throw new Core.ApiError("Open CaughtUp and connect Google first.", 401, "unauthorized");
+    await api("profile_get");
+    setProgress(35, "Opening TikTok creator authorizationâ€¦");
+    const redirectUrl = chrome.identity.getRedirectURL("caughtup_tiktok");
+    const start = await api("tiktok_connect_start", { redirect_url: redirectUrl });
+    if (!start.authorization_url) throw new Core.ApiError("TikTok connection is not available yet.", 0, "missing_tiktok_url");
+    const callback = Core.parseOAuthCallback(await launchAuthFlow(start.authorization_url));
+    if (callback.error || callback.caughtup_tiktok !== "connected") {
+      throw new Core.ApiError("TikTok creator authorization did not finish.", 0, callback.error || "tiktok_oauth_error");
+    }
+    setProgress(82, "Finding relevant TikTok Shop productsâ€¦");
+    const result = await api("opportunity_refresh");
+    const connection = (result.affiliate_connections || []).find((item) => item.provider === "tiktok_shop");
+    if (connection?.status !== "connected") throw new Core.ApiError("TikTok access still needs attention. Try connecting again.", 0, "tiktok_not_connected");
+    setProgress(100, "TikTok Shop is connected.", "success");
+    $("statusMark").textContent = "âœ“";
+    $("title").textContent = "TikTok is connected";
+    $("message").textContent = "Close this page and open Opportunities to see product matches.";
+    $("close").classList.remove("hidden");
+  } catch (error) {
+    setProgress(100, Core.safeErrorMessage(error), "error");
+    $("statusMark").textContent = "!";
+    $("title").textContent = "TikTok connection needs attention";
+    $("message").textContent = "No email was sent. You can safely retry the connection.";
+    $("retry").classList.remove("hidden");
+  } finally { running = false; }
+}
+
+function connect() {
+  return flow === "tiktok" ? connectTikTok() : connectGoogle();
 }
 
 $("retry").addEventListener("click", connect);

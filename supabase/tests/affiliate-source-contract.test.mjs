@@ -23,3 +23,14 @@ test("affiliate API exposes private metrics, sources, preview, and product creat
   assert.match(api, /provider_verified: false/);
   assert.doesNotMatch(api, /auto_sent: true[\s\S]*affiliate/);
 });
+
+test("affiliate relevance remains email-derived while TikTok login only unlocks its catalog", () => {
+  assert.match(api, /inboxAffiliateAffinity/);
+  assert.match(api, /\.select\("sender,subject,summary,category,processed_at"\)/);
+  assert.match(api, /INBOX_AFFINITY_WINDOW_DAYS = 90/);
+  assert.match(api, /\.limit\(500\)/);
+  assert.match(api, /preferencesWithInboxAffinity/);
+  assert.match(api, /case "tiktok_connect_start"/);
+  assert.match(api, /syncTikTokCatalog/);
+  assert.match(api, /preferencesWithInboxAffinity\(preferences, affinity\)/);
+});

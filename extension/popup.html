@@ -60,10 +60,15 @@
       <div class="panel-heading">
         <div>
           <h1>Opportunities</h1>
-          <p class="meta">Products and commissions matched to your brand.</p>
+          <p class="meta">Products and commissions matched from the brand emails you receive.</p>
         </div>
         <button id="refreshOpportunities" type="button" class="ghost compact">Refresh</button>
       </div>
+      <div class="opportunity-subtabs" role="tablist" aria-label="Opportunity views">
+        <button id="opportunityProductsTab" type="button" role="tab" aria-selected="true" aria-controls="opportunityProductsView" class="active">Products</button>
+        <button id="opportunityConnectionsTab" type="button" role="tab" aria-selected="false" aria-controls="opportunityConnectionsView">Connections</button>
+      </div>
+      <section id="opportunityProductsView" role="tabpanel" aria-labelledby="opportunityProductsTab">
       <div id="opportunityStatus" class="state-card opportunity-state" role="status" aria-live="polite">Finding products for you&hellip;</div>
       <div id="opportunityList" class="opportunity-list"></div>
 
@@ -71,7 +76,7 @@
         <summary>Tune your matches</summary>
         <p class="hint">Update what you create and add performance data when you want more accurate product rankings.</p>
       <form id="opportunityProfileForm" class="form-card opportunity-form">
-        <label class="toggle-row" for="opportunityEnabled"><span><strong>Show affiliate matches</strong><small>Uses your private creator profile and performance.</small></span><input id="opportunityEnabled" type="checkbox"></label>
+        <label class="toggle-row" for="opportunityEnabled"><span><strong>Show affiliate matches</strong><small>Uses recent processed-email patterns plus any preferences you add here.</small></span><input id="opportunityEnabled" type="checkbox"></label>
         <label for="opportunityStyles">Creator styles</label>
         <input id="opportunityStyles" type="text" maxlength="500" placeholder="fitness, beauty, lifestyle">
         <label for="opportunityIndustries">Industries</label>
@@ -167,6 +172,19 @@
         <div id="relationshipList"></div>
       </section>
       </details>
+      </section>
+      <section id="opportunityConnectionsView" class="hidden" role="tabpanel" aria-labelledby="opportunityConnectionsTab">
+        <article id="tiktokConnection" class="connection-card">
+          <div>
+            <h2>TikTok Shop</h2>
+            <p id="tiktokConnectionStatus" class="meta">Connect your creator account to discover open-collaboration products.</p>
+          </div>
+          <div class="button-row">
+            <button id="connectTikTok" type="button" class="primary compact">Connect TikTok</button>
+            <button id="disconnectTikTok" type="button" class="ghost compact hidden">Disconnect</button>
+          </div>
+        </article>
+      </section>
     </section>
 
     <section id="kits" class="panel hidden" role="tabpanel" aria-labelledby="tab-kits" tabindex="0">

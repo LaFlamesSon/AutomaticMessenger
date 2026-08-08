@@ -66,6 +66,20 @@ export interface AffiliateFeedCandidate {
   surfaced_on?: string | null;
 }
 
+export interface InboxAffinityEmail {
+  sender?: string | null;
+  subject?: string | null;
+  summary?: string | null;
+  category?: string | null;
+  processed_at?: string | null;
+}
+
+export interface InboxAffiliateAffinity {
+  industries: string[];
+  relevantEmailCount: number;
+  analyzedEmailCount: number;
+}
+
 export function selectAffiliateDailyBatch(
   opportunities: AffiliateFeedCandidate[], today: string, dailyLimit = 10,
 ): { visibleIds: string[]; surfaceIds: string[] } {
@@ -103,6 +117,14 @@ const CATEGORY_TERMS: Record<string, string[]> = {
   pets: ["pet", "pets", "dog", "dogs", "cat", "cats", "pet care", "animal supplies", "dog treats"],
 };
 
+const INBOX_CATEGORY_WEIGHT: Record<string, number> = {
+  urgent: 3,
+  action_needed: 3,
+  fyi: 1,
+  low_priority: 0,
+  spam_or_poor_fit: 0,
+};
+
 function normalizedPhrase(value: unknown): string {
   return text(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
     .replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
@@ -122,6 +144,48 @@ function categoryTerms(value: string): string[] {
 
 function containsCategory(haystack: string, value: string): boolean {
   return categoryTerms(value).some((term) => containsPhrase(haystack, term));
+}
+
+export function deriveInboxAffiliateAffinity(emails: InboxAffinityEmail[]): InboxAffiliateAffinity {
+  const scores = new Map<string, number>();
+  const messageCounts = new Map<string, number>();
+  const matchedMessages: string[][] = [];
+  for (const email of emails.slice(0, 500)) {
+    const weight = INBOX_CATEGORY_WEIGHT[text(email.category)] ?? 0;
+    if (weight <= 0) continue;
+    const emailText = normalizedPhrase([email.sender, email.subject, email.summary].filter(Boolean).join(" "));
+    const matches = Object.entries(CATEGORY_TERMS)
+      .filter(([category, aliases]) => [category, ...aliases].some((term) => containsPhrase(emailText, term)))
+      .map(([category]) => category);
+    if (!matches.length) continue;
+    matchedMessages.push(matches);
+    for (const category of new Set(matches)) {
+      scores.set(category, (scores.get(category) ?? 0) + weight);
+      messageCounts.set(category, (messageCounts.get(category) ?? 0) + 1);
+    }
+  }
+  const industries = [...scores.entries()]
+    .filter(([category, score]) => score >= 3 || (messageCounts.get(category) ?? 0) >= 2)
+    .sort(([leftCategory, leftScore], [rightCategory, rightScore]) =>
+      rightScore - leftScore || leftCategory.localeCompare(rightCategory))
+    .slice(0, 8)
+    .map(([category]) => category);
+  const selectedIndustries = new Set(industries);
+  const relevantEmailCount = matchedMessages.filter((matches) =>
+    matches.some((category) => selectedIndustries.has(category))).length;
+  return { industries, relevantEmailCount, analyzedEmailCount: Math.min(500, emails.length) };
+}
+
+export function preferencesWithInboxAffinity(
+  preferences: Record<string, unknown> | null,
+  affinity: InboxAffiliateAffinity,
+): Record<string, unknown> {
+  const existingIndustries = list(preferences?.industries);
+  return {
+    ...(preferences ?? {}),
+    industries: Array.from(new Set([...existingIndustries, ...affinity.industries])),
+    inbox_industries: affinity.industries,
+  };
 }
 
 function containsAny(haystack: string, values: unknown, semanticCategories = false): string[] {
@@ -233,6 +297,7 @@ export function matchAffiliateOpportunity(
   ].map(text).join(" ");
   const platformEvidence = listingPlatformEvidence(preferences, opportunity, provider);
   const industryMatches = containsAny(opportunityText, preferences?.industries, true);
+  const inboxIndustryMatches = containsAny(opportunityText, preferences?.inbox_industries, true);
   const styleMatches = containsAny(opportunityText, preferences?.creator_styles);
   const formatMatches = containsAny(opportunityText, preferences?.content_formats);
   const desiredMatches = containsAny(opportunityText, preferences?.desired_brands);
@@ -277,7 +342,9 @@ export function matchAffiliateOpportunity(
   };
   const score = clamp(Object.values(components).reduce((sum, value) => sum + value, 0));
   const reasons = [...base.reasons];
-  if (industryMatches.length) reasons.unshift(`Content fit: ${industryMatches.slice(0, 2).join(", ")}`);
+  if (industryMatches.length) reasons.unshift(inboxIndustryMatches.length
+    ? `Recent brand-email fit: ${inboxIndustryMatches.slice(0, 2).join(", ")}`
+    : `Content fit: ${industryMatches.slice(0, 2).join(", ")}`);
   if (regionMatches.length) reasons.push(`Ships to creator region: ${regionMatches[0]}`);
   if (relevantMetric) reasons.push(`Uses ${relevantMetric.category} performance on ${relevantMetric.platform}`);
   if (commissionPerSale !== null) reasons.push(`About ${opportunity.currency ?? "USD"} ${roundMoney(commissionPerSale).toFixed(2)} commission per sale`);

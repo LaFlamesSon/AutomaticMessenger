@@ -178,6 +178,13 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .opportunity-kicker { color: var(--accent); font-size: 10.5px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
 .opportunity-card h2 { margin-top: 4px; }
 .opportunity-card > p { margin-top: 5px; color: var(--soft); }
+.opportunity-subtabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 10px; padding: 3px; border-radius: 10px; background: #ece9e3; }
+.opportunity-subtabs button { min-height: 32px; border: 0; border-radius: 8px; color: var(--soft); background: transparent; }
+.opportunity-subtabs button.active { color: var(--ink); background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+.connection-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.connection-card h2 { margin: 0 0 4px; font-size: 15px; }
+.connection-card .button-row { flex: 0 0 auto; }
+.product-description { color: var(--soft); font-size: 12.5px; }
 .opportunity-steps { margin: 11px 0 0; padding-left: 20px; }
 .opportunity-steps li + li { margin-top: 5px; }
 .opportunity-state { margin-top: 10px; }
@@ -199,6 +206,7 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .metric-row p { margin: 2px 0 0; }
 .product-brand { color: var(--soft); font-size: 12px; }
 .product-economics { color: var(--good) !important; font-weight: 750; }
+.product-fit { color: var(--muted) !important; font-size: 12px; }
 .product-platform { color: var(--ink) !important; font-weight: 700; }
 .product-estimate { color: var(--ink) !important; font-weight: 650; }
 .fit-reason { padding: 7px 8px; border-radius: 8px; color: var(--soft) !important; background: #f1eee8; font-size: 12px; }

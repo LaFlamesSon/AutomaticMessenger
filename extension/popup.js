@@ -38,6 +38,16 @@ let opportunitiesLoading = false;
 let currentOpportunityState = null;
 let pendingOpportunityDraft = null;
 
+function setOpportunityView(name) {
+  const products = name !== "connections";
+  $("opportunityProductsView").classList.toggle("hidden", !products);
+  $("opportunityConnectionsView").classList.toggle("hidden", products);
+  $("opportunityProductsTab").classList.toggle("active", products);
+  $("opportunityConnectionsTab").classList.toggle("active", !products);
+  $("opportunityProductsTab").setAttribute("aria-selected", String(products));
+  $("opportunityConnectionsTab").setAttribute("aria-selected", String(!products));
+}
+
 function create(tag, className, text) {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -162,6 +172,15 @@ function renderOpportunities() {
   const state = currentOpportunityState;
   if (!state) return;
   const preferences = state.preferences || {};
+  const tiktok = (state.affiliate_connections || []).find((connection) => connection.provider === "tiktok_shop");
+  const tiktokConnected = tiktok?.status === "connected";
+  $("connectTikTok").classList.toggle("hidden", tiktokConnected);
+  $("disconnectTikTok").classList.toggle("hidden", !tiktokConnected);
+  if (tiktokConnected) {
+    setStatus("tiktokConnectionStatus", tiktok.error_code ? "Connected, but the latest product refresh needs attention." : "Connected. Refresh Products to find the latest matches.", tiktok.error_code ? "error" : "success");
+  } else if (tiktok?.status === "reauthorize") {
+    setStatus("tiktokConnectionStatus", "TikTok access expired. Connect again to resume product matches.", "error");
+  } else setStatus("tiktokConnectionStatus", "Connect your creator account to discover open-collaboration products.");
   $("opportunityEnabled").checked = preferences.enabled === true;
   $("opportunityStyles").value = (preferences.creator_styles || []).join(", ");
   $("opportunityIndustries").value = (preferences.industries || []).join(", ");
@@ -230,11 +249,11 @@ function renderOpportunities() {
   affiliateProducts.forEach((opportunity) => {
     const card = create("article", "opportunity-card opportunity-result");
     card.append(create("h2", "", opportunity.product_name || opportunity.title || "Affiliate product"));
-    card.append(create("p", "product-brand", opportunity.brand_name));
     const economics = [];
     if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
     if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
     card.append(create("p", "product-economics", economics.join(" · ")));
+    card.append(create("p", "product-description", opportunity.description || "View the product listing for full details."));
     const listingPlatforms = opportunity.required_platform ? [opportunity.required_platform] : (opportunity.allowed_platforms || []);
     if (listingPlatforms.length) {
       const label = listingPlatforms.map(platformLabel).join(", ");
@@ -251,8 +270,8 @@ function renderOpportunities() {
     card.append(actions);
     list.append(card);
   });
-  if (!preferences.enabled) setStatus("opportunityStatus", "CaughtUp is preparing affiliate matches for your brand.");
-  else if (!affiliateProducts.length) setStatus("opportunityStatus", "No commission-verified products match your brand yet. Check back soon.");
+  if (!preferences.enabled) setStatus("opportunityStatus", "Turn on affiliate matches to use your recent brand-email patterns.");
+  else if (!affiliateProducts.length) setStatus("opportunityStatus", "No commission-verified products match your recent brand emails yet. Check back soon.");
   else setStatus("opportunityStatus", `${affiliateProducts.length} new affiliate opportunit${affiliateProducts.length === 1 ? "y" : "ies"} selected for you today.`, "success");
 }
 
@@ -372,6 +391,21 @@ $("refreshOpportunities").addEventListener("click", async () => {
   setBusy(button, true, "Refreshing…");
   await loadOpportunities(true, true);
   setBusy(button, false);
+});
+
+$("opportunityProductsTab").addEventListener("click", () => setOpportunityView("products"));
+$("opportunityConnectionsTab").addEventListener("click", () => setOpportunityView("connections"));
+$("connectTikTok").addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("connect.html?flow=tiktok") });
+});
+$("disconnectTikTok").addEventListener("click", async () => {
+  const button = $("disconnectTikTok");
+  setBusy(button, true, "Disconnectingâ€¦");
+  try {
+    currentOpportunityState = await api("tiktok_disconnect");
+    renderOpportunities();
+  } catch (error) { setStatus("tiktokConnectionStatus", Core.safeErrorMessage(error), "error"); }
+  finally { setBusy(button, false); }
 });
 
 $("cancelOpportunitySend").addEventListener("click", () => {

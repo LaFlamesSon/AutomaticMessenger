@@ -98,7 +98,14 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(html, /id="opportunityFormats"/);
   assert.match(html, /id="opportunityRegions"/);
   assert.match(html, /id="opportunityDraftDialog"/);
-  assert.match(html, /Products and commissions matched to your brand/);
+  assert.match(html, /Products and commissions matched from the brand emails you receive/);
+  for (const id of ["opportunityProductsTab", "opportunityConnectionsTab", "opportunityProductsView", "opportunityConnectionsView", "tiktokConnection", "connectTikTok", "disconnectTikTok"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /setOpportunityView/);
+  assert.match(script, /chrome\.tabs\.create\(\{ url: chrome\.runtime\.getURL\("connect\.html\?flow=tiktok"\) \}\)/);
+  assert.match(script, /opportunity\.description/);
+  assert.doesNotMatch(script, /card\.append\(create\("p", "product-brand"/);
   assert.match(script, /if \(name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading\) loadOpportunities\(\)/);
   assert.match(script, /api\("opportunity_draft_get"/);
   assert.match(script, /api\("opportunity_send"/);
@@ -187,6 +194,7 @@ test("client targets the audited API actions", () => {
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
+    "tiktok_connect_start", "tiktok_disconnect",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -243,6 +251,9 @@ test("Google onboarding runs in a durable extension page with a safe Gmail fallb
   assert.match(connectScript, /api\("gmail_connect_provider", providerTokens\)/);
   assert.match(connectScript, /"gmail_connect_start"/);
   assert.match(connectScript, /gmailAuth\.caughtup_gmail/);
+  assert.match(connectScript, /searchParams\.get\("flow"\)/);
+  assert.match(connectScript, /"tiktok_connect_start"/);
+  assert.match(connectScript, /caughtup_tiktok/);
   const persistedSessions = [...connectScript.matchAll(/await saveSession\(\{([\s\S]*?)\}\);/g)].map((match) => match[1]);
   assert.ok(persistedSessions.length >= 2);
   persistedSessions.forEach((persisted) => assert.doesNotMatch(persisted, /provider_token|provider_refresh_token/));
@@ -293,7 +304,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.7");
+  assert.equal(manifest.version, "0.4.9");
 });
 
 test("focus and reduced-motion styles are present", () => {
