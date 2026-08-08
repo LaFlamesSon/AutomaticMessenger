@@ -90,6 +90,10 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(html, /id="affiliateMetricForm"/);
   assert.match(html, /id="affiliateOpportunityForm"/);
   assert.match(html, /id="opportunityControls"/);
+  assert.match(html, /id="ebayConnectionForm"/);
+  assert.match(html, /id="ebayCampaignId"[^>]+pattern="\[0-9\]\{10\}"/);
+  assert.match(script, /api\("affiliate_ebay_connection_set"/);
+  assert.match(script, /api\("affiliate_ebay_disconnect"/);
   assert.match(html, /Tune your matches/);
   assert.ok(html.indexOf('id="opportunityList"') < html.indexOf('id="opportunityControls"'), "product results must come before configuration");
   assert.match(html, /Add an affiliate product manually/);
@@ -107,6 +111,8 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(script, /opportunity\.ease_label/);
   assert.match(script, /state\.affiliate_connections/);
   assert.match(script, /opportunity\.opportunity_kind === "affiliate_product"/);
+  assert.match(script, /Number\(opportunity\.match_score \|\| 0\) >= 30/);
+  assert.match(script, /\.slice\(0, 20\)/);
   assert.match(script, /affiliate product.*selected for you/);
   assert.doesNotMatch(script, /Object\.entries\(opportunity\.score_components/);
   assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
@@ -178,6 +184,7 @@ test("client targets the audited API actions", () => {
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
+    "affiliate_ebay_connection_set", "affiliate_ebay_disconnect",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -284,7 +291,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.3");
+  assert.equal(manifest.version, "0.4.4");
 });
 
 test("focus and reduced-motion styles are present", () => {

@@ -20,6 +20,7 @@ import {
   AFFILIATE_PROVIDERS, matchAffiliateOpportunity, type AffiliateOpportunityInput,
   type CreatorCategoryMetric,
 } from "../_shared/affiliate.ts";
+import { fetchEbayProducts, normalizeEbayCampaignId } from "../_shared/ebay.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -440,6 +441,86 @@ async function ensureOpportunityPreferences(supabase: any, userId: string): Prom
   return current;
 }
 
+function ebayConfigured(config: Record<string, string>): boolean {
+  return Boolean(config["ia_ebay_client_id"] && config["ia_ebay_client_secret"]);
+}
+
+function providerErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "provider_error";
+  return /^ebay_[a-z0-9_]+$/.test(message) ? message.slice(0, 100) : "ebay_provider_error";
+}
+
+async function syncEbayCatalog(
+  supabase: any,
+  userId: string,
+  preferences: any,
+  config: Record<string, string>,
+): Promise<void> {
+  if (!preferences?.enabled || !ebayConfigured(config)) return;
+  const { data: connections, error: connectionError } = await supabase.from("ia_affiliate_connections")
+    .select("id,external_account_ref").eq("user_id", userId).eq("provider", "ebay")
+    .eq("status", "connected").order("updated_at", { ascending: false }).limit(1);
+  if (connectionError) throw new Error(connectionError.message);
+  const connection = connections?.[0];
+  if (!connection) return;
+  try {
+    const products = await fetchEbayProducts({
+      clientId: config["ia_ebay_client_id"],
+      clientSecret: config["ia_ebay_client_secret"],
+      campaignId: connection.external_account_ref,
+      preferences,
+      affiliateReferenceId: `caughtup-${(await sha256(userId)).slice(0, 24)}`,
+    });
+    const refs = products.map((product) => `ebay:${product.provider_opportunity_id}`);
+    const { data: existing, error: existingError } = refs.length
+      ? await supabase.from("ia_opportunities").select("id,source_ref,status")
+        .eq("user_id", userId).eq("source_type", "marketplace").in("source_ref", refs)
+      : { data: [], error: null };
+    if (existingError) throw new Error(existingError.message);
+    const existingByRef = new Map<string, any>((existing ?? []).map((row: any) => [row.source_ref, row]));
+    const now = new Date().toISOString();
+    const rows = products.map((product) => {
+      const sourceRef = `ebay:${product.provider_opportunity_id}`;
+      return {
+        user_id: userId, brand_name: product.brand_name, brand_domain: product.brand_domain,
+        title: product.product_name.slice(0, 200), description: product.description, tags: product.tags,
+        source_type: "marketplace", source_ref: sourceRef, source_url: product.product_url,
+        evidence: product.evidence, opportunity_kind: "affiliate_product", affiliate_provider: "ebay",
+        provider_opportunity_id: product.provider_opportunity_id, product_name: product.product_name,
+        product_category: product.product_category, product_url: product.product_url,
+        price_amount: product.price_amount, currency: product.currency,
+        commission_rate: null, commission_amount: null, collaboration_model: "program",
+        approval_required: false, sample_available: null, shipping_regions: product.shipping_regions,
+        requirements: {}, product_metrics: product.product_metrics,
+        status: existingByRef.get(sourceRef)?.status ?? "new", last_verified_at: now, updated_at: now,
+      };
+    });
+    if (rows.length) {
+      const { data: saved, error: saveError } = await supabase.from("ia_opportunities").upsert(rows, {
+        onConflict: "user_id,source_type,source_ref",
+      }).select("id,source_ref");
+      if (saveError) throw new Error(saveError.message);
+      const discovered = (saved ?? []).filter((row: any) => !existingByRef.has(row.source_ref));
+      if (discovered.length) {
+        const { error: eventError } = await supabase.from("ia_opportunity_events").insert(discovered.map((row: any) => ({
+          user_id: userId, opportunity_id: row.id, event_type: "discovered",
+          metadata: { source_type: "marketplace", affiliate_provider: "ebay" },
+        })));
+        if (eventError) throw new Error(eventError.message);
+      }
+    }
+    const { error: updateError } = await supabase.from("ia_affiliate_connections").update({
+      last_synced_at: now, error_code: null, updated_at: now,
+    }).eq("id", connection.id).eq("user_id", userId);
+    if (updateError) throw new Error(updateError.message);
+  } catch (error) {
+    const { error: updateError } = await supabase.from("ia_affiliate_connections").update({
+      error_code: providerErrorCode(error), updated_at: new Date().toISOString(),
+    }).eq("id", connection.id).eq("user_id", userId);
+    if (updateError) throw new Error(updateError.message);
+  }
+}
+
 async function opportunityState(supabase: any, userId: string): Promise<any> {
   const preferences = await ensureOpportunityPreferences(supabase, userId);
   const [
@@ -509,7 +590,8 @@ async function opportunityState(supabase: any, userId: string): Promise<any> {
     preferences, relationships: relationships ?? [], opportunities: nextOpportunities, kits: publicKits,
     category_metrics: categoryMetrics ?? [], affiliate_connections: affiliateConnections ?? [],
     sourcing: {
-      active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls", "manual_affiliate_products"],
+      active: ["gmail_relationship_signals", "creator_added_brands", "creator_added_https_urls", "manual_affiliate_products",
+        ...((affiliateConnections ?? []).some((connection: any) => connection.provider === "ebay" && connection.status === "connected") ? ["ebay_catalog"] : [])],
       available_affiliate_providers: AFFILIATE_PROVIDERS.filter((provider) => provider !== "manual"),
       broad_web_discovery: false,
     },
@@ -869,6 +951,38 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      case "affiliate_ebay_connection_set": {
+        const campaignId = normalizeEbayCampaignId(body.campaign_id);
+        if (!campaignId) throw new InputError("campaign_id must be the 10-digit eBay Partner Network campaign ID");
+        const now = new Date().toISOString();
+        const status = ebayConfigured(CFG) ? "connected" : "pending";
+        const { error: disableError } = await supabase.from("ia_affiliate_connections").update({
+          status: "disabled", error_code: null, updated_at: now,
+        }).eq("user_id", user.id).eq("provider", "ebay");
+        if (disableError) throw new Error(disableError.message);
+        const { data, error } = await supabase.from("ia_affiliate_connections").upsert({
+          user_id: user.id, provider: "ebay", external_account_ref: campaignId,
+          status, credential_mode: "app_shared", credential_secret_id: null,
+          scopes: ["buy.browse"], metadata: { marketplace_id: "EBAY_US" },
+          error_code: status === "connected" ? null : "ebay_not_configured", updated_at: now,
+        }, { onConflict: "user_id,provider,external_account_ref" })
+          .select("id,provider,external_account_ref,status,scopes,last_synced_at,error_code").single();
+        if (error) throw new Error(error.message);
+        if (status === "connected") {
+          const preferences = await ensureOpportunityPreferences(supabase, user.id);
+          await syncEbayCatalog(supabase, user.id, preferences, CFG);
+        }
+        return json({ ok: true, connection: data, ...(await opportunityState(supabase, user.id)) });
+      }
+
+      case "affiliate_ebay_disconnect": {
+        const { error } = await supabase.from("ia_affiliate_connections").update({
+          status: "disabled", error_code: null, updated_at: new Date().toISOString(),
+        }).eq("user_id", user.id).eq("provider", "ebay");
+        if (error) throw new Error(error.message);
+        return json({ ok: true, ...(await opportunityState(supabase, user.id)) });
+      }
+
       case "affiliate_metrics_get": {
         const { data, error } = await supabase.from("ia_creator_category_metrics").select("*")
           .eq("user_id", user.id).order("observed_at", { ascending: false }).limit(200);
@@ -961,8 +1075,13 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, opportunity: data, ...(await opportunityState(supabase, user.id)) });
       }
 
-      case "opportunities_get":
+      case "opportunities_get": {
+        return json(await opportunityState(supabase, user.id));
+      }
+
       case "opportunity_refresh": {
+        const preferences = await ensureOpportunityPreferences(supabase, user.id);
+        await syncEbayCatalog(supabase, user.id, preferences, CFG);
         return json(await opportunityState(supabase, user.id));
       }
 

@@ -202,6 +202,8 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .product-estimate { color: var(--ink) !important; font-weight: 650; }
 .fit-reason { padding: 7px 8px; border-radius: 8px; color: var(--soft) !important; background: #f1eee8; font-size: 12px; }
 .opportunity-link { display: inline-flex; align-items: center; text-decoration: none; }
+.opportunity-source { margin: 14px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.opportunity-source .section-title { margin-top: 0; }
 .relationship-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .relationship-row:last-child { border-bottom: 0; }
 .relationship-row .card-actions { display: flex; gap: 7px; margin-top: 7px; }
