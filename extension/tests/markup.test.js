@@ -200,6 +200,7 @@ test("client targets the audited API actions", () => {
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
     "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss", "negotiation_test_draft_create",
+    "normal_test_emails_create",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -219,6 +220,14 @@ test("negotiations share the Today timeline with tier colors, details, replies, 
   assert.match(css, /\.negotiation-card\.deal-bad/);
   assert.match(css, /\.negotiation-card\.deal-mid/);
   assert.match(css, /\.negotiation-card\.deal-good/);
+});
+
+test("ordinary inbox harness is explicit, bounded, and reports that replies remain unsent", () => {
+  assert.match(html, /id="seedNormalTestEmails"/);
+  assert.match(html, /Add 10 normal test emails/);
+  assert.match(script, /api\("normal_test_emails_create"/);
+  assert.match(script, /Reply drafts will stay unsent/);
+  assert.match(script, /No replies were sent/);
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -327,7 +336,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.3");
+  assert.equal(manifest.version, "0.5.4");
 });
 
 test("focus and reduced-motion styles are present", () => {

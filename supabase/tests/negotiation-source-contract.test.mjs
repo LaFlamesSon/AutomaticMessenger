@@ -6,6 +6,7 @@ const sweep = readFileSync(new URL("../functions/agent-sweep/index.ts", import.m
 const api = readFileSync(new URL("../functions/agent-api/index.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/20260809210839_creator_negotiation_memory.sql", import.meta.url), "utf8");
 const timelineMigration = readFileSync(new URL("../migrations/20260809214727_negotiation_timeline_controls.sql", import.meta.url), "utf8");
+const testFixtures = readFileSync(new URL("../functions/_shared/test-fixtures.ts", import.meta.url), "utf8");
 
 test("negotiations deterministically force Review and persist by Gmail thread", () => {
   assert.match(sweep, /extractCommercialTerms\(subject, emailBody\)/);
@@ -15,6 +16,8 @@ test("negotiations deterministically force Review and persist by Gmail thread", 
   assert.match(sweep, /proposed_reply: triage\.draft && !draftSafetyViolations\(triage\.draft\)\.length/);
   assert.match(sweep, /dismissed_at: null/);
   assert.match(sweep, /proposed_reply: finalDraft && decision !== "none" && !finalSafety\.length \? finalDraft : null/);
+  assert.match(sweep, /commercialTerms\.detected && creatorPreviouslyReplied/);
+  assert.match(sweep, /hasEarlierOwnerSent\(msg, thread\.messages \?\? \[\]\)/);
 });
 
 test("negotiation storage is owner scoped and not directly exposed", () => {
@@ -50,6 +53,18 @@ test("test negotiations can create one recoverable self-addressed Gmail draft wi
   assert.match(api, /negotiation_id: negotiation\.id/);
   const action = api.match(/case "negotiation_test_draft_create": \{([\s\S]*?)\n      case "sweep"/)?.[1] ?? "";
   assert.match(action, /users\/me\/drafts"/);
+  assert.doesNotMatch(action, /drafts\/send|messages\/send/);
+});
+
+test("ordinary first-contact fixtures enter only the owned inbox and never become negotiations", () => {
+  assert.match(api, /case "normal_test_emails_create"/);
+  assert.equal((testFixtures.match(/key: "[a-z-]+", brand:/g) ?? []).length, 10);
+  const action = api.match(/case "normal_test_emails_create": \{([\s\S]*?)\n      case "sweep"/)?.[1] ?? "";
+  assert.match(action, /labelIds: \["INBOX", "UNREAD"\]/);
+  assert.match(action, /to: \[account\.gmail_address\]/);
+  assert.match(action, /negotiation_id: null/);
+  assert.match(action, /auto_sent: false/);
+  assert.match(action, /is_test: true/);
   assert.doesNotMatch(action, /drafts\/send|messages\/send/);
 });
 

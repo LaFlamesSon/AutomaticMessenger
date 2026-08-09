@@ -1171,6 +1171,22 @@ $("sweepBtn").addEventListener("click", async () => {
   }
 });
 
+$("seedNormalTestEmails").addEventListener("click", async () => {
+  if (!confirm("Add 10 clearly marked test emails to your connected Gmail inbox? Reply drafts will stay unsent and addressed only to your own account.")) return;
+  const button = $("seedNormalTestEmails");
+  setBusy(button, true, "Adding tests…");
+  setStatus("normalTestEmailStatus", "Adding ordinary first-contact emails and unsent reply drafts…");
+  try {
+    const result = await api("normal_test_emails_create", {}, { timeout: 120000 });
+    await loadDigest({ quiet: true });
+    setStatus("normalTestEmailStatus", `${result.count || 10} normal test emails are ready. No replies were sent.`, "success");
+  } catch (error) {
+    setStatus("normalTestEmailStatus", Core.safeErrorMessage(error), "error");
+  } finally {
+    setBusy(button, false);
+  }
+});
+
 function addMessage(kind, text) {
   $("messages").classList.remove("hidden");
   const message = create("div", `msg ${kind}`, text);

@@ -25,7 +25,7 @@ import {
   parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
 } from "../functions/_shared/mime.ts";
 import { allowedChromeRedirect } from "../functions/_shared/oauth.ts";
-import { hasLaterOwnerAction, isOwnerAction } from "../functions/_shared/gmail.ts";
+import { hasEarlierOwnerSent, hasLaterOwnerAction, isOwnerAction } from "../functions/_shared/gmail.ts";
 
 test("sweep eligibility includes unread and owner-read mail but excludes later owner handling", () => {
   const unread = { id: "incoming-1", internalDate: "1000", labelIds: ["INBOX", "UNREAD"] };
@@ -43,6 +43,10 @@ test("sweep eligibility includes unread and owner-read mail but excludes later o
 
   const inboundFollowUp = { id: "incoming-3", internalDate: "2000", labelIds: ["INBOX"] };
   assert.equal(hasLaterOwnerAction(inboundFollowUp, [ownerRead, laterOwnerReply, inboundFollowUp]), false);
+  assert.equal(hasEarlierOwnerSent(ownerRead, [ownerRead]), false);
+  assert.equal(hasEarlierOwnerSent(ownerRead, [earlierOwnerReply, ownerRead]), true);
+  assert.equal(hasEarlierOwnerSent(inboundFollowUp, [ownerRead, laterOwnerDraft, inboundFollowUp]), false);
+  assert.equal(hasEarlierOwnerSent(inboundFollowUp, [ownerRead, laterOwnerReply, inboundFollowUp]), true);
   assert.equal(isOwnerAction({ id: "self", labelIds: ["INBOX", "SENT"] }), true);
   assert.equal(isOwnerAction(ownerRead), false);
 });

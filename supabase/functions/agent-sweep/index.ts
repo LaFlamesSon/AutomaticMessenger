@@ -26,7 +26,7 @@ import {
   type VerifiedOpenSlot,
 } from "../_shared/policy.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
-import { hasLaterOwnerAction, isOwnerAction } from "../_shared/gmail.ts";
+import { hasEarlierOwnerSent, hasLaterOwnerAction, isOwnerAction } from "../_shared/gmail.ts";
 import { senderBusinessDomain } from "../_shared/opportunities.ts";
 import {
   evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage,
@@ -565,6 +565,7 @@ Deno.serve(async (req: Request) => {
           const senderAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).toLowerCase();
           const senderDomain = senderAddr.split("@")[1] ?? "";
           const commercialTerms = extractCommercialTerms(subject, emailBody);
+          const creatorPreviouslyReplied = hasEarlierOwnerSent(msg, thread.messages ?? []);
           const matchedRules = (senderRules ?? []).filter((rule: any) =>
             rule.match_type === "email"
               ? rule.match_value.toLowerCase() === senderAddr
@@ -593,7 +594,8 @@ Deno.serve(async (req: Request) => {
             .eq("gmail_account_id", account.id).eq("thread_id", msg.threadId).maybeSingle();
           if (existingNegotiationError) throw new Error("negotiation memory unavailable");
           const activeNegotiation = existingNegotiation && !["agreed", "declined", "closed"].includes(existingNegotiation.stage);
-          const negotiationRequired = triage.category !== "spam_or_poor_fit" && (commercialTerms.detected || Boolean(activeNegotiation));
+          const negotiationRequired = triage.category !== "spam_or_poor_fit" &&
+            ((commercialTerms.detected && creatorPreviouslyReplied) || Boolean(activeNegotiation));
           if (negotiationRequired) {
             triage = {
               ...triage,
