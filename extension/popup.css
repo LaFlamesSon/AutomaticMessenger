@@ -157,7 +157,8 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .badge.proposed { color: var(--focus); background: #e7f0ff; }
 .card-status { width: 100%; color: var(--soft); font-size: 11.5px; }
 .card-status.error { color: var(--bad); }
-.sendbtn { min-height: 28px; padding: 3px 10px; border: 0; border-radius: 99px; color: var(--cream); background: var(--ink); font-size: 12px; }
+.sendbtn { min-height: 24px; padding: 2px 8px; border: 0; border-radius: 99px; color: var(--cream); background: var(--ink); font-size: 11px; line-height: 1.2; }
+.cardfoot .compact { min-height: 24px; padding: 2px 8px; font-size: 11px; line-height: 1.2; }
 .draft-editor { width: 100%; min-height: 170px; resize: vertical; font: inherit; }
 #previewKit { width: 100%; margin: 6px 0 10px; }
 
@@ -174,8 +175,6 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .badge.deal-mid { color: #704f00; background: #f7df94; }
 .badge.deal-good { color: #fff; background: var(--good); }
 .badge.test { color: #704323; background: #fff0cf; }
-.test-harness-actions { display: flex; align-items: center; gap: 8px; margin: -2px 0 12px; flex-wrap: wrap; }
-.test-harness-actions .status-text { margin: 0; flex: 1 1 180px; }
 .negotiation-context, .reply-details { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); }
 .negotiation-context summary, .reply-details summary { cursor: pointer; color: var(--focus); font-size: 12px; font-weight: 800; }
 .reply-preview { margin-top: 7px; padding: 9px; border-radius: 8px; color: var(--ink); background: rgba(255,255,255,.75); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }

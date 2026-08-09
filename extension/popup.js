@@ -711,6 +711,48 @@ async function dismissNegotiation(deal, card, button) {
   }
 }
 
+function markCardReplySent(emailId, card) {
+  const footer = card.querySelector(".cardfoot");
+  footer.querySelectorAll(".badge, .sendbtn").forEach((node) => node.remove());
+  footer.prepend(create("span", "badge sent", "Reply sent"));
+  const status = footer.querySelector(".card-status");
+  status.textContent = "Sent manually. CaughtUp can learn from edits after the next sweep.";
+  status.classList.remove("error");
+  return forgetManualSendKey(emailId);
+}
+
+async function sendDraftFromCard(email, card, button) {
+  const status = card.querySelector(".card-status");
+  status.textContent = "";
+  status.classList.remove("error");
+  try {
+    setBusy(button, true, "Checking…");
+    const previewResult = await api("draft_get", { id: email.id });
+    const draft = previewResult.draft || previewResult;
+    if (!draft?.preview_version || !Array.isArray(draft.to) || !draft.to.length) {
+      throw new Core.ApiError("The current Gmail draft could not be verified.", 422, "preview_incomplete");
+    }
+    if (!confirm(`Send the current Gmail draft to ${draft.to.join(", ")}?`)) return;
+    const idempotencyKey = await getManualSendKey(email.id);
+    setBusy(button, true, "Sending…");
+    const result = await api("send_draft", {
+      id: email.id,
+      idempotency_key: idempotencyKey,
+      preview_version: draft.preview_version,
+    }, { timeout: 25000 });
+    if (result.ok !== true) throw new Core.ApiError("Send is not confirmed yet.", 409, result.code || "send_in_progress");
+    await markCardReplySent(email.id, card);
+  } catch (error) {
+    if (error.code === "draft_changed") await forgetManualSendKey(email.id);
+    status.textContent = error.code === "draft_changed"
+      ? "The Gmail draft changed. Tap Send again to verify the latest version."
+      : `${Core.safeErrorMessage(error)}${["send_in_progress", "reconcile_required"].includes(error.code) ? " Do not send it elsewhere; tap Send again to check." : ""}`;
+    status.classList.add("error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
 async function createNegotiationTestDraft(deal, card, button) {
   setBusy(button, true, "Creating draft…");
   const status = card.querySelector(".card-status");
@@ -756,12 +798,16 @@ function renderNegotiationCard(deal) {
 
   const footer = create("div", "cardfoot");
   if (deal.draft_email?.gmail_draft_id) {
-    const review = create("button", "sendbtn", "Review, edit & send");
+    const review = create("button", "sendbtn", "Review");
     review.type = "button";
     review.addEventListener("click", () => openDraftPreview(deal.draft_email, card, review));
     footer.appendChild(review);
+    const send = create("button", "sendbtn", "Send");
+    send.type = "button";
+    send.addEventListener("click", () => sendDraftFromCard(deal.draft_email, card, send));
+    footer.appendChild(send);
   } else if (deal.is_test) {
-    const createDraft = create("button", "sendbtn", "Create editable test draft");
+    const createDraft = create("button", "sendbtn", "Create draft");
     createDraft.type = "button";
     createDraft.title = "Creates one unsent Gmail draft addressed to your own connected account.";
     createDraft.addEventListener("click", () => createNegotiationTestDraft(deal, card, createDraft));
@@ -839,18 +885,20 @@ function renderEmailCard(email) {
   const delivery = Core.deliveryState(email);
   if (delivery === "sent") forgetManualSendKey(email.id);
   if (delivery !== "none") footer.appendChild(create("span", `badge ${delivery}`, delivery === "sent" ? "Reply sent" : delivery === "failed" ? "Send failed" : "Draft ready"));
-  if (email.draft_text && delivery === "none") footer.appendChild(create("span", "badge proposed", "Proposed reply"));
   if (delivery === "draft" && email.gmail_draft_id) {
-    const button = create("button", "sendbtn", "Review & send");
+    const button = create("button", "sendbtn", "Review");
     button.type = "button";
     button.addEventListener("click", () => openDraftPreview(email, card, button));
     footer.appendChild(button);
+    const send = create("button", "sendbtn", "Send");
+    send.type = "button";
+    send.addEventListener("click", () => sendDraftFromCard(email, card, send));
+    footer.appendChild(send);
   }
   if (email.media_kit_label) footer.appendChild(create("span", "tag", `Kit: ${email.media_kit_label}`));
   if (email.is_test) footer.appendChild(create("span", "badge test", "Test"));
   footer.appendChild(status);
   card.append(sender, subject, summary);
-  appendReplyDetails(card, email.draft_text, "See proposed reply");
   card.appendChild(footer);
   return card;
 }
@@ -998,7 +1046,7 @@ $("saveDraftChanges").addEventListener("click", async () => {
     if (["draft_changed", "draft_update_reconcile"].includes(error.code)) {
       const cardStatus = pendingSendCard?.querySelector(".card-status");
       if (cardStatus) {
-        cardStatus.textContent = "The Gmail draft changed. Reopen Review, edit & send to load the latest version.";
+        cardStatus.textContent = "The Gmail draft changed. Reopen Review to load the latest version.";
         cardStatus.classList.add("error");
       }
       pendingDraft = null;
@@ -1034,11 +1082,7 @@ $("confirmSend").addEventListener("click", async () => {
     if (result.ok !== true) {
       throw new Core.ApiError("Send is not confirmed yet.", 409, result.code || "send_in_progress");
     }
-    const footer = pendingSendCard.querySelector(".cardfoot");
-    footer.querySelectorAll(".badge, .sendbtn").forEach((node) => node.remove());
-    footer.prepend(create("span", "badge sent", "Reply sent"));
-    footer.querySelector(".card-status").textContent = "Sent manually. CaughtUp can learn from edits after the next sweep.";
-    await forgetManualSendKey(pendingDraft.id);
+    await markCardReplySent(pendingDraft.id, pendingSendCard);
     $("sendDialog").close();
     pendingDraft = null;
     pendingSendCard = null;
@@ -1047,7 +1091,7 @@ $("confirmSend").addEventListener("click", async () => {
       const draftId = pendingDraft.id;
       await forgetManualSendKey(draftId);
       const cardStatus = pendingSendCard.querySelector(".card-status");
-      cardStatus.textContent = "Draft changed in Gmail. Open Review & send to preview the latest version.";
+      cardStatus.textContent = "Draft changed in Gmail. Open Review to preview the latest version.";
       cardStatus.classList.add("error");
       pendingDraft = null;
       pendingSendCard = null;
@@ -1171,22 +1215,6 @@ $("sweepBtn").addEventListener("click", async () => {
   }
 });
 
-$("seedNormalTestEmails").addEventListener("click", async () => {
-  if (!confirm("Add 10 clearly marked test emails to your connected Gmail inbox? Reply drafts will stay unsent and addressed only to your own account.")) return;
-  const button = $("seedNormalTestEmails");
-  setBusy(button, true, "Adding tests…");
-  setStatus("normalTestEmailStatus", "Adding ordinary first-contact emails and unsent reply drafts…");
-  try {
-    const result = await api("normal_test_emails_create", {}, { timeout: 120000 });
-    await loadDigest({ quiet: true });
-    setStatus("normalTestEmailStatus", `${result.count || 10} normal test emails are ready. No replies were sent.`, "success");
-  } catch (error) {
-    setStatus("normalTestEmailStatus", Core.safeErrorMessage(error), "error");
-  } finally {
-    setBusy(button, false);
-  }
-});
-
 function addMessage(kind, text) {
   $("messages").classList.remove("hidden");
   const message = create("div", `msg ${kind}`, text);
@@ -1219,8 +1247,14 @@ $("chatForm").addEventListener("submit", async (event) => {
     $("typing")?.remove();
     addMessage("agent", result.reply || "I couldn't form a response.");
     if (result.profile_updated?.tone) {
-      if (currentProfile) currentProfile.tone = result.profile_updated.tone;
-      addMessage("rule", "Writing style updated for future replies.");
+      if (currentProfile) {
+        currentProfile.tone = result.profile_updated.tone;
+        currentProfile.settings_version = result.profile_updated.settings_version ?? currentProfile.settings_version;
+      }
+      const styleMemory = (result.memory_updates || []).find((item) => item.kind === "communication_style");
+      addMessage("rule", styleMemory?.value
+        ? `Remembered for future replies: ${styleMemory.value}`
+        : "Writing style updated for future replies.");
       settingsLoaded = false;
     }
     if (result.rule_added) {

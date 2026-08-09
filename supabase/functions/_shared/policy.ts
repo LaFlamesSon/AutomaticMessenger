@@ -54,7 +54,7 @@ export function normalizedStringList(value: unknown, maxItems: number, maxLength
   return out;
 }
 
-const STYLE_PREFERENCE_INTENT = /\b(?:make|write|use|keep|change|set|prefer|sound)\b[^.!?\n]{0,100}\b(?:repl(?:y|ies)|drafts?|tone|style|voice|writing)\b|\b(?:repl(?:y|ies)|drafts?|tone|style|voice)\b[^.!?\n]{0,100}\b(?:concise|brief|warm|friendly|formal|casual|professional|direct|playful|short)\b/i;
+const STYLE_PREFERENCE_INTENT = /\b(?:make|write|use|keep|change|set|prefer|sound|communicate|remember)\b[^.!?\n]{0,120}\b(?:repl(?:y|ies)|drafts?|emails?|messages?|tone|style|voice|writing|communication|communicate)\b|\b(?:repl(?:y|ies)|drafts?|emails?|messages?|tone|style|voice|writing|communication)\b[^.!?\n]{0,120}\b(?:concise|brief|warm|friendly|formal|casual|professional|direct|playful|short)\b|\b(?:i|we)\s+(?:usually|normally|prefer\s+to|like\s+to)?\s*(?:write|communicate|sound)\b[^.!?\n]{0,100}\b(?:concise|brief|warm|friendly|formal|casual|professional|direct|playful|short)\b/i;
 const UNSAFE_STYLE_PREFERENCE = /\b(?:auto[- ]?send|bypass|override|ignore\s+(?:safety|rules?)|accept|decline|price|rate|availability|turnaround)\b/i;
 
 export function explicitStylePreference(message: string): string | null {

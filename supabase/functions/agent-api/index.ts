@@ -22,7 +22,6 @@ import {
 } from "../_shared/affiliate.ts";
 import { fetchEbayProducts, normalizeEbayCampaignId } from "../_shared/ebay.ts";
 import { fetchTikTokProducts, normalizeGrantedScopes, TIKTOK_CREATOR_SCOPE, tokenExpiryIso } from "../_shared/tiktok.ts";
-import { NORMAL_INBOX_TEST_FIXTURES, NORMAL_INBOX_TEST_REPLY } from "../_shared/test-fixtures.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -296,43 +295,6 @@ async function findDraftByRfcMessageId(accessToken: string, messageId: string): 
   return candidate?.id ? candidate : null;
 }
 
-async function findMessageByRfcMessageId(accessToken: string, messageId: string): Promise<{ id: string; threadId?: string } | null> {
-  const query = new URLSearchParams({ q: `rfc822msgid:${messageId}`, maxResults: "10" });
-  const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${query}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!response.ok) return null;
-  const payload = await response.json();
-  const candidate = Array.isArray(payload?.messages) ? payload.messages[0] : null;
-  return candidate?.id ? candidate : null;
-}
-
-function buildTestInboxMime(input: {
-  from: string;
-  fromName: string;
-  to: string;
-  subject: string;
-  body: string;
-  messageId: string;
-}): string {
-  const recipient = parseStrictRecipient(input.to);
-  const sender = parseStrictRecipient(input.from);
-  if (!recipient || !sender) throw new InputError("test inbox recipient is invalid");
-  return b64urlEncode([
-    `From: ${sanitizeHeader(input.fromName, 120)} <${sender}>`,
-    `To: ${recipient}`,
-    `Reply-To: ${recipient}`,
-    `Subject: ${sanitizeHeader(input.subject, 200)}`,
-    `Message-ID: ${input.messageId}`,
-    "X-CaughtUp-Test: ordinary-inbox-v1",
-    `Date: ${new Date().toUTCString()}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    input.body,
-  ].join("\r\n"));
-}
-
 function buildEditableReplyMime(input: {
   to: string[];
   cc: string[];
@@ -342,7 +304,6 @@ function buildEditableReplyMime(input: {
   inReplyTo: string;
   references: string;
   attachment?: { name: string; mime: string; b64: string };
-  messageId?: string;
 }): string {
   const to = input.to.map(parseStrictRecipient);
   const cc = input.cc.map(parseStrictRecipient);
@@ -359,8 +320,6 @@ function buildEditableReplyMime(input: {
     `Subject: ${sanitizeHeader(input.subject, 500)}`,
     replyId ? `In-Reply-To: ${replyId}` : "",
     references ? `References: ${references}` : "",
-    input.messageId && /^<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>$/.test(input.messageId)
-      ? `Message-ID: ${input.messageId}` : "",
     "MIME-Version: 1.0",
   ].filter(Boolean);
   if (!input.attachment) {
@@ -1108,10 +1067,12 @@ Deno.serve(async (req: Request) => {
           const candidate = typeof parsed.new_rule === "string" ? cleanString(parsed.new_rule, "new_rule", 300) : "";
           newRule = candidate && isRestrictiveRule(candidate) ? candidate : null;
         } catch { /* retain safe fallback */ }
+        let savedProfile: any = null;
         if ((newRule || stylePreference) && profile) {
+          const currentVersion = Number(profile.settings_version ?? 1);
           const updates: Record<string, unknown> = {
             updated_at: new Date().toISOString(),
-            settings_version: Number(profile.settings_version ?? 1) + 1,
+            settings_version: currentVersion + 1,
           };
           if (stylePreference) updates.tone = stylePreference;
           if (newRule) {
@@ -1122,14 +1083,30 @@ Deno.serve(async (req: Request) => {
             Object.assign(updates, { reply_mode: "draft_only", auto_send: false,
               auto_send_confirmed_at: null, auto_send_policy_version: null });
           }
-          const { error } = await supabase.from("ia_voice_profiles").update(updates).eq("user_id", user.id);
+          const { data, error } = await supabase.from("ia_voice_profiles").update(updates)
+            .eq("user_id", user.id).eq("settings_version", currentVersion)
+            .select("tone,custom_rules,settings_version,reply_mode").maybeSingle();
           if (error) throw new Error(error.message);
+          if (!data) return json({ error: "communication memory changed elsewhere", code: "version_conflict" }, 409);
+          savedProfile = data;
         }
         const { error: assistantMessageError } = await supabase.from("ia_chat_messages")
           .insert({ user_id: user.id, role: "assistant", content: reply });
         if (assistantMessageError) throw new Error(assistantMessageError.message);
-        return json({ reply, rule_added: newRule, profile_updated: stylePreference ? { tone: stylePreference } : null,
-          reply_mode: newRule ? "draft_only" : profile?.reply_mode, auto_send_disabled: Boolean(newRule) });
+        const memoryUpdates = [
+          stylePreference && savedProfile ? { kind: "communication_style", value: savedProfile.tone } : null,
+          newRule && savedProfile ? { kind: "standing_rule", value: newRule } : null,
+        ].filter(Boolean);
+        return json({
+          reply,
+          rule_added: newRule,
+          profile_updated: stylePreference && savedProfile
+            ? { tone: savedProfile.tone, settings_version: savedProfile.settings_version } : null,
+          memory_updates: memoryUpdates,
+          memory_saved: memoryUpdates.length > 0,
+          reply_mode: savedProfile?.reply_mode ?? profile?.reply_mode,
+          auto_send_disabled: Boolean(newRule),
+        });
       }
 
       case "profile_get": {
@@ -1685,6 +1662,10 @@ Deno.serve(async (req: Request) => {
         if (currentDraft.preview_version !== previewVersion) {
           return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
         }
+        const currentWordCount = (currentDraft.body.match(/\S+/g) ?? []).length;
+        if (!currentDraft.body.trim() || currentWordCount > 150 || draftSafetyViolations(currentDraft.body).length) {
+          return json({ error: "current Gmail draft failed the reply safety check", code: "unsafe_draft" }, 422);
+        }
         const { data: attempt, error: attemptError } = await supabase.from("ia_send_attempts").insert({
           user_id: user.id, processed_email_id: row.id, idempotency_key: idempotencyKey,
         }).select("id").maybeSingle();
@@ -1949,94 +1930,6 @@ Deno.serve(async (req: Request) => {
           .select("id,gmail_draft_id,delivery_status,draft_created").single();
         if (stateError) return json({ error: "Gmail draft created; state reconciliation required", code: "draft_update_reconcile" }, 503);
         return json({ ok: true, created_in_gmail: true, already_created: alreadyCreated, auto_sent: false, draft_email: stored });
-      }
-
-      case "normal_test_emails_create": {
-        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
-          .select("id,gmail_address,refresh_token").eq("user_id", user.id).limit(1).maybeSingle();
-        if (accountError) throw new Error(accountError.message);
-        if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
-        const accessToken = await gmailAccessToken(account.refresh_token, CFG);
-        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
-
-        const safeReply = NORMAL_INBOX_TEST_REPLY;
-        if (draftSafetyViolations(safeReply).length) return json({ error: "test reply failed safety review", code: "review_required" }, 422);
-        const normalResults = await Promise.all(NORMAL_INBOX_TEST_FIXTURES.map(async (fixture, index) => {
-          const inboundRfcId = `<caughtup-normal-${fixture.key}@caughtup.local>`;
-          const alias = String(account.gmail_address).replace(/@gmail\.com$/i, `+caughtup-normal-${index + 1}@gmail.com`);
-          let message = await findMessageByRfcMessageId(accessToken, inboundRfcId);
-          let messageCreated = false;
-          if (!message) {
-            const raw = buildTestInboxMime({
-              from: alias,
-              fromName: fixture.brand,
-              to: account.gmail_address,
-              subject: `[TEST] ${fixture.subject}`,
-              body: fixture.body,
-              messageId: inboundRfcId,
-            });
-            const insertResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ raw, labelIds: ["INBOX", "UNREAD"] }),
-            });
-            if (!insertResponse.ok) return { key: fixture.key, error: "gmail_insert_failed" };
-            message = await insertResponse.json();
-            messageCreated = true;
-          }
-          if (!message?.id || !message.threadId) return { key: fixture.key, error: "gmail_insert_unverified" };
-
-          let gmailDraft: any = null;
-          if (fixture.category === "action_needed") {
-            const draftRfcId = `<caughtup-normal-reply-${fixture.key}@caughtup.local>`;
-            gmailDraft = await findDraftByRfcMessageId(accessToken, draftRfcId);
-            if (!gmailDraft) {
-              const raw = buildEditableReplyMime({
-                to: [account.gmail_address], cc: [], bcc: [],
-                subject: `Re: [TEST] ${fixture.subject}`,
-                body: safeReply,
-                inReplyTo: inboundRfcId,
-                references: inboundRfcId,
-                messageId: draftRfcId,
-              });
-              const draftResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
-                method: "POST",
-                headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ message: { raw, threadId: message.threadId } }),
-              });
-              if (!draftResponse.ok) return { key: fixture.key, error: "gmail_draft_failed" };
-              gmailDraft = await draftResponse.json();
-            }
-            if (!gmailDraft?.id) return { key: fixture.key, error: "gmail_draft_unverified" };
-          }
-
-          const { data: row, error: stateError } = await supabase.from("ia_processed_emails").upsert({
-            gmail_account_id: account.id,
-            gmail_message_id: message.id,
-            thread_id: `qa-inbox:normal:${fixture.key}`,
-            category: fixture.category,
-            sender: `${fixture.brand} <${alias}>`,
-            subject: `[TEST] ${fixture.subject}`,
-            summary: fixture.summary,
-            draft_created: Boolean(gmailDraft),
-            draft_text: gmailDraft ? safeReply : null,
-            auto_sent: false,
-            delivery_status: gmailDraft ? "draft" : "none",
-            gmail_draft_id: gmailDraft?.id ?? null,
-            gmail_draft_message_id: gmailDraft?.message?.id ?? null,
-            selected_media_kit_id: null,
-            negotiation_id: null,
-            human_review_required: fixture.category === "action_needed",
-            processed_at: new Date(Date.now() - index * 60_000).toISOString(),
-            is_test: true,
-          }, { onConflict: "gmail_account_id,gmail_message_id" })
-            .select("id,gmail_draft_id,delivery_status").single();
-          if (stateError) return { key: fixture.key, error: "state_reconcile_required" };
-          return { key: fixture.key, id: row.id, message_created: messageCreated, draft_created: Boolean(gmailDraft) };
-        }));
-        const failed = normalResults.filter((result) => "error" in result);
-        if (failed.length) return json({ error: "Some test emails need reconciliation", code: "test_email_reconcile", results: normalResults }, 503);
-        return json({ ok: true, auto_sent: false, count: normalResults.length, results: normalResults });
       }
 
       case "sweep": {

@@ -200,7 +200,6 @@ test("client targets the audited API actions", () => {
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
     "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss", "negotiation_test_draft_create",
-    "normal_test_emails_create",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -213,21 +212,26 @@ test("negotiations share the Today timeline with tier colors, details, replies, 
   assert.match(script, /Preview proposed reply/);
   assert.match(script, /api\("negotiation_dismiss"/);
   assert.match(script, /api\("negotiation_test_draft_create"/);
-  assert.match(script, /Create editable test draft/);
+  assert.match(script, /Create draft/);
   assert.match(script, /deal\.draft_email\?\.gmail_draft_id/);
-  assert.match(script, /Review, edit & send/);
+  assert.match(script, /sendDraftFromCard/);
+  assert.match(script, /create\("button", "sendbtn", "Review"\)/);
+  assert.match(script, /create\("button", "sendbtn", "Send"\)/);
   assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
   assert.match(css, /\.negotiation-card\.deal-bad/);
   assert.match(css, /\.negotiation-card\.deal-mid/);
   assert.match(css, /\.negotiation-card\.deal-good/);
 });
 
-test("ordinary inbox harness is explicit, bounded, and reports that replies remain unsent", () => {
-  assert.match(html, /id="seedNormalTestEmails"/);
-  assert.match(html, /Add 10 normal test emails/);
-  assert.match(script, /api\("normal_test_emails_create"/);
-  assert.match(script, /Reply drafts will stay unsent/);
-  assert.match(script, /No replies were sent/);
+test("ordinary cards hide reply text and offer compact verified card-level send", () => {
+  assert.doesNotMatch(html, /seedNormalTestEmails|Add 10 normal test emails/);
+  const renderer = script.match(/function renderEmailCard\(email\) \{([\s\S]*?)\n\}\n\nfunction renderDraftAttachments/)?.[1] || "";
+  assert.doesNotMatch(renderer, /appendReplyDetails|Proposed reply/);
+  assert.match(script, /api\("draft_get", \{ id: email\.id \}\)/);
+  assert.match(script, /Send the current Gmail draft to/);
+  assert.match(script, /api\("send_draft"/);
+  assert.match(script, /preview_version: draft\.preview_version/);
+  assert.match(css, /\.cardfoot \.compact \{ min-height: 24px/);
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -330,13 +334,15 @@ test("selecting Auto-send immediately enters the save and confirmation flow", ()
 test("Chat writing-style updates are reflected in extension state", () => {
   assert.match(script, /result\.profile_updated\?\.tone/);
   assert.match(script, /currentProfile\.tone = result\.profile_updated\.tone/);
+  assert.match(script, /currentProfile\.settings_version = result\.profile_updated\.settings_version/);
+  assert.match(script, /Remembered for future replies/);
   assert.match(script, /Writing style updated for future replies/);
 });
 
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.4");
+  assert.equal(manifest.version, "0.5.5");
 });
 
 test("focus and reduced-motion styles are present", () => {

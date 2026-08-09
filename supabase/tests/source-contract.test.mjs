@@ -129,7 +129,7 @@ test("extension-facing action contract is present", async () => {
   const api = await read("functions/agent-api/index.ts");
   for (const action of [
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare",
-    "auto_send_confirm", "auto_send_disable", "draft_get", "draft_update", "negotiation_test_draft_create", "normal_test_emails_create", "send_draft", "sweep",
+    "auto_send_confirm", "auto_send_disable", "draft_get", "draft_update", "negotiation_test_draft_create", "send_draft", "sweep",
     "media_kit_list", "media_kit_upload_prepare", "media_kit_upload_complete",
     "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
@@ -141,7 +141,9 @@ test("chat style suggestions persist a bounded tone update for the extension", a
   const api = await read("functions/agent-api/index.ts");
   assert.match(api, /const stylePreference = explicitStylePreference\(message\)/);
   assert.match(api, /if \(stylePreference\) updates\.tone = stylePreference/);
-  assert.match(api, /profile_updated: stylePreference \? \{ tone: stylePreference \} : null/);
+  assert.match(api, /\.eq\("user_id", user\.id\)\.eq\("settings_version", currentVersion\)/);
+  assert.match(api, /kind: "communication_style"/);
+  assert.match(api, /memory_saved: memoryUpdates\.length > 0/);
 });
 
 test("calendar preferences and booking mutations are owner scoped and force Review atomically", async () => {
@@ -196,6 +198,8 @@ test("manual send uses a full live-draft preview fingerprint before claiming", a
   assert.match(api, /attachments: flattened/);
   assert.ok(api.indexOf("currentDraft.preview_version !== previewVersion") < api.indexOf('from("ia_send_attempts").insert'));
   assert.match(api, /code: "draft_changed"/);
+  assert.match(api, /draftSafetyViolations\(currentDraft\.body\)/);
+  assert.ok(api.indexOf("draftSafetyViolations(currentDraft.body)") < api.indexOf('from("ia_send_attempts").insert'));
 });
 
 test("draft edits replace only a verified owned draft and one owned media kit", async () => {
