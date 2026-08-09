@@ -8,7 +8,7 @@ import {
   normalizedStringList, explicitStylePreference, draftSafetyViolations, type WeeklyAvailabilityEntry,
 } from "../_shared/policy.ts";
 import {
-  parseStrictRecipient, payloadHeader, payloadText, quoteFilename, sanitizeHeader,
+  parseStrictRecipient, payloadHeader, payloadText, quoteFilename, sanitizeHeader, sanitizeMessageIds,
   type StableDraftAttachment, stableDraftPreview,
 } from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
@@ -271,6 +271,47 @@ function buildOpportunityMime(to: string, subject: string, bodyText: string, att
   ].join("\r\n"));
 }
 
+function buildEditableReplyMime(input: {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+  inReplyTo: string;
+  references: string;
+  attachment?: { name: string; mime: string; b64: string };
+}): string {
+  const to = input.to.map(parseStrictRecipient);
+  const cc = input.cc.map(parseStrictRecipient);
+  const bcc = input.bcc.map(parseStrictRecipient);
+  if (to.length !== 1 || to.some((value) => !value) || cc.some((value) => !value) || bcc.some((value) => !value)) {
+    throw new InputError("draft recipients are invalid");
+  }
+  const replyId = sanitizeMessageIds(input.inReplyTo).split(" ")[0] ?? "";
+  const references = sanitizeMessageIds(`${input.references} ${replyId}`);
+  const headers = [
+    `To: ${to.join(", ")}`,
+    cc.length ? `Cc: ${cc.join(", ")}` : "",
+    bcc.length ? `Bcc: ${bcc.join(", ")}` : "",
+    `Subject: ${sanitizeHeader(input.subject, 500)}`,
+    replyId ? `In-Reply-To: ${replyId}` : "",
+    references ? `References: ${references}` : "",
+    "MIME-Version: 1.0",
+  ].filter(Boolean);
+  if (!input.attachment) {
+    return b64urlEncode([...headers, 'Content-Type: text/plain; charset="UTF-8"', "", input.body].join("\r\n"));
+  }
+  const boundary = `caughtup-edit-${crypto.randomUUID()}`;
+  const filename = quoteFilename(input.attachment.name);
+  return b64urlEncode([
+    ...headers, `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
+    `--${boundary}`, 'Content-Type: text/plain; charset="UTF-8"', "", input.body,
+    `--${boundary}`, `Content-Type: ${input.attachment.mime}; name="${filename}"`,
+    `Content-Disposition: attachment; filename="${filename}"`, "Content-Transfer-Encoding: base64", "",
+    ...(input.attachment.b64.match(/.{1,76}/g) ?? []), `--${boundary}--`,
+  ].join("\r\n"));
+}
+
 async function sha256(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(bytes)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -431,13 +472,26 @@ async function attachmentContent(
   if (typeof attachment?.data !== "string" || !attachment.data) return null;
   return { data: attachment.data.replace(/=+$/, ""), size: Number(attachment.size ?? part?.body?.size ?? 0) };
 }
-async function liveDraft(accessToken: string, draftId: string): Promise<{ recipient: string; to: string[]; cc: string[]; bcc: string[]; subject: string; body: string; attachments: any[]; preview_version: string } | null> {
+async function liveDraft(accessToken: string, draftId: string): Promise<{
+  recipient: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+  attachments: any[];
+  preview_version: string;
+  thread_id: string;
+  in_reply_to: string;
+  references: string;
+} | null> {
   const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}?format=full`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!response.ok) return null;
   const live = await response.json();
   const messageId = String(live?.message?.id ?? "");
+  const threadId = String(live?.message?.threadId ?? "");
   const payload = live?.message?.payload;
-  if (!messageId || !payload) return null;
+  if (!messageId || !threadId || !payload) return null;
   const to = addressList(payloadHeader(payload, "To"));
   const cc = addressList(payloadHeader(payload, "Cc"));
   const bcc = addressList(payloadHeader(payload, "Bcc"));
@@ -467,7 +521,27 @@ async function liveDraft(accessToken: string, draftId: string): Promise<{ recipi
   const preview_version = await sha256(JSON.stringify(stableDraftPreview({
     to, cc, bcc, subject, body, attachments: fingerprintAttachments,
   })));
-  return { recipient, to, cc, bcc, subject, body, attachments: flattened, preview_version };
+  return {
+    recipient, to, cc, bcc, subject, body, attachments: flattened, preview_version,
+    thread_id: threadId,
+    in_reply_to: sanitizeMessageIds(payloadHeader(payload, "In-Reply-To")),
+    references: sanitizeMessageIds(payloadHeader(payload, "References")),
+  };
+}
+
+function editableAttachments(current: { attachments: any[] }, selectedKit: any | null): boolean {
+  if (!current.attachments.length) return selectedKit === null;
+  if (!selectedKit || current.attachments.length !== 1) return false;
+  const attachment = current.attachments[0];
+  return sanitizeHeader(attachment.filename, 180) === quoteFilename(selectedKit.original_filename) &&
+    Number(attachment.byte_size) === Number(selectedKit.byte_size) &&
+    sanitizeHeader(attachment.mime_type, 100).toLowerCase() === String(selectedKit.mime_type).toLowerCase();
+}
+
+function publicLiveDraft(current: Awaited<ReturnType<typeof liveDraft>>): any {
+  if (!current) return null;
+  const { thread_id: _threadId, in_reply_to: _inReplyTo, references: _references, ...safe } = current;
+  return safe;
 }
 
 async function ensureOpportunityPreferences(supabase: any, userId: string): Promise<any> {
@@ -856,7 +930,7 @@ Deno.serve(async (req: Request) => {
         const accountIds = await ownedAccountIds(supabase, user.id);
         if (!accountIds.length) return json({ emails: [], last_run: null });
         const { data: rows, error: emailError } = await supabase.from("ia_processed_emails")
-          .select("id, category, sender, subject, summary, draft_created, draft_text, auto_sent, delivery_status, sent_via, gmail_draft_id, selected_media_kit_id, processed_at, is_test")
+          .select("id, category, sender, subject, summary, draft_created, draft_text, auto_sent, delivery_status, sent_via, gmail_draft_id, selected_media_kit_id, negotiation_id, processed_at, is_test")
           .in("gmail_account_id", accountIds)
           .gte("processed_at", new Date(Date.now() - 86400_000 * 2).toISOString())
           .order("processed_at", { ascending: false }).limit(100);
@@ -871,6 +945,21 @@ Deno.serve(async (req: Request) => {
           .order("updated_at", { ascending: false }).limit(50);
         if (negotiationError) throw new Error(negotiationError.message);
         const activeNegotiations = (negotiationRows ?? []).filter((row: any) => !["agreed", "declined", "closed"].includes(row.stage));
+        let linkedNegotiationDrafts = new Map<string, any>();
+        const activeNegotiationIds = activeNegotiations.map((row: any) => row.id);
+        if (activeNegotiationIds.length) {
+          const { data: linkedRows, error: linkedError } = await supabase.from("ia_processed_emails")
+            .select("id,negotiation_id,gmail_draft_id,delivery_status,draft_created,processed_at")
+            .in("gmail_account_id", accountIds).in("negotiation_id", activeNegotiationIds)
+            .eq("delivery_status", "draft").not("gmail_draft_id", "is", null)
+            .order("processed_at", { ascending: false });
+          if (linkedError) throw new Error(linkedError.message);
+          for (const row of linkedRows ?? []) {
+            if (row.negotiation_id && !linkedNegotiationDrafts.has(row.negotiation_id)) {
+              linkedNegotiationDrafts.set(row.negotiation_id, row);
+            }
+          }
+        }
         const selectedKitIds = Array.from(new Set([
           ...(rows ?? []).map((row: any) => row.selected_media_kit_id),
           ...activeNegotiations.map((row: any) => row.media_kit_id),
@@ -893,6 +982,7 @@ Deno.serve(async (req: Request) => {
         const negotiations = activeNegotiations.map((row: any) => ({ ...row,
           media_kit_label: row.media_kit_id ? kitLabels.get(row.media_kit_id) ?? null : null,
           rate_profile: row.media_kit_id ? kitRates.get(row.media_kit_id) ?? null : null,
+          draft_email: linkedNegotiationDrafts.get(row.id) ?? null,
         }));
         return json({ emails, negotiations, last_run: lastRun });
       }
@@ -1462,7 +1552,7 @@ Deno.serve(async (req: Request) => {
         if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
         const draft = await liveDraft(accessToken, opportunity.gmail_draft_id);
         if (!draft) return json({ error: "live draft is unavailable", code: "invalid_draft" }, 422);
-        return json({ draft, opportunity: { id: opportunity.id, brand_name: opportunity.brand_name } });
+        return json({ draft: publicLiveDraft(draft), opportunity: { id: opportunity.id, brand_name: opportunity.brand_name } });
       }
 
       case "opportunity_send": {
@@ -1601,7 +1691,7 @@ Deno.serve(async (req: Request) => {
         const accountIds = await ownedAccountIds(supabase, user.id);
         if (!accountIds.length) return json({ error: "not found" }, 404);
         const { data: draft, error } = await supabase.from("ia_processed_emails")
-          .select("id, gmail_draft_id, delivery_status, ia_gmail_accounts(refresh_token)")
+          .select("id, gmail_draft_id, delivery_status, selected_media_kit_id, negotiation_id, ia_gmail_accounts(refresh_token)")
           .eq("id", rowId).in("gmail_account_id", accountIds).maybeSingle();
         if (error) throw new Error(error.message);
         if (!draft) return json({ error: "not found" }, 404);
@@ -1610,7 +1700,101 @@ Deno.serve(async (req: Request) => {
         if (!accessToken) return json({ error: "gmail auth failed" }, 502);
         const current = await liveDraft(accessToken, draft.gmail_draft_id);
         if (!current) return json({ error: "live draft is unavailable or has an invalid recipient", code: "invalid_draft" }, 422);
-        return json({ draft: current });
+        const { data: kits, error: kitError } = await supabase.from("ia_media_kits")
+          .select("id,label,original_filename,mime_type,byte_size")
+          .eq("user_id", user.id).eq("status", "active").order("is_default", { ascending: false }).order("label");
+        if (kitError) throw new Error(kitError.message);
+        const selectedKit = (kits ?? []).find((kit: any) => kit.id === draft.selected_media_kit_id) ?? null;
+        return json({
+          draft: publicLiveDraft(current),
+          editing_supported: editableAttachments(current, selectedKit),
+          selected_media_kit_id: draft.selected_media_kit_id,
+          media_kits: (kits ?? []).map((kit: any) => ({ id: kit.id, label: kit.label })),
+        });
+      }
+
+      case "draft_update": {
+        const rowId = cleanUuid(body.id, "id");
+        const previewVersion = cleanString(body.preview_version ?? "", "preview_version", 64);
+        if (!/^[0-9a-f]{64}$/.test(previewVersion)) return json({ error: "preview_version is required", code: "invalid_request" }, 400);
+        const editedBody = cleanString(body.draft_text ?? "", "draft_text", 12_000);
+        const wordCount = (editedBody.match(/\S+/g) ?? []).length;
+        if (!editedBody || wordCount > 150) return json({ error: "reply must contain 1 to 150 words", code: "invalid_draft" }, 422);
+        if (draftSafetyViolations(editedBody).length) {
+          return json({ error: "reply contains pricing, commitment, availability, or other unsafe language", code: "unsafe_draft" }, 422);
+        }
+        const mediaKitId = body.media_kit_id === null || body.media_kit_id === "" || body.media_kit_id === undefined
+          ? null : cleanUuid(body.media_kit_id, "media_kit_id");
+        const accountIds = await ownedAccountIds(supabase, user.id);
+        if (!accountIds.length) return json({ error: "not found" }, 404);
+        const { data: row, error: rowError } = await supabase.from("ia_processed_emails")
+          .select("id,gmail_draft_id,delivery_status,selected_media_kit_id,negotiation_id,ia_gmail_accounts(refresh_token)")
+          .eq("id", rowId).in("gmail_account_id", accountIds).maybeSingle();
+        if (rowError) throw new Error(rowError.message);
+        if (!row) return json({ error: "not found" }, 404);
+        if (row.delivery_status !== "draft" || !row.gmail_draft_id) return json({ error: "draft is not editable" }, 422);
+        const accessToken = await gmailAccessToken((row as any).ia_gmail_accounts.refresh_token, CFG);
+        if (!accessToken) return json({ error: "gmail auth failed" }, 502);
+        const current = await liveDraft(accessToken, row.gmail_draft_id);
+        if (!current) return json({ error: "live draft is unavailable or has an invalid recipient", code: "invalid_draft" }, 422);
+        if (current.preview_version !== previewVersion) {
+          return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
+        }
+        let currentKit: any = null;
+        if (row.selected_media_kit_id) {
+          const { data, error } = await supabase.from("ia_media_kits")
+            .select("id,original_filename,mime_type,byte_size")
+            .eq("id", row.selected_media_kit_id).eq("user_id", user.id).maybeSingle();
+          if (error) throw new Error(error.message);
+          currentKit = data;
+        }
+        if (!editableAttachments(current, currentKit)) {
+          return json({ error: "This Gmail draft contains attachments CaughtUp cannot safely replace. Edit it in Gmail.", code: "unmanaged_attachments" }, 422);
+        }
+        let nextAttachment: { label?: string; attachment?: { name: string; mime: string; b64: string } } = {};
+        if (mediaKitId) {
+          const { data: ownedKit, error: ownedKitError } = await supabase.from("ia_media_kits")
+            .select("id").eq("id", mediaKitId).eq("user_id", user.id).eq("status", "active").maybeSingle();
+          if (ownedKitError) throw new Error(ownedKitError.message);
+          if (!ownedKit) return json({ error: "media kit is unavailable" }, 404);
+          nextAttachment = await opportunityAttachment(supabase, user.id, mediaKitId);
+          if (!nextAttachment.attachment) return json({ error: "media kit is unavailable" }, 422);
+        }
+        const raw = buildEditableReplyMime({
+          to: current.to, cc: current.cc, bcc: current.bcc, subject: current.subject,
+          body: editedBody, inReplyTo: current.in_reply_to, references: current.references,
+          attachment: nextAttachment.attachment,
+        });
+        const updateResponse = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(row.gmail_draft_id)}`,
+          {
+            method: "PUT",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ id: row.gmail_draft_id, message: { raw, threadId: current.thread_id } }),
+          },
+        );
+        if (!updateResponse.ok) return json({ error: "Gmail draft update failed" }, 502);
+        const updatedResource = await updateResponse.json();
+        const updated = await liveDraft(accessToken, row.gmail_draft_id);
+        if (!updated) return json({ error: "Gmail draft updated but could not be verified", code: "draft_update_reconcile" }, 503);
+        const { error: stateError } = await supabase.from("ia_processed_emails").update({
+          draft_text: editedBody,
+          selected_media_kit_id: mediaKitId,
+          gmail_draft_message_id: updatedResource?.message?.id ?? null,
+        }).eq("id", row.id).in("gmail_account_id", accountIds);
+        if (stateError) return json({ error: "Gmail draft updated; state reconciliation required", code: "draft_update_reconcile" }, 503);
+        if (row.negotiation_id) {
+          const { error: negotiationStateError } = await supabase.from("ia_negotiations").update({
+            proposed_reply: editedBody, media_kit_id: mediaKitId, updated_at: new Date().toISOString(),
+          }).eq("id", row.negotiation_id).eq("user_id", user.id);
+          if (negotiationStateError) return json({ error: "Gmail draft updated; negotiation reconciliation required", code: "draft_update_reconcile" }, 503);
+        }
+        return json({
+          ok: true,
+          draft: publicLiveDraft(updated),
+          selected_media_kit_id: mediaKitId,
+          media_kit_label: nextAttachment.label ?? null,
+        });
       }
 
       case "sweep": {

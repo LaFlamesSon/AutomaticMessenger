@@ -781,6 +781,13 @@ Deno.serve(async (req: Request) => {
           if (finalDraft && (finalWordCount > 150 || finalSafety.length)) {
             decision = "none";
           }
+          if (negotiationId) {
+            const { error: proposalError } = await supabase.from("ia_negotiations").update({
+              proposed_reply: finalDraft && decision !== "none" && !finalSafety.length ? finalDraft : null,
+              updated_at: new Date().toISOString(),
+            }).eq("id", negotiationId).eq("user_id", account.user_id);
+            if (proposalError) throw new Error("negotiation proposal could not be finalized");
+          }
           if (targeted) targetedDiagnostics.push({
             category: triage.category,
             model_draft_present: Boolean(triage.draft),

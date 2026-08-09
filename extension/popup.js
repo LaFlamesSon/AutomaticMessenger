@@ -74,6 +74,9 @@ function safeApiMessage(data, status) {
   if (status === 401 || code === "unauthorized") return { code: "unauthorized", message: "Your session expired. Connect again." };
   if (code === "confirmation_required") return { code, message: "Auto-send is off. Review the updated policy and confirm it again." };
   if (code === "draft_changed") return { code, message: "This Gmail draft changed after the preview. Review the latest version before sending." };
+  if (code === "unsafe_draft") return { code, message: "Remove pricing, acceptance, rejection, availability, or commitment language before saving." };
+  if (code === "unmanaged_attachments") return { code, message: "This draft has attachments CaughtUp cannot safely replace. Edit it in Gmail instead." };
+  if (code === "draft_update_reconcile") return { code, message: "The draft may have saved. Close this preview and reopen it before making another change." };
   if (["duplicate_request", "send_in_progress", "claim_unavailable"].includes(code)) {
     return { code: "send_in_progress", message: "CaughtUp is checking this send. Do not send it again yet." };
   }
@@ -734,6 +737,12 @@ function renderNegotiationCard(deal) {
   appendReplyDetails(card, deal.proposed_reply, "See proposed reply");
 
   const footer = create("div", "cardfoot");
+  if (!deal.is_test && deal.draft_email?.gmail_draft_id) {
+    const review = create("button", "sendbtn", "Review, edit & send");
+    review.type = "button";
+    review.addEventListener("click", () => openDraftPreview(deal.draft_email, card, review));
+    footer.appendChild(review);
+  }
   if (!deal.is_test && deal.thread_id) {
     const link = create("a", "timeline-link", "Open Gmail");
     link.href = `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(deal.thread_id)}`;
@@ -822,6 +831,58 @@ function renderEmailCard(email) {
   return card;
 }
 
+function renderDraftAttachments(attachments = []) {
+  const list = $("previewAttachments");
+  list.replaceChildren();
+  if (!attachments.length) {
+    list.appendChild(create("li", "", "None"));
+    return;
+  }
+  attachments.forEach((attachment) => {
+    const name = String(attachment.name || attachment.filename || "Unnamed file");
+    const size = Core.formatBytes(attachment.byte_size ?? attachment.size);
+    const mime = String(attachment.mime_type || attachment.type || "");
+    const details = [size, mime].filter(Boolean).join(", ");
+    list.appendChild(create("li", "", details ? `${name} (${details})` : name));
+  });
+}
+
+function fillDraftKitOptions(kits = [], selectedId = null) {
+  const select = $("previewKit");
+  select.replaceChildren();
+  const none = create("option", "", "No media kit");
+  none.value = "";
+  select.appendChild(none);
+  kits.forEach((kit) => {
+    const option = create("option", "", kit.label || "Media kit");
+    option.value = kit.id;
+    select.appendChild(option);
+  });
+  select.value = selectedId || "";
+}
+
+function draftEditorDirty() {
+  return Boolean(pendingDraft) && (
+    $("previewBody").value !== pendingDraft.original_body ||
+    ($("previewKit").value || null) !== pendingDraft.original_media_kit_id
+  );
+}
+
+function syncDraftEditorState() {
+  if (!pendingDraft) return;
+  const editable = pendingDraft.editing_supported && !pendingDraft.uncertain;
+  const dirty = editable && draftEditorDirty();
+  $("previewBody").disabled = !editable;
+  $("previewKit").disabled = !editable;
+  $("saveDraftChanges").disabled = !dirty;
+  $("confirmSend").disabled = dirty;
+  $("draftEditHint").textContent = pendingDraft.uncertain
+    ? "A prior send may be in progress. Check its status before making changes."
+    : pendingDraft.editing_supported
+    ? dirty ? "Save these changes before sending." : "Edit the reply or swap one owned media kit, then save before sending."
+    : "This draft has attachments CaughtUp cannot safely replace. You can still review or send it, or edit it in Gmail.";
+}
+
 async function openDraftPreview(email, card, button) {
   setBusy(button, true, "Loading draft…");
   const status = card.querySelector(".card-status");
@@ -850,26 +911,18 @@ async function openDraftPreview(email, card, button) {
       preview_version: draft.preview_version,
       idempotency_key: existingSendKey,
       uncertain: Boolean(existingSendKey),
+      original_body: body,
+      original_media_kit_id: result.selected_media_kit_id || null,
+      editing_supported: result.editing_supported === true,
     };
     pendingSendCard = card;
     $("previewRecipient").textContent = pendingDraft.to.join(", ");
     $("previewCc").textContent = pendingDraft.cc.length ? pendingDraft.cc.join(", ") : "None";
     $("previewBcc").textContent = pendingDraft.bcc.length ? pendingDraft.bcc.join(", ") : "None";
     $("previewSubject").textContent = pendingDraft.subject;
-    $("previewBody").textContent = pendingDraft.body;
-    const attachments = $("previewAttachments");
-    attachments.replaceChildren();
-    if (!pendingDraft.attachments.length) {
-      attachments.appendChild(create("li", "", "None"));
-    } else {
-      pendingDraft.attachments.forEach((attachment) => {
-        const name = String(attachment.name || attachment.filename || "Unnamed file");
-        const size = Core.formatBytes(attachment.byte_size ?? attachment.size);
-        const mime = String(attachment.mime_type || attachment.type || "");
-        const details = [size, mime].filter(Boolean).join(", ");
-        attachments.appendChild(create("li", "", details ? `${name} (${details})` : name));
-      });
-    }
+    $("previewBody").value = pendingDraft.body;
+    fillDraftKitOptions(result.media_kits || [], result.selected_media_kit_id || null);
+    renderDraftAttachments(pendingDraft.attachments);
     const hasPreviousAttempt = Boolean(pendingDraft.idempotency_key);
     $("confirmSend").dataset.label = hasPreviousAttempt ? "Check send status" : "Send reply";
     $("confirmSend").textContent = $("confirmSend").dataset.label;
@@ -878,6 +931,7 @@ async function openDraftPreview(email, card, button) {
       hasPreviousAttempt ? "A previous send is not confirmed. Check its status using the same safe request." : "",
       hasPreviousAttempt ? "error" : "",
     );
+    syncDraftEditorState();
     $("sendDialog").showModal();
   } catch (error) {
     status.textContent = Core.safeErrorMessage(error);
@@ -887,8 +941,59 @@ async function openDraftPreview(email, card, button) {
   }
 }
 
+$("previewBody").addEventListener("input", syncDraftEditorState);
+$("previewKit").addEventListener("change", syncDraftEditorState);
+
+$("saveDraftChanges").addEventListener("click", async () => {
+  if (!pendingDraft || !draftEditorDirty()) return;
+  const button = $("saveDraftChanges");
+  try {
+    setBusy(button, true, "Saving…");
+    setStatus("sendDialogStatus", "Updating the existing Gmail draft…");
+    const result = await api("draft_update", {
+      id: pendingDraft.id,
+      preview_version: pendingDraft.preview_version,
+      draft_text: $("previewBody").value,
+      media_kit_id: $("previewKit").value || null,
+    }, { timeout: 25000 });
+    const draft = result.draft;
+    if (!draft?.preview_version || typeof draft.body !== "string" || !Array.isArray(draft.attachments)) {
+      throw new Core.ApiError("The updated draft could not be verified.", 503, "draft_update_reconcile");
+    }
+    pendingDraft.body = draft.body;
+    pendingDraft.attachments = draft.attachments;
+    pendingDraft.preview_version = draft.preview_version;
+    pendingDraft.original_body = draft.body;
+    pendingDraft.original_media_kit_id = result.selected_media_kit_id || null;
+    $("previewBody").value = draft.body;
+    $("previewKit").value = result.selected_media_kit_id || "";
+    renderDraftAttachments(draft.attachments);
+    setStatus("sendDialogStatus", "Changes saved to the existing Gmail draft.", "success");
+  } catch (error) {
+    setStatus("sendDialogStatus", Core.safeErrorMessage(error), "error");
+    if (["draft_changed", "draft_update_reconcile"].includes(error.code)) {
+      const cardStatus = pendingSendCard?.querySelector(".card-status");
+      if (cardStatus) {
+        cardStatus.textContent = "The Gmail draft changed. Reopen Review, edit & send to load the latest version.";
+        cardStatus.classList.add("error");
+      }
+      pendingDraft = null;
+      pendingSendCard = null;
+      $("sendDialog").close();
+    }
+  } finally {
+    setBusy(button, false);
+    syncDraftEditorState();
+  }
+});
+
 $("confirmSend").addEventListener("click", async () => {
   if (!pendingDraft || !pendingSendCard) return;
+  if (draftEditorDirty()) {
+    setStatus("sendDialogStatus", "Save your reply or media-kit changes before sending.", "error");
+    syncDraftEditorState();
+    return;
+  }
   const button = $("confirmSend");
   try {
     if (!pendingDraft.idempotency_key) {

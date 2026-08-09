@@ -158,6 +158,8 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .card-status { width: 100%; color: var(--soft); font-size: 11.5px; }
 .card-status.error { color: var(--bad); }
 .sendbtn { min-height: 28px; padding: 3px 10px; border: 0; border-radius: 99px; color: var(--cream); background: var(--ink); font-size: 12px; }
+.draft-editor { width: 100%; min-height: 170px; resize: vertical; font: inherit; }
+#previewKit { width: 100%; margin: 6px 0 10px; }
 
 .negotiation-card { border-width: 1px 1px 1px 5px; }
 .negotiation-card.deal-bad { border-color: #bf554c; background: #fff8f7; }

@@ -165,6 +165,11 @@ test("manual send requires an authoritative versioned preview", () => {
   assert.match(script, /previewAttachments/);
   assert.match(script, /code === "draft_changed"/);
   assert.match(script, /Draft changed in Gmail/);
+  assert.match(html, /id="previewBody"[^>]+textarea|<textarea id="previewBody"/);
+  assert.match(html, /id="previewKit"/);
+  assert.match(html, /id="saveDraftChanges"/);
+  assert.match(script, /api\("draft_update"/);
+  assert.match(script, /if \(draftEditorDirty\(\)\)/);
 });
 
 test("kits form is labeled and bounded to approved client MIME types", () => {
@@ -186,7 +191,7 @@ test("dynamic rendering avoids innerHTML", () => {
 
 test("client targets the audited API actions", () => {
   [
-    "digest", "chat", "draft_get", "send_draft", "sweep", "profile_get", "profile_set",
+    "digest", "chat", "draft_get", "draft_update", "send_draft", "sweep", "profile_get", "profile_set",
     "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list", "media_kit_rate_update",
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
     "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
@@ -206,6 +211,8 @@ test("negotiations share the Today timeline with tier colors, details, replies, 
   assert.match(script, /What this is about/);
   assert.match(script, /See proposed reply/);
   assert.match(script, /api\("negotiation_dismiss"/);
+  assert.match(script, /deal\.draft_email\?\.gmail_draft_id/);
+  assert.match(script, /Review, edit & send/);
   assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
   assert.match(css, /\.negotiation-card\.deal-bad/);
   assert.match(css, /\.negotiation-card\.deal-mid/);
@@ -318,7 +325,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.1");
+  assert.equal(manifest.version, "0.5.2");
 });
 
 test("focus and reduced-motion styles are present", () => {

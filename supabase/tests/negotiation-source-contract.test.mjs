@@ -14,6 +14,7 @@ test("negotiations deterministically force Review and persist by Gmail thread", 
   assert.match(sweep, /human_review_required: negotiationRequired/);
   assert.match(sweep, /proposed_reply: triage\.draft && !draftSafetyViolations\(triage\.draft\)\.length/);
   assert.match(sweep, /dismissed_at: null/);
+  assert.match(sweep, /proposed_reply: finalDraft && decision !== "none" && !finalSafety\.length \? finalDraft : null/);
 });
 
 test("negotiation storage is owner scoped and not directly exposed", () => {
@@ -27,6 +28,14 @@ test("extension API returns only authenticated owner's active negotiations", () 
   assert.match(api, /\.eq\("user_id", user\.id\)\.eq\("human_review_required", true\)/);
   assert.match(api, /\.is\("dismissed_at", null\)/);
   assert.match(api, /media_kit_rate_update/);
+  assert.match(api, /draft_email: linkedNegotiationDrafts\.get\(row\.id\) \?\? null/);
+});
+
+test("negotiation draft edits remain manual and update only owned negotiation memory", () => {
+  assert.match(api, /case "draft_update"/);
+  assert.match(api, /\.eq\("id", row\.negotiation_id\)\.eq\("user_id", user\.id\)/);
+  assert.match(api, /proposed_reply: editedBody, media_kit_id: mediaKitId/);
+  assert.doesNotMatch(api, /case "draft_update"[\s\S]*?drafts\/send/);
 });
 
 test("dismissal is owner scoped and new inbound terms can resurface a negotiation", () => {

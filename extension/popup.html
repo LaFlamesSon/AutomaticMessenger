@@ -412,15 +412,19 @@
         <div><dt>Bcc</dt><dd id="previewBcc"></dd></div>
         <div><dt>Subject</dt><dd id="previewSubject"></dd></div>
       </dl>
-      <div id="previewBody" class="draft-preview" tabindex="0"></div>
+      <label for="previewBody"><strong>Reply</strong></label>
+      <textarea id="previewBody" class="draft-preview draft-editor" rows="10" maxlength="12000"></textarea>
+      <label for="previewKit"><strong>Attached media kit</strong></label>
+      <select id="previewKit"></select>
       <div class="attachment-preview">
         <h3>Attachments</h3>
         <ul id="previewAttachments"></ul>
       </div>
-      <p class="hint">This sends the existing Gmail draft once. It cannot be undone.</p>
+      <p id="draftEditHint" class="hint">Changes update the existing Gmail draft. Sending still requires a separate click.</p>
       <p id="sendDialogStatus" class="status-text" role="status" aria-live="assertive"></p>
       <div class="button-row">
         <button id="cancelSend" type="submit" value="cancel" class="ghost">Keep draft</button>
+        <button id="saveDraftChanges" type="button" class="ghost compact">Save changes</button>
         <button id="confirmSend" type="button" class="primary compact">Send reply</button>
       </div>
     </form>

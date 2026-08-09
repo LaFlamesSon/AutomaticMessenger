@@ -129,7 +129,7 @@ test("extension-facing action contract is present", async () => {
   const api = await read("functions/agent-api/index.ts");
   for (const action of [
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare",
-    "auto_send_confirm", "auto_send_disable", "draft_get", "send_draft", "sweep",
+    "auto_send_confirm", "auto_send_disable", "draft_get", "draft_update", "send_draft", "sweep",
     "media_kit_list", "media_kit_upload_prepare", "media_kit_upload_complete",
     "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
@@ -196,6 +196,19 @@ test("manual send uses a full live-draft preview fingerprint before claiming", a
   assert.match(api, /attachments: flattened/);
   assert.ok(api.indexOf("currentDraft.preview_version !== previewVersion") < api.indexOf('from("ia_send_attempts").insert'));
   assert.match(api, /code: "draft_changed"/);
+});
+
+test("draft edits replace only a verified owned draft and one owned media kit", async () => {
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(api, /case "draft_update"/);
+  assert.match(api, /draftSafetyViolations\(editedBody\)/);
+  assert.match(api, /wordCount > 150/);
+  assert.match(api, /current\.preview_version !== previewVersion/);
+  assert.match(api, /editableAttachments\(current, currentKit\)/);
+  assert.match(api, /\.eq\("id", mediaKitId\)\.eq\("user_id", user\.id\)\.eq\("status", "active"\)/);
+  assert.match(api, /method: "PUT"/);
+  assert.match(api, /message: \{ raw, threadId: current\.thread_id \}/);
+  assert.ok(api.indexOf("current.preview_version !== previewVersion") < api.indexOf('method: "PUT"'));
 });
 
 test("kit listing and labels remain owner scoped", async () => {
