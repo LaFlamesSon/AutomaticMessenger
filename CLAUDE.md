@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.3** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.4** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 Today interleaves actionable inbox messages and creator negotiations by event
@@ -18,6 +18,9 @@ time. Negotiations expose context and a safe proposed reply, use green/yellow/re
 threshold states, pin the relevant media kit, and can be dismissed until new
 inbound activity resurfaces them. Negotiation messages are always Review-only
 even when Auto-send is enabled.
+First-contact brand messages remain normal inbox items. Negotiation memory starts
+only when commercial terms arrive in a later inbound message after the creator
+has sent a reply in that Gmail thread.
 Real Gmail drafts now open in an editable extension review dialog. The creator
 can change the bounded reply, replace or remove the single owned media kit, save
 those changes back to the same version-checked Gmail draft, and then explicitly
@@ -64,8 +67,8 @@ editable review, media-kit swap, and explicit-send flow.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 36 | Gmail triage plus durable negotiation detection and final safe draft synchronization for negotiation proposals |
-| `agent-api` | 24 | Extension API plus version-checked Gmail draft editing, a test-only self-addressed negotiation draft harness, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and explicit manual send |
+| `agent-sweep` | 37 | Gmail triage plus reply-stage-gated negotiation detection and final safe draft synchronization for negotiation proposals |
+| `agent-api` | 25 | Extension API plus version-checked Gmail draft editing, controlled ordinary/negotiation inbox harnesses, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and explicit manual send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -96,6 +99,11 @@ dismissal memory and three `qa-inbox:*` processed-email fixtures. These are
 database-only display records: `draft_created=false`, `auto_sent=false`,
 `delivery_status=none`, and no Gmail draft ID. Existing Gmail and Auto-send
 state remain untouched.
+
+Extension 0.5.4 adds an authenticated, idempotent **Add 10 normal test emails**
+control. It inserts clearly marked first-contact fixtures only into the connected
+Gmail mailbox and creates self-addressed, unsent review drafts for actionable
+fixtures. It never calls a Gmail send endpoint and creates no negotiation rows.
 
 Calendar rows are service-role only under RLS. Security-definer RPCs use an
 empty `search_path`. A GiST exclusion constraint is the authoritative atomic
