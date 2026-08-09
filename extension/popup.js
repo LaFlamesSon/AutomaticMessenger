@@ -654,8 +654,7 @@ function applyDigestResult(result = {}) {
   lastSweepRun = result.last_run || null;
   $("lastRun").textContent = formatLastRun(result.last_run);
   updateModeBadge(result.reply_mode || currentProfile?.reply_mode || "draft_only");
-  renderNegotiations(result.negotiations || []);
-  renderDigest(result.emails || []);
+  renderTodayFeed(result.emails || [], result.negotiations || []);
 }
 
 function negotiationTerms(terms = {}, currency = "USD") {
@@ -680,34 +679,78 @@ function negotiationThresholdLabel(status) {
   })[status] || "Review required";
 }
 
-function renderNegotiations(negotiations) {
-  const panel = $("negotiationPanel");
-  const list = $("negotiationList");
-  list.replaceChildren();
-  negotiations.forEach((deal) => {
-    const card = create("article", "negotiation-card");
-    card.appendChild(create("h3", "", deal.brand_name || "Brand negotiation"));
-    card.appendChild(create("p", "negotiation-terms", negotiationTerms(deal.current_terms, deal.rate_profile?.currency)));
-    if (deal.previous_terms && Object.keys(deal.previous_terms).length) {
-      card.appendChild(create("p", "negotiation-meta", `Previous: ${negotiationTerms(deal.previous_terms, deal.rate_profile?.currency)}`));
-    }
-    if (deal.summary) card.appendChild(create("p", "negotiation-meta", deal.summary));
-    const badges = create("div", "negotiation-badges");
-    badges.appendChild(create("span", "badge critical", negotiationThresholdLabel(deal.threshold_status)));
-    badges.appendChild(create("span", "tag", `Stage: ${String(deal.stage || "offer_received").replaceAll("_", " ")}`));
-    badges.appendChild(create("span", "tag", `Kit: ${deal.media_kit_label || "Needs selection"}`));
-    if (deal.is_test) badges.appendChild(create("span", "badge test", "Test negotiation"));
-    card.appendChild(badges);
-    if (!deal.is_test && deal.thread_id) {
-      const link = create("a", "", "Open thread in Gmail");
-      link.href = `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(deal.thread_id)}`;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      card.appendChild(link);
-    }
-    list.appendChild(card);
-  });
-  panel.classList.toggle("hidden", !negotiations.length);
+function negotiationTier(status) {
+  if (status === "below_minimum") return "bad";
+  if (status === "at_or_above_target") return "good";
+  return "mid";
+}
+
+function appendReplyDetails(card, reply, summary = "Proposed reply") {
+  if (!reply) return;
+  const details = create("details", "reply-details");
+  details.appendChild(create("summary", "", summary));
+  details.appendChild(create("p", "reply-preview", reply));
+  card.appendChild(details);
+}
+
+async function dismissNegotiation(deal, card, button) {
+  if (!confirm(`Dismiss the ${deal.brand_name || "brand"} negotiation from Today? A new inbound message will surface it again.`)) return;
+  setBusy(button, true, "Dismissing…");
+  const status = card.querySelector(".card-status");
+  try {
+    await api("negotiation_dismiss", { negotiation_id: deal.id });
+    card.remove();
+    await loadDigest({ quiet: true });
+  } catch (error) {
+    status.textContent = Core.safeErrorMessage(error);
+    status.classList.add("error");
+    setBusy(button, false);
+  }
+}
+
+function renderNegotiationCard(deal) {
+  const tier = negotiationTier(deal.threshold_status);
+  const card = create("article", `card negotiation-card deal-${tier}`);
+  card.appendChild(create("div", "timeline-kicker", "Negotiation • Creator decision required"));
+  card.appendChild(create("div", "card-sender", deal.brand_name || "Brand negotiation"));
+  card.appendChild(create("div", "card-subject", deal.latest_subject || "Commercial terms under review"));
+  card.appendChild(create("div", "negotiation-terms", negotiationTerms(deal.current_terms, deal.rate_profile?.currency)));
+
+  const badges = create("div", "negotiation-badges");
+  badges.appendChild(create("span", `badge deal-${tier}`, negotiationThresholdLabel(deal.threshold_status)));
+  badges.appendChild(create("span", "tag", `Stage: ${String(deal.stage || "offer_received").replaceAll("_", " ")}`));
+  badges.appendChild(create("span", "tag", `Kit: ${deal.media_kit_label || "Needs selection"}`));
+  if (deal.is_test) badges.appendChild(create("span", "badge test", "Test"));
+  card.appendChild(badges);
+
+  const context = create("details", "negotiation-context");
+  context.appendChild(create("summary", "", "What this is about"));
+  if (deal.summary) context.appendChild(create("p", "negotiation-meta", deal.summary));
+  if (deal.previous_terms && Object.keys(deal.previous_terms).length) {
+    context.appendChild(create("p", "negotiation-meta", `Previous terms: ${negotiationTerms(deal.previous_terms, deal.rate_profile?.currency)}`));
+  }
+  context.appendChild(create("p", "negotiation-meta", "CaughtUp will not send or accept negotiation terms without your review."));
+  card.appendChild(context);
+  appendReplyDetails(card, deal.proposed_reply, "See proposed reply");
+
+  const footer = create("div", "cardfoot");
+  if (!deal.is_test && deal.thread_id) {
+    const link = create("a", "timeline-link", "Open Gmail");
+    link.href = `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(deal.thread_id)}`;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    footer.appendChild(link);
+  }
+  const dismiss = create("button", "ghost compact dismiss-negotiation", "Dismiss");
+  dismiss.type = "button";
+  dismiss.addEventListener("click", () => dismissNegotiation(deal, card, dismiss));
+  footer.appendChild(dismiss);
+  const status = create("span", "card-status");
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  footer.appendChild(status);
+  card.appendChild(footer);
+  return card;
 }
 
 async function loadDigest(options = {}) {
@@ -734,37 +777,25 @@ async function loadDigest(options = {}) {
   }
 }
 
-function renderDigest(emails) {
+function renderTodayFeed(emails, negotiations = []) {
   const digest = $("digest");
   digest.replaceChildren();
-  const byCategory = {};
-  const pendingEmails = emails.filter((email) => Core.CATEGORIES.includes(email.category) && Core.deliveryState(email) !== "sent");
-  pendingEmails.forEach((email) => {
-    if (!Core.CATEGORIES.includes(email.category)) return;
-    (byCategory[email.category] ||= []).push(email);
-  });
+  const pendingEmails = emails.filter((email) => ["urgent", "action_needed", "fyi"].includes(email.category) && Core.deliveryState(email) !== "sent");
+  const timeline = [
+    ...pendingEmails.map((email) => ({ kind: "email", at: email.processed_at, value: email })),
+    ...negotiations.map((deal) => ({ kind: "negotiation", at: deal.last_inbound_at || deal.updated_at, value: deal })),
+  ].sort((left, right) => new Date(right.at || 0).getTime() - new Date(left.at || 0).getTime());
+  timeline.forEach((item) => digest.appendChild(item.kind === "negotiation"
+    ? renderNegotiationCard(item.value) : renderEmailCard(item.value)));
 
-  let rendered = false;
-  ["urgent", "action_needed", "fyi"].forEach((category) => {
-    const items = byCategory[category] || [];
-    if (!items.length) return;
-    const group = create("section", `cat ${category}`);
-    group.setAttribute("aria-labelledby", `cat-${category}`);
-    const heading = create("h2", "cat-heading", `${Core.CATEGORY_LABELS[category]} — ${items.length}`);
-    heading.id = `cat-${category}`;
-    group.appendChild(heading);
-    items.forEach((email) => group.appendChild(renderEmailCard(email)));
-    digest.appendChild(group);
-    rendered = true;
-  });
-
-  $("todayStatus").classList.toggle("hidden", rendered);
-  if (!rendered) stateCard("todayStatus", "You're all caught up — nothing pending!");
-  digest.classList.toggle("hidden", !rendered);
+  $("todayStatus").classList.toggle("hidden", Boolean(timeline.length));
+  if (!timeline.length) stateCard("todayStatus", "You're all caught up — nothing pending!");
+  digest.classList.toggle("hidden", !timeline.length);
 }
 
 function renderEmailCard(email) {
   const card = create("article", "card");
+  card.appendChild(create("div", "timeline-kicker", `Inbox • ${Core.CATEGORY_LABELS[email.category] || "Message"}`));
   const sender = create("div", "card-sender", email.sender || "Unknown sender");
   const subject = create("div", "card-subject", email.subject || "(No subject)");
   const summary = create("div", "card-summary", email.summary || "No summary available.");
@@ -775,6 +806,7 @@ function renderEmailCard(email) {
   const delivery = Core.deliveryState(email);
   if (delivery === "sent") forgetManualSendKey(email.id);
   if (delivery !== "none") footer.appendChild(create("span", `badge ${delivery}`, delivery === "sent" ? "Reply sent" : delivery === "failed" ? "Send failed" : "Draft ready"));
+  if (email.draft_text && delivery === "none") footer.appendChild(create("span", "badge proposed", "Proposed reply"));
   if (delivery === "draft" && email.gmail_draft_id) {
     const button = create("button", "sendbtn", "Review & send");
     button.type = "button";
@@ -782,8 +814,11 @@ function renderEmailCard(email) {
     footer.appendChild(button);
   }
   if (email.media_kit_label) footer.appendChild(create("span", "tag", `Kit: ${email.media_kit_label}`));
+  if (email.is_test) footer.appendChild(create("span", "badge test", "Test"));
   footer.appendChild(status);
-  card.append(sender, subject, summary, footer);
+  card.append(sender, subject, summary);
+  appendReplyDetails(card, email.draft_text, "See proposed reply");
+  card.appendChild(footer);
   return card;
 }
 

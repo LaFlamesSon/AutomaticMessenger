@@ -701,8 +701,10 @@ Deno.serve(async (req: Request) => {
               latest_message_id: ref.id,
               latest_subject: sanitizeHeader(subject, 300),
               summary: triage.summary,
+              proposed_reply: triage.draft && !draftSafetyViolations(triage.draft).length ? triage.draft : null,
               last_inbound_at: new Date(Number(msg.internalDate ?? Date.now())).toISOString(),
               is_test: false,
+              dismissed_at: null,
               updated_at: new Date().toISOString(),
             };
             const { data: savedNegotiation, error: negotiationError } = await supabase.from("ia_negotiations")

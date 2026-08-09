@@ -140,7 +140,7 @@ test("secondary tabs hydrate from cache and refresh without duplicate requests",
 });
 
 test("Today omits non-actionable Low priority and Filtered out aggregates", () => {
-  const renderBlock = script.match(/function renderDigest\(emails\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  const renderBlock = script.match(/function renderTodayFeed\(emails, negotiations = \[\]\) \{[\s\S]*?\n\}/)?.[0] ?? "";
   assert.match(renderBlock, /\["urgent", "action_needed", "fyi"\]/);
   assert.doesNotMatch(renderBlock, /low_priority|spam_or_poor_fit|handled/);
 });
@@ -194,17 +194,22 @@ test("client targets the audited API actions", () => {
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
-    "tiktok_connect_start", "tiktok_disconnect",
+    "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
-test("negotiations are pinned above Today and never expose a test-fixture send action", () => {
-  assert.match(html, /id="negotiationPanel"/);
-  assert.match(html, /Negotiations — your decision required/);
-  assert.match(script, /renderNegotiations\(result\.negotiations \|\| \[\]\)/);
+test("negotiations share the Today timeline with tier colors, details, replies, and dismissal", () => {
+  assert.doesNotMatch(html, /id="negotiationPanel"/);
+  assert.match(html, /Inbox and negotiation timeline/);
+  assert.match(script, /renderTodayFeed\(result\.emails \|\| \[\], result\.negotiations \|\| \[\]\)/);
+  assert.match(script, /function negotiationTier/);
+  assert.match(script, /What this is about/);
+  assert.match(script, /See proposed reply/);
+  assert.match(script, /api\("negotiation_dismiss"/);
   assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
-  assert.match(css, /\.negotiation-panel/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(css, /\.negotiation-card\.deal-bad/);
+  assert.match(css, /\.negotiation-card\.deal-mid/);
+  assert.match(css, /\.negotiation-card\.deal-good/);
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -313,7 +318,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.0");
+  assert.equal(manifest.version, "0.5.1");
 });
 
 test("focus and reduced-motion styles are present", () => {

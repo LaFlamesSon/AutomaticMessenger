@@ -5,12 +5,15 @@ import test from "node:test";
 const sweep = readFileSync(new URL("../functions/agent-sweep/index.ts", import.meta.url), "utf8");
 const api = readFileSync(new URL("../functions/agent-api/index.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/20260809210839_creator_negotiation_memory.sql", import.meta.url), "utf8");
+const timelineMigration = readFileSync(new URL("../migrations/20260809214727_negotiation_timeline_controls.sql", import.meta.url), "utf8");
 
 test("negotiations deterministically force Review and persist by Gmail thread", () => {
   assert.match(sweep, /extractCommercialTerms\(subject, emailBody\)/);
   assert.match(sweep, /\.eq\("gmail_account_id", account\.id\)\.eq\("thread_id", msg\.threadId\)/);
   assert.match(sweep, /if \(negotiationRequired && decision === "auto_send"\) decision = "draft"/);
   assert.match(sweep, /human_review_required: negotiationRequired/);
+  assert.match(sweep, /proposed_reply: triage\.draft && !draftSafetyViolations\(triage\.draft\)\.length/);
+  assert.match(sweep, /dismissed_at: null/);
 });
 
 test("negotiation storage is owner scoped and not directly exposed", () => {
@@ -22,5 +25,22 @@ test("negotiation storage is owner scoped and not directly exposed", () => {
 test("extension API returns only authenticated owner's active negotiations", () => {
   assert.match(api, /from\("ia_negotiations"\)/);
   assert.match(api, /\.eq\("user_id", user\.id\)\.eq\("human_review_required", true\)/);
+  assert.match(api, /\.is\("dismissed_at", null\)/);
   assert.match(api, /media_kit_rate_update/);
+});
+
+test("dismissal is owner scoped and new inbound terms can resurface a negotiation", () => {
+  assert.match(api, /case "negotiation_dismiss"/);
+  assert.match(api, /\.eq\("id", negotiationId\)\.eq\("user_id", user\.id\)\.is\("dismissed_at", null\)/);
+  assert.match(timelineMigration, /alter table ia_negotiations add column if not exists dismissed_at timestamptz/);
+  assert.match(timelineMigration, /check \(not is_test or thread_id like 'qa-inbox:%'\)/);
+});
+
+test("mixed timeline fixtures are metadata-only and cannot create Gmail drafts or sends", () => {
+  assert.match(timelineMigration, /'qa-inbox-message:campaign-brief-v1'/);
+  assert.match(timelineMigration, /draft_created = false/);
+  assert.match(timelineMigration, /auto_sent = false/);
+  assert.match(timelineMigration, /delivery_status = 'none'/);
+  assert.match(timelineMigration, /gmail_draft_id = null/);
+  assert.doesNotMatch(timelineMigration, /insert into ia_send_attempts/i);
 });

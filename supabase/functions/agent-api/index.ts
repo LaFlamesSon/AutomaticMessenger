@@ -54,6 +54,14 @@ function cleanString(value: unknown, name: string, max: number): string {
   return clean;
 }
 
+function cleanUuid(value: unknown, name: string): string {
+  const id = cleanString(value, name, 36);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new InputError(`${name} must be a UUID`);
+  }
+  return id;
+}
+
 function cleanProviderToken(value: unknown, name: string): string {
   const token = cleanString(value, name, 8192);
   if (token.length < 20 || /\s/.test(token)) throw new InputError(`${name} is invalid`);
@@ -848,7 +856,7 @@ Deno.serve(async (req: Request) => {
         const accountIds = await ownedAccountIds(supabase, user.id);
         if (!accountIds.length) return json({ emails: [], last_run: null });
         const { data: rows, error: emailError } = await supabase.from("ia_processed_emails")
-          .select("id, category, sender, subject, summary, draft_created, draft_text, auto_sent, delivery_status, sent_via, gmail_draft_id, selected_media_kit_id, processed_at")
+          .select("id, category, sender, subject, summary, draft_created, draft_text, auto_sent, delivery_status, sent_via, gmail_draft_id, selected_media_kit_id, processed_at, is_test")
           .in("gmail_account_id", accountIds)
           .gte("processed_at", new Date(Date.now() - 86400_000 * 2).toISOString())
           .order("processed_at", { ascending: false }).limit(100);
@@ -858,8 +866,9 @@ Deno.serve(async (req: Request) => {
           .order("started_at", { ascending: false }).limit(1).maybeSingle();
         if (runError) throw new Error(runError.message);
         const { data: negotiationRows, error: negotiationError } = await supabase.from("ia_negotiations")
-          .select("id,thread_id,brand_name,brand_domain,stage,media_kit_id,current_terms,previous_terms,threshold_status,attention_level,human_review_required,latest_subject,summary,last_inbound_at,is_test,updated_at")
-          .eq("user_id", user.id).eq("human_review_required", true).order("updated_at", { ascending: false }).limit(50);
+          .select("id,thread_id,brand_name,brand_domain,stage,media_kit_id,current_terms,previous_terms,threshold_status,attention_level,human_review_required,latest_subject,summary,proposed_reply,last_inbound_at,is_test,updated_at")
+          .eq("user_id", user.id).eq("human_review_required", true).is("dismissed_at", null)
+          .order("updated_at", { ascending: false }).limit(50);
         if (negotiationError) throw new Error(negotiationError.message);
         const activeNegotiations = (negotiationRows ?? []).filter((row: any) => !["agreed", "declined", "closed"].includes(row.stage));
         const selectedKitIds = Array.from(new Set([
@@ -886,6 +895,17 @@ Deno.serve(async (req: Request) => {
           rate_profile: row.media_kit_id ? kitRates.get(row.media_kit_id) ?? null : null,
         }));
         return json({ emails, negotiations, last_run: lastRun });
+      }
+
+      case "negotiation_dismiss": {
+        const negotiationId = cleanUuid(body.negotiation_id, "negotiation_id");
+        const { data: dismissed, error: dismissError } = await supabase.from("ia_negotiations")
+          .update({ dismissed_at: new Date().toISOString() })
+          .eq("id", negotiationId).eq("user_id", user.id).is("dismissed_at", null)
+          .select("id").maybeSingle();
+        if (dismissError) throw new Error(dismissError.message);
+        if (!dismissed) return json({ error: "negotiation not found" }, 404);
+        return json({ ok: true, negotiation_id: dismissed.id });
       }
 
       case "chat": {

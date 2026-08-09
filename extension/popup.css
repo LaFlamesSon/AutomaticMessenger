@@ -137,9 +137,7 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .mode-badge { padding: 4px 8px; color: var(--good); background: var(--good-soft); }
 .mode-badge.auto { color: var(--accent); background: var(--accent-soft); }
 
-.cat { margin-bottom: 15px; }
-.cat-heading { margin: 0 0 6px; color: var(--soft); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
-.cat.urgent .cat-heading { color: var(--accent); }
+.today-feed { display: flex; flex-direction: column; gap: 9px; }
 .card, .kit-card, .form-card {
   margin-bottom: 9px;
   padding: 11px 12px;
@@ -150,33 +148,37 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .card-sender { font-size: 12.5px; font-weight: 750; }
 .card-subject { margin-top: 2px; }
 .card-summary { margin-top: 3px; color: var(--soft); font-size: 12.5px; }
+.timeline-kicker { margin-bottom: 5px; color: var(--soft); font-size: 10px; font-weight: 850; letter-spacing: .07em; text-transform: uppercase; }
 .cardfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 7px; }
 .badge { padding: 2px 8px; }
 .badge.draft { color: var(--accent); background: var(--accent-soft); }
 .badge.sent { color: var(--good); background: var(--good-soft); }
 .badge.failed { color: var(--bad); background: var(--bad-soft); }
+.badge.proposed { color: var(--focus); background: #e7f0ff; }
 .card-status { width: 100%; color: var(--soft); font-size: 11.5px; }
 .card-status.error { color: var(--bad); }
 .sendbtn { min-height: 28px; padding: 3px 10px; border: 0; border-radius: 99px; color: var(--cream); background: var(--ink); font-size: 12px; }
 
-.negotiation-panel { margin: 0 0 14px; padding: 11px; border: 2px solid var(--bad); border-radius: 12px; background: var(--bad-soft); }
-.negotiation-heading { display: flex; align-items: flex-start; gap: 9px; }
-.negotiation-heading h2 { color: var(--bad); font-size: 14px; }
-.negotiation-heading p { margin-top: 2px; color: #733630; font-size: 11.5px; }
-.negotiation-alert { display: grid; width: 24px; height: 24px; place-items: center; flex: 0 0 auto; border-radius: 50%; color: #fff; background: var(--bad); font-weight: 900; animation: negotiation-pulse 1.8s ease-in-out infinite; }
-.negotiation-list { display: flex; flex-direction: column; gap: 8px; margin-top: 9px; }
-.negotiation-card { padding: 10px; border: 1px solid #dfaaa5; border-radius: 9px; background: #fff; }
+.negotiation-card { border-width: 1px 1px 1px 5px; }
+.negotiation-card.deal-bad { border-color: #bf554c; background: #fff8f7; }
+.negotiation-card.deal-mid { border-color: #d5a72f; background: #fffdf4; }
+.negotiation-card.deal-good { border-color: #428763; background: #f5fcf7; }
 .negotiation-card h3 { margin: 0; font-size: 13.5px; }
 .negotiation-card p { margin-top: 4px; font-size: 12px; }
 .negotiation-terms { color: var(--ink); font-weight: 750; }
 .negotiation-meta { color: var(--soft); }
 .negotiation-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-.badge.critical { color: #fff; background: var(--bad); }
+.badge.deal-bad { color: #fff; background: var(--bad); }
+.badge.deal-mid { color: #704f00; background: #f7df94; }
+.badge.deal-good { color: #fff; background: var(--good); }
 .badge.test { color: #704323; background: #fff0cf; }
-.negotiation-card a { display: inline-flex; margin-top: 8px; color: var(--focus); font-weight: 700; }
+.negotiation-context, .reply-details { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); }
+.negotiation-context summary, .reply-details summary { cursor: pointer; color: var(--focus); font-size: 12px; font-weight: 800; }
+.reply-preview { margin-top: 7px; padding: 9px; border-radius: 8px; color: var(--ink); background: rgba(255,255,255,.75); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.timeline-link { color: var(--focus); font-size: 12px; font-weight: 750; }
+.dismiss-negotiation { margin-left: auto; }
 .rate-fields { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .rate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
-@keyframes negotiation-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(166, 47, 40, .28); } 50% { box-shadow: 0 0 0 6px rgba(166, 47, 40, 0); } }
 
 .ask-card { margin: 0 0 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .ask-title { margin-bottom: 6px; font-size: 12px; }
