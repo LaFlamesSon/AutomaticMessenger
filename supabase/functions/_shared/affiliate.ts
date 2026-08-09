@@ -154,9 +154,19 @@ export function deriveInboxAffiliateAffinity(emails: InboxAffinityEmail[]): Inbo
     const weight = INBOX_CATEGORY_WEIGHT[text(email.category)] ?? 0;
     if (weight <= 0) continue;
     const emailText = normalizedPhrase([email.sender, email.subject, email.summary].filter(Boolean).join(" "));
-    const matches = Object.entries(CATEGORY_TERMS)
+    let matches = Object.entries(CATEGORY_TERMS)
       .filter(([category, aliases]) => [category, ...aliases].some((term) => containsPhrase(emailText, term)))
       .map(([category]) => category);
+    // "Home" is often just a setting (for example, "home workout") rather
+    // than the email's product category. When another category is present,
+    // keep Home only if the message also contains specific home-product
+    // evidence such as decor, furniture, cleaning, or appliances.
+    if (matches.includes("home") && matches.length > 1) {
+      const specificHomeEvidence = CATEGORY_TERMS.home
+        .filter((term) => normalizedPhrase(term) !== "home")
+        .some((term) => containsPhrase(emailText, term));
+      if (!specificHomeEvidence) matches = matches.filter((category) => category !== "home");
+    }
     if (!matches.length) continue;
     matchedMessages.push(matches);
     for (const category of new Set(matches)) {
