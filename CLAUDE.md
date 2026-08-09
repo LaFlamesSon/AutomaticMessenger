@@ -10,9 +10,12 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.4.7** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.0** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
+Today also surfaces creator negotiations that need human review, with the
+current/previous terms, pinned media kit, and threshold result. Negotiation
+messages are always Review-only even when Auto-send is enabled.
 
 ## Safety posture
 
@@ -52,8 +55,8 @@ bookings; it does not claim or provide Google Calendar synchronization.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 33 | Exact/batch Gmail triage plus opt-in, confirmation-required business-domain relationship suggestions for Opportunities |
-| `agent-api` | 19 | Extension API plus creator opportunity preferences, private category metrics, listing-backed affiliate channels, creator-local daily opportunity batching, product matching/ease/earnings estimates, kit-aware Gmail draft preparation, live preview, and explicit idempotent opportunity send |
+| `agent-sweep` | 34 | Gmail triage plus durable, media-kit-pinned creator negotiation detection; active deal terms force urgent human review and can never auto-send |
+| `agent-api` | 21 | Extension API plus creator opportunities, media-kit rate thresholds, negotiation memory in Today, live preview, and explicit idempotent opportunity send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -69,6 +72,14 @@ Core tables include `ia_users`, `ia_gmail_accounts`, `ia_voice_profiles`,
 `ia_chat_messages`. Media-kit metadata is owner-scoped and Storage objects are
 private. Calendar migration `20260721000004_calendar_contact_preferences.sql`
 adds `ia_calendar_preferences` and `ia_bookings`.
+
+Migration `20260809210839_creator_negotiation_memory.sql` adds service-role-only
+`ia_media_kit_rate_profiles`, `ia_negotiations`, and `ia_negotiation_events`.
+The live no-send harness for `yafet2132@gmail.com` is isolated behind three
+`qa-negotiation:*` thread IDs with `is_test=true`; it creates no Gmail message,
+draft, label, or send. If its active media kit had no rate profile, the harness
+added clearly marked temporary demonstration thresholds without overwriting an
+existing profile.
 
 Calendar rows are service-role only under RLS. Security-definer RPCs use an
 empty `search_path`. A GiST exclusion constraint is the authoritative atomic
