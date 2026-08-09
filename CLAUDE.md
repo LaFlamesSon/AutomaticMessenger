@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.2** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.3** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 Today interleaves actionable inbox messages and creator negotiations by event
@@ -22,7 +22,9 @@ Real Gmail drafts now open in an editable extension review dialog. The creator
 can change the bounded reply, replace or remove the single owned media kit, save
 those changes back to the same version-checked Gmail draft, and then explicitly
 send. Real negotiation cards use this same flow through their linked processed
-email; synthetic harness cards remain preview-only.
+email. Synthetic negotiation cards can now create one idempotent, unsent Gmail
+draft addressed back to the connected account; after creation they use the same
+editable review, media-kit swap, and explicit-send flow.
 
 ## Safety posture
 
@@ -63,7 +65,7 @@ email; synthetic harness cards remain preview-only.
 | Function | Version | Purpose |
 |---|---:|---|
 | `agent-sweep` | 36 | Gmail triage plus durable negotiation detection and final safe draft synchronization for negotiation proposals |
-| `agent-api` | 23 | Extension API plus version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and explicit manual send |
+| `agent-api` | 24 | Extension API plus version-checked Gmail draft editing, a test-only self-addressed negotiation draft harness, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and explicit manual send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -82,9 +84,10 @@ adds `ia_calendar_preferences` and `ia_bookings`.
 
 Migration `20260809210839_creator_negotiation_memory.sql` adds service-role-only
 `ia_media_kit_rate_profiles`, `ia_negotiations`, and `ia_negotiation_events`.
-The live no-send harness for `yafet2132@gmail.com` is isolated behind three
-`qa-negotiation:*` thread IDs with `is_test=true`; it creates no Gmail message,
-draft, label, or send. If its active media kit had no rate profile, the harness
+The live negotiation harness for `yafet2132@gmail.com` is isolated behind three
+`qa-negotiation:*` thread IDs with `is_test=true`. The seeded fixtures themselves
+create no Gmail state. An explicit extension click may create one recoverable,
+self-addressed Gmail draft for a fixture, but never sends it. If its active media kit had no rate profile, the harness
 added clearly marked temporary demonstration thresholds without overwriting an
 existing profile.
 
