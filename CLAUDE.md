@@ -7,10 +7,10 @@ safety posture; prefer it over stale conversation history.
 
 CaughtUp is a Gmail inbox agent delivered as a Chrome MV3 extension. It can
 triage recent unprocessed Inbox mail, prepare reviewable replies in the user's learned voice,
-send only through an explicit preview/send flow, attach a matching media kit,
+send only through an explicit user-confirmed flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.4** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.5** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 Today interleaves actionable inbox messages and creator negotiations by event
@@ -24,10 +24,19 @@ has sent a reply in that Gmail thread.
 Real Gmail drafts now open in an editable extension review dialog. The creator
 can change the bounded reply, replace or remove the single owned media kit, save
 those changes back to the same version-checked Gmail draft, and then explicitly
-send. Real negotiation cards use this same flow through their linked processed
-email. Synthetic negotiation cards can now create one idempotent, unsent Gmail
+send. A separate compact Send control on a card re-reads the live Gmail draft,
+shows a recipient confirmation, and sends only the exact verified version.
+Ordinary cards keep proposed reply text inside the Review dialog; negotiation
+cards retain their context and proposed-reply preview. Real negotiation cards use
+the same review/send controls through their linked processed email. Synthetic negotiation cards can now create one idempotent, unsent Gmail
 draft addressed back to the connected account; after creation they use the same
 editable review, media-kit swap, and explicit-send flow.
+
+Ask CaughtUp persists the conversation in `ia_chat_messages`. Explicit, bounded
+communication-style preferences update the owner's version-checked voice profile
+and are confirmed visibly in chat; subsequent chats and sweeps load that profile.
+Edits made in the Review dialog are separately recorded in `ia_draft_edits` for
+style learning.
 
 ## Safety posture
 
@@ -68,7 +77,7 @@ editable review, media-kit swap, and explicit-send flow.
 | Function | Version | Purpose |
 |---|---:|---|
 | `agent-sweep` | 37 | Gmail triage plus reply-stage-gated negotiation detection and final safe draft synchronization for negotiation proposals |
-| `agent-api` | 25 | Extension API plus version-checked Gmail draft editing, controlled ordinary/negotiation inbox harnesses, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and explicit manual send |
+| `agent-api` | 26 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and verified manual send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -100,10 +109,9 @@ database-only display records: `draft_created=false`, `auto_sent=false`,
 `delivery_status=none`, and no Gmail draft ID. Existing Gmail and Auto-send
 state remain untouched.
 
-Extension 0.5.4 adds an authenticated, idempotent **Add 10 normal test emails**
-control. It inserts clearly marked first-contact fixtures only into the connected
-Gmail mailbox and creates self-addressed, unsent review drafts for actionable
-fixtures. It never calls a Gmail send endpoint and creates no negotiation rows.
+Extension 0.5.5 removes the **Add 10 normal test emails** control and its backend
+fixture endpoint. Test messages created by earlier runs were not deleted. Existing
+database-only timeline fixtures remain clearly marked and dismissible.
 
 Calendar rows are service-role only under RLS. Security-definer RPCs use an
 empty `search_path`. A GiST exclusion constraint is the authoritative atomic
