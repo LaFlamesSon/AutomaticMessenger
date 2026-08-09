@@ -6,6 +6,7 @@ const sweep = readFileSync(new URL("../functions/agent-sweep/index.ts", import.m
 const api = readFileSync(new URL("../functions/agent-api/index.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../migrations/20260809210839_creator_negotiation_memory.sql", import.meta.url), "utf8");
 const timelineMigration = readFileSync(new URL("../migrations/20260809214727_negotiation_timeline_controls.sql", import.meta.url), "utf8");
+const visualHarnessMigration = readFileSync(new URL("../migrations/20260809230135_today_visual_harness_55.sql", import.meta.url), "utf8");
 
 test("negotiations deterministically force Review and persist by Gmail thread", () => {
   assert.match(sweep, /extractCommercialTerms\(subject, emailBody\)/);
@@ -60,6 +61,16 @@ test("dismissal is owner scoped and new inbound terms can resurface a negotiatio
   assert.match(api, /\.eq\("id", negotiationId\)\.eq\("user_id", user\.id\)\.is\("dismissed_at", null\)/);
   assert.match(timelineMigration, /alter table ia_negotiations add column if not exists dismissed_at timestamptz/);
   assert.match(timelineMigration, /check \(not is_test or thread_id like 'qa-inbox:%'\)/);
+});
+
+test("Today visual harness adds 38 isolated no-send rows to reach 55 visible test cards", () => {
+  assert.match(visualHarnessMigration, /where lower\(ga\.gmail_address\) = 'yafet2132@gmail\.com'/);
+  assert.match(visualHarnessMigration, /generate_series\(1, 38\)/);
+  assert.equal((visualHarnessMigration.match(/"slug":/g) ?? []).length, 38);
+  assert.match(visualHarnessMigration, /'qa-inbox:visual-v2:' \|\|/);
+  assert.match(visualHarnessMigration, /false, null, false, 'none'/);
+  assert.match(visualHarnessMigration, /is_test = true/);
+  assert.doesNotMatch(visualHarnessMigration, /drafts\/send|messages\/send|auto_send\s*=\s*true/);
 });
 
 test("mixed timeline fixtures are metadata-only and cannot create Gmail drafts or sends", () => {

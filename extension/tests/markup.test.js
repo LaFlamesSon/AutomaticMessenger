@@ -216,7 +216,7 @@ test("negotiations share the Today timeline with tier colors, details, replies, 
   assert.match(script, /deal\.draft_email\?\.gmail_draft_id/);
   assert.match(script, /sendDraftFromCard/);
   assert.match(script, /create\("button", "sendbtn", "Review"\)/);
-  assert.match(script, /create\("button", "sendbtn", "Send"\)/);
+  assert.match(script, /create\("button", "sendbtn direct-send", "Send"\)/);
   assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
   assert.match(css, /\.negotiation-card\.deal-bad/);
   assert.match(css, /\.negotiation-card\.deal-mid/);
@@ -232,6 +232,8 @@ test("ordinary cards hide reply text and offer compact verified card-level send"
   assert.match(script, /api\("send_draft"/);
   assert.match(script, /preview_version: draft\.preview_version/);
   assert.match(css, /\.cardfoot \.compact \{ min-height: 24px/);
+  assert.match(css, /\.sendbtn\.direct-send \{ color: #fff; background: #007aff/);
+  assert.match(css, /\.badge\.test \{ min-height: 24px;[^}]*font-size: 11px/);
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -342,7 +344,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.5");
+  assert.equal(manifest.version, "0.5.6");
 });
 
 test("focus and reduced-motion styles are present", () => {

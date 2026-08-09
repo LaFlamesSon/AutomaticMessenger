@@ -802,7 +802,7 @@ function renderNegotiationCard(deal) {
     review.type = "button";
     review.addEventListener("click", () => openDraftPreview(deal.draft_email, card, review));
     footer.appendChild(review);
-    const send = create("button", "sendbtn", "Send");
+    const send = create("button", "sendbtn direct-send", "Send");
     send.type = "button";
     send.addEventListener("click", () => sendDraftFromCard(deal.draft_email, card, send));
     footer.appendChild(send);
@@ -890,7 +890,7 @@ function renderEmailCard(email) {
     button.type = "button";
     button.addEventListener("click", () => openDraftPreview(email, card, button));
     footer.appendChild(button);
-    const send = create("button", "sendbtn", "Send");
+    const send = create("button", "sendbtn direct-send", "Send");
     send.type = "button";
     send.addEventListener("click", () => sendDraftFromCard(email, card, send));
     footer.appendChild(send);
