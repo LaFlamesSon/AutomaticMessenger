@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.1** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.2** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 Today interleaves actionable inbox messages and creator negotiations by event
@@ -18,6 +18,11 @@ time. Negotiations expose context and a safe proposed reply, use green/yellow/re
 threshold states, pin the relevant media kit, and can be dismissed until new
 inbound activity resurfaces them. Negotiation messages are always Review-only
 even when Auto-send is enabled.
+Real Gmail drafts now open in an editable extension review dialog. The creator
+can change the bounded reply, replace or remove the single owned media kit, save
+those changes back to the same version-checked Gmail draft, and then explicitly
+send. Real negotiation cards use this same flow through their linked processed
+email; synthetic harness cards remain preview-only.
 
 ## Safety posture
 
@@ -57,8 +62,8 @@ even when Auto-send is enabled.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 35 | Gmail triage plus durable, media-kit-pinned negotiation detection, safe proposed replies, and automatic resurfacing on new inbound deal activity |
-| `agent-api` | 22 | Extension API plus mixed Today timeline, owner-scoped negotiation dismissal, creator opportunities, media-kit rate thresholds, and explicit preview/send flows |
+| `agent-sweep` | 36 | Gmail triage plus durable negotiation detection and final safe draft synchronization for negotiation proposals |
+| `agent-api` | 23 | Extension API plus version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and explicit manual send |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
