@@ -654,7 +654,60 @@ function applyDigestResult(result = {}) {
   lastSweepRun = result.last_run || null;
   $("lastRun").textContent = formatLastRun(result.last_run);
   updateModeBadge(result.reply_mode || currentProfile?.reply_mode || "draft_only");
+  renderNegotiations(result.negotiations || []);
   renderDigest(result.emails || []);
+}
+
+function negotiationTerms(terms = {}, currency = "USD") {
+  const parts = [];
+  if (terms.flat_fee_amount !== null && terms.flat_fee_amount !== undefined) {
+    parts.push(`${terms.currency || currency} ${Number(terms.flat_fee_amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} flat`);
+  }
+  if (terms.commission_rate !== null && terms.commission_rate !== undefined) parts.push(`${Number(terms.commission_rate).toFixed(2)}% commission`);
+  if (Array.isArray(terms.deliverables) && terms.deliverables.length) parts.push(terms.deliverables.join(", "));
+  if (terms.usage_rights) parts.push("usage rights");
+  if (terms.exclusivity) parts.push("exclusivity");
+  return parts.join(" · ") || "Payment details are still missing";
+}
+
+function negotiationThresholdLabel(status) {
+  return ({
+    below_minimum: "Below your minimum",
+    within_range: "Within your range",
+    at_or_above_target: "At or above target",
+    insufficient_evidence: "More terms needed",
+    unconfigured: "Set kit thresholds",
+  })[status] || "Review required";
+}
+
+function renderNegotiations(negotiations) {
+  const panel = $("negotiationPanel");
+  const list = $("negotiationList");
+  list.replaceChildren();
+  negotiations.forEach((deal) => {
+    const card = create("article", "negotiation-card");
+    card.appendChild(create("h3", "", deal.brand_name || "Brand negotiation"));
+    card.appendChild(create("p", "negotiation-terms", negotiationTerms(deal.current_terms, deal.rate_profile?.currency)));
+    if (deal.previous_terms && Object.keys(deal.previous_terms).length) {
+      card.appendChild(create("p", "negotiation-meta", `Previous: ${negotiationTerms(deal.previous_terms, deal.rate_profile?.currency)}`));
+    }
+    if (deal.summary) card.appendChild(create("p", "negotiation-meta", deal.summary));
+    const badges = create("div", "negotiation-badges");
+    badges.appendChild(create("span", "badge critical", negotiationThresholdLabel(deal.threshold_status)));
+    badges.appendChild(create("span", "tag", `Stage: ${String(deal.stage || "offer_received").replaceAll("_", " ")}`));
+    badges.appendChild(create("span", "tag", `Kit: ${deal.media_kit_label || "Needs selection"}`));
+    if (deal.is_test) badges.appendChild(create("span", "badge test", "Test negotiation"));
+    card.appendChild(badges);
+    if (!deal.is_test && deal.thread_id) {
+      const link = create("a", "", "Open thread in Gmail");
+      link.href = `https://mail.google.com/mail/u/0/#inbox/${encodeURIComponent(deal.thread_id)}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      card.appendChild(link);
+    }
+    list.appendChild(card);
+  });
+  panel.classList.toggle("hidden", !negotiations.length);
 }
 
 async function loadDigest(options = {}) {
@@ -1322,6 +1375,9 @@ function renderKitCard(kit) {
   (kit.brand_names || []).forEach((brand) => tags.appendChild(create("span", "tag", `Brand: ${brand}`)));
   (kit.sender_domains || []).forEach((domain) => tags.appendChild(create("span", "tag", domain)));
   (kit.keywords || []).forEach((keyword) => tags.appendChild(create("span", "tag", `Keyword: ${keyword}`)));
+  const rate = kit.rate_profile;
+  if (rate?.flat_fee_floor !== null && rate?.flat_fee_floor !== undefined) tags.appendChild(create("span", "tag", `${rate.currency || "USD"} ${Number(rate.flat_fee_floor).toLocaleString()} minimum`));
+  if (rate?.commission_floor !== null && rate?.commission_floor !== undefined) tags.appendChild(create("span", "tag", `${Number(rate.commission_floor).toFixed(2)}% commission minimum`));
   if (kit.allow_auto_send) tags.appendChild(create("span", "tag", "Auto-attach allowed"));
   if (tags.childElementCount) card.appendChild(tags);
   const actions = create("div", "kit-actions");
@@ -1361,6 +1417,14 @@ function openKitEdit(kit) {
   $("editKitBrands").value = (kit.brand_names || []).join(", ");
   $("editKitDomains").value = (kit.sender_domains || []).join(", ");
   $("editKitKeywords").value = (kit.keywords || []).join(", ");
+  const rate = kit.rate_profile || {};
+  $("editKitCurrency").value = rate.currency || "USD";
+  $("editKitFlatFloor").value = rate.flat_fee_floor ?? "";
+  $("editKitFlatTarget").value = rate.flat_fee_target ?? "";
+  $("editKitCommissionFloor").value = rate.commission_floor ?? "";
+  $("editKitCommissionTarget").value = rate.commission_target ?? "";
+  $("editKitHybridFloor").value = rate.hybrid_guarantee_floor ?? "";
+  $("editKitNegotiationNotes").value = rate.negotiation_notes || "";
   setStatus("kitEditStatus", "");
   $("kitEditDialog").showModal();
   $("editKitLabel").focus();
@@ -1390,6 +1454,18 @@ $("kitEditForm").addEventListener("submit", async (event) => {
         brand_names: Core.normalizeTags($("editKitBrands").value),
         sender_domains: Core.normalizeDomains($("editKitDomains").value),
         keywords: Core.normalizeTags($("editKitKeywords").value, 30),
+      },
+    });
+    await api("media_kit_rate_update", {
+      id: pendingKitEdit.id,
+      profile: {
+        currency: $("editKitCurrency").value,
+        flat_fee_floor: $("editKitFlatFloor").value,
+        flat_fee_target: $("editKitFlatTarget").value,
+        commission_floor: $("editKitCommissionFloor").value,
+        commission_target: $("editKitCommissionTarget").value,
+        hybrid_guarantee_floor: $("editKitHybridFloor").value,
+        negotiation_notes: $("editKitNegotiationNotes").value.trim(),
       },
     });
     pendingKitEdit = null;

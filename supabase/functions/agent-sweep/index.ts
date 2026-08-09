@@ -28,6 +28,9 @@ import {
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
 import { hasLaterOwnerAction, isOwnerAction } from "../_shared/gmail.ts";
 import { senderBusinessDomain } from "../_shared/opportunities.ts";
+import {
+  evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage,
+} from "../_shared/negotiations.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
@@ -561,6 +564,7 @@ Deno.serve(async (req: Request) => {
           const emailBody = extractBody(msg.payload);
           const senderAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).toLowerCase();
           const senderDomain = senderAddr.split("@")[1] ?? "";
+          const commercialTerms = extractCommercialTerms(subject, emailBody);
           const matchedRules = (senderRules ?? []).filter((rule: any) =>
             rule.match_type === "email"
               ? rule.match_value.toLowerCase() === senderAddr
@@ -580,6 +584,25 @@ Deno.serve(async (req: Request) => {
               draft: null,
               wants_portfolio: false,
               missing_required: [],
+              confidence: 1,
+            };
+          }
+
+          const { data: existingNegotiation, error: existingNegotiationError } = await supabase
+            .from("ia_negotiations").select("id,stage,media_kit_id,current_terms,threshold_status,brand_name,brand_domain")
+            .eq("gmail_account_id", account.id).eq("thread_id", msg.threadId).maybeSingle();
+          if (existingNegotiationError) throw new Error("negotiation memory unavailable");
+          const activeNegotiation = existingNegotiation && !["agreed", "declined", "closed"].includes(existingNegotiation.stage);
+          const negotiationRequired = triage.category !== "spam_or_poor_fit" && (commercialTerms.detected || Boolean(activeNegotiation));
+          if (negotiationRequired) {
+            triage = {
+              ...triage,
+              category: "urgent",
+              summary: commercialTerms.counteroffer
+                ? "A brand counteroffer requires your decision."
+                : commercialTerms.detected
+                ? "Commercial terms require your review."
+                : "An active brand negotiation requires your review.",
               confidence: 1,
             };
           }
@@ -643,6 +666,61 @@ Deno.serve(async (req: Request) => {
             const kitCandidates = (mediaKits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for }));
             selectedKit = selectMediaKit(kitCandidates as MediaKitCandidate[], senderAddr, subject, emailBody);
           }
+          let negotiationId: string | null = null;
+          if (negotiationRequired) {
+            const kitCandidates = (mediaKits ?? []).map((kit: any) => ({ ...kit, description: kit.best_for }));
+            const pinnedKit = existingNegotiation?.media_kit_id
+              ? kitCandidates.find((kit: any) => kit.id === existingNegotiation.media_kit_id) ?? null
+              : selectMediaKit(kitCandidates as MediaKitCandidate[], senderAddr, subject, emailBody);
+            let rateProfile: any = null;
+            if (pinnedKit?.id) {
+              const { data, error } = await supabase.from("ia_media_kit_rate_profiles")
+                .select("currency,flat_fee_floor,flat_fee_target,commission_floor,commission_target,hybrid_guarantee_floor")
+                .eq("user_id", account.user_id).eq("media_kit_id", pinnedKit.id).maybeSingle();
+              if (error) throw new Error("media kit negotiation thresholds unavailable");
+              rateProfile = data;
+            }
+            const currentTerms = commercialTerms.detected ? commercialTerms : existingNegotiation?.current_terms ?? commercialTerms;
+            const thresholdStatus = commercialTerms.detected
+              ? evaluateCommercialTerms(commercialTerms, rateProfile)
+              : existingNegotiation?.threshold_status ?? "unconfigured";
+            const negotiationRow = {
+              user_id: account.user_id,
+              gmail_account_id: account.id,
+              thread_id: msg.threadId,
+              brand_name: existingNegotiation?.brand_name ?? suggestedBrandName(from, senderDomain),
+              brand_domain: existingNegotiation?.brand_domain || senderDomain,
+              stage: negotiationStage(Boolean(existingNegotiation), commercialTerms),
+              media_kit_id: pinnedKit?.id ?? existingNegotiation?.media_kit_id ?? null,
+              current_terms: currentTerms,
+              previous_terms: commercialTerms.detected && existingNegotiation?.current_terms
+                ? existingNegotiation.current_terms : null,
+              threshold_status: thresholdStatus,
+              attention_level: "critical",
+              human_review_required: true,
+              latest_message_id: ref.id,
+              latest_subject: sanitizeHeader(subject, 300),
+              summary: triage.summary,
+              last_inbound_at: new Date(Number(msg.internalDate ?? Date.now())).toISOString(),
+              is_test: false,
+              updated_at: new Date().toISOString(),
+            };
+            const { data: savedNegotiation, error: negotiationError } = await supabase.from("ia_negotiations")
+              .upsert(negotiationRow, { onConflict: "gmail_account_id,thread_id" }).select("id").single();
+            if (negotiationError || !savedNegotiation) throw new Error("negotiation memory could not be saved");
+            negotiationId = savedNegotiation.id;
+            const { error: eventError } = await supabase.from("ia_negotiation_events").upsert({
+              negotiation_id: negotiationId,
+              user_id: account.user_id,
+              gmail_message_id: ref.id,
+              direction: "inbound",
+              event_type: negotiationEventType(Boolean(existingNegotiation), commercialTerms),
+              terms: currentTerms,
+              summary: triage.summary,
+              is_test: false,
+            }, { onConflict: "negotiation_id,gmail_message_id", ignoreDuplicates: true });
+            if (eventError) throw new Error("negotiation event could not be saved");
+          }
           const triageSafety = triage.draft ? draftSafetyViolations(triage.draft) : [];
           let decision = deliveryDecision({
             category: triage.category,
@@ -657,6 +735,7 @@ Deno.serve(async (req: Request) => {
             !draftSafetyViolations(triage.draft).length) decision = "draft";
           if (matchedRules.some((rule: any) => rule.action === "never_draft")) decision = "none";
           if (decision === "auto_send" && matchedRules.some((rule: any) => rule.action === "require_approval")) decision = "draft";
+          if (negotiationRequired && decision === "auto_send") decision = "draft";
           if (triageSafety.length) decision = "none";
 
           let draftCreated = false;
@@ -766,6 +845,8 @@ Deno.serve(async (req: Request) => {
             sent_via: autoSent ? "auto" : null, gmail_sent_message_id: gmailSentMessageId,
             sent_at: autoSent ? new Date().toISOString() : null,
             selected_media_kit_id: attachments.length ? selectedKit?.id ?? null : null,
+            negotiation_id: negotiationId,
+            human_review_required: negotiationRequired,
           });
           if (insertError) throw new Error(`processed email: ${insertError.message}`);
           await gmailPost(token, `/messages/${ref.id}/modify`, { addLabelIds: [labelId] });

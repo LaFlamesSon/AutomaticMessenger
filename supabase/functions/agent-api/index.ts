@@ -857,17 +857,35 @@ Deno.serve(async (req: Request) => {
           .select("finished_at, status, gmail_account_id").in("gmail_account_id", accountIds)
           .order("started_at", { ascending: false }).limit(1).maybeSingle();
         if (runError) throw new Error(runError.message);
-        const selectedKitIds = Array.from(new Set((rows ?? []).map((row: any) => row.selected_media_kit_id).filter(Boolean)));
+        const { data: negotiationRows, error: negotiationError } = await supabase.from("ia_negotiations")
+          .select("id,thread_id,brand_name,brand_domain,stage,media_kit_id,current_terms,previous_terms,threshold_status,attention_level,human_review_required,latest_subject,summary,last_inbound_at,is_test,updated_at")
+          .eq("user_id", user.id).eq("human_review_required", true).order("updated_at", { ascending: false }).limit(50);
+        if (negotiationError) throw new Error(negotiationError.message);
+        const activeNegotiations = (negotiationRows ?? []).filter((row: any) => !["agreed", "declined", "closed"].includes(row.stage));
+        const selectedKitIds = Array.from(new Set([
+          ...(rows ?? []).map((row: any) => row.selected_media_kit_id),
+          ...activeNegotiations.map((row: any) => row.media_kit_id),
+        ].filter(Boolean)));
         let kitLabels = new Map<string, string>();
+        let kitRates = new Map<string, any>();
         if (selectedKitIds.length) {
           const { data: ownedKits, error: kitError } = await supabase.from("ia_media_kits").select("id, label")
             .eq("user_id", user.id).in("id", selectedKitIds);
           if (kitError) throw new Error(kitError.message);
           kitLabels = new Map((ownedKits ?? []).map((kit: any) => [kit.id, kit.label]));
+          const { data: rates, error: rateError } = await supabase.from("ia_media_kit_rate_profiles")
+            .select("media_kit_id,currency,flat_fee_floor,flat_fee_target,commission_floor,commission_target,hybrid_guarantee_floor,negotiation_notes")
+            .eq("user_id", user.id).in("media_kit_id", selectedKitIds);
+          if (rateError) throw new Error(rateError.message);
+          kitRates = new Map((rates ?? []).map((rate: any) => [rate.media_kit_id, rate]));
         }
         const emails = (rows ?? []).map((row: any) => ({ ...row,
           media_kit_label: row.selected_media_kit_id ? kitLabels.get(row.selected_media_kit_id) ?? null : null }));
-        return json({ emails, last_run: lastRun });
+        const negotiations = activeNegotiations.map((row: any) => ({ ...row,
+          media_kit_label: row.media_kit_id ? kitLabels.get(row.media_kit_id) ?? null : null,
+          rate_profile: row.media_kit_id ? kitRates.get(row.media_kit_id) ?? null : null,
+        }));
+        return json({ emails, negotiations, last_run: lastRun });
       }
 
       case "chat": {
@@ -1793,9 +1811,50 @@ Deno.serve(async (req: Request) => {
           .select("id, label, best_for, original_filename, mime_type, byte_size, brand_names, sender_domains, keywords, is_default, auto_attach, status, created_at, updated_at")
           .eq("user_id", user.id).eq("status", "active").order("created_at", { ascending: false });
         if (error) throw new Error(error.message);
+        const kitIds = (data ?? []).map((kit: any) => kit.id);
+        const { data: rates, error: rateError } = kitIds.length
+          ? await supabase.from("ia_media_kit_rate_profiles")
+            .select("media_kit_id,currency,flat_fee_floor,flat_fee_target,commission_floor,commission_target,hybrid_guarantee_floor,negotiation_notes")
+            .eq("user_id", user.id).in("media_kit_id", kitIds)
+          : { data: [], error: null };
+        if (rateError) throw new Error(rateError.message);
+        const rateByKit = new Map((rates ?? []).map((rate: any) => [rate.media_kit_id, rate]));
         return json({ kits: (data ?? []).map((kit: any) => ({
           ...kit, description: kit.best_for, allow_auto_send: kit.auto_attach,
+          rate_profile: rateByKit.get(kit.id) ?? null,
         })) });
+      }
+
+      case "media_kit_rate_update": {
+        const kitId = cleanString(body.id ?? "", "id", 100);
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(kitId)) throw new InputError("id is invalid");
+        const { data: kit, error: kitError } = await supabase.from("ia_media_kits").select("id")
+          .eq("id", kitId).eq("user_id", user.id).neq("status", "archived").maybeSingle();
+        if (kitError) throw new Error(kitError.message);
+        if (!kit) return json({ error: "not found" }, 404);
+        const profile = body.profile ?? {};
+        const rate = {
+          user_id: user.id, media_kit_id: kit.id,
+          currency: cleanCurrency(profile.currency) ?? "USD",
+          flat_fee_floor: cleanOptionalNumber(profile.flat_fee_floor, "flat_fee_floor", 0, 1_000_000_000),
+          flat_fee_target: cleanOptionalNumber(profile.flat_fee_target, "flat_fee_target", 0, 1_000_000_000),
+          commission_floor: cleanOptionalNumber(profile.commission_floor, "commission_floor", 0, 100),
+          commission_target: cleanOptionalNumber(profile.commission_target, "commission_target", 0, 100),
+          hybrid_guarantee_floor: cleanOptionalNumber(profile.hybrid_guarantee_floor, "hybrid_guarantee_floor", 0, 1_000_000_000),
+          negotiation_notes: cleanString(profile.negotiation_notes ?? "", "negotiation_notes", 1000),
+          updated_at: new Date().toISOString(),
+        };
+        if (rate.flat_fee_floor !== null && rate.flat_fee_target !== null && rate.flat_fee_target < rate.flat_fee_floor) {
+          throw new InputError("flat_fee_target must be at least the floor");
+        }
+        if (rate.commission_floor !== null && rate.commission_target !== null && rate.commission_target < rate.commission_floor) {
+          throw new InputError("commission_target must be at least the floor");
+        }
+        const { data: saved, error: saveError } = await supabase.from("ia_media_kit_rate_profiles")
+          .upsert(rate, { onConflict: "media_kit_id" })
+          .select("media_kit_id,currency,flat_fee_floor,flat_fee_target,commission_floor,commission_target,hybrid_guarantee_floor,negotiation_notes").single();
+        if (saveError) throw new Error(saveError.message);
+        return json({ ok: true, rate_profile: saved });
       }
 
       case "media_kit_upload_prepare": {

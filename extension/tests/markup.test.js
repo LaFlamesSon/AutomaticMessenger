@@ -187,7 +187,7 @@ test("dynamic rendering avoids innerHTML", () => {
 test("client targets the audited API actions", () => {
   [
     "digest", "chat", "draft_get", "send_draft", "sweep", "profile_get", "profile_set",
-    "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list",
+    "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list", "media_kit_rate_update",
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
     "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
@@ -196,6 +196,15 @@ test("client targets the audited API actions", () => {
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
     "tiktok_connect_start", "tiktok_disconnect",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
+});
+
+test("negotiations are pinned above Today and never expose a test-fixture send action", () => {
+  assert.match(html, /id="negotiationPanel"/);
+  assert.match(html, /Negotiations — your decision required/);
+  assert.match(script, /renderNegotiations\(result\.negotiations \|\| \[\]\)/);
+  assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
+  assert.match(css, /\.negotiation-panel/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -304,7 +313,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.4.9");
+  assert.equal(manifest.version, "0.5.0");
 });
 
 test("focus and reduced-motion styles are present", () => {

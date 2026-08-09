@@ -52,6 +52,13 @@
         <div id="messages" class="ask-messages hidden" role="log" aria-live="polite" aria-label="CaughtUp answers"></div>
         <p id="chatStatus" class="status-text" role="status" aria-live="polite"></p>
       </section>
+      <section id="negotiationPanel" class="negotiation-panel hidden" aria-labelledby="negotiationTitle">
+        <div class="negotiation-heading">
+          <span class="negotiation-alert" aria-hidden="true">!</span>
+          <div><h2 id="negotiationTitle">Negotiations — your decision required</h2><p>Commercial terms are always held for your review.</p></div>
+        </div>
+        <div id="negotiationList" class="negotiation-list"></div>
+      </section>
       <div id="todayStatus" class="state-card" role="status" aria-live="polite">Loading your inbox&hellip;</div>
       <div id="digest" class="hidden"></div>
     </section>
@@ -463,6 +470,20 @@
       <label for="editKitBrands">Brand names</label><input id="editKitBrands" maxlength="400">
       <label for="editKitDomains">Brand domains</label><input id="editKitDomains" maxlength="400">
       <label for="editKitKeywords">Keywords</label><input id="editKitKeywords" maxlength="400">
+      <fieldset class="rate-fields">
+        <legend>Negotiation thresholds</legend>
+        <p class="hint">These guide offer alerts. CaughtUp never accepts or counters automatically.</p>
+        <label for="editKitCurrency">Currency</label>
+        <select id="editKitCurrency"><option>USD</option><option>CAD</option><option>GBP</option><option>EUR</option><option>AUD</option></select>
+        <div class="rate-grid">
+          <div><label for="editKitFlatFloor">Minimum flat fee</label><input id="editKitFlatFloor" type="number" min="0" step="0.01"></div>
+          <div><label for="editKitFlatTarget">Target flat fee</label><input id="editKitFlatTarget" type="number" min="0" step="0.01"></div>
+          <div><label for="editKitCommissionFloor">Minimum commission %</label><input id="editKitCommissionFloor" type="number" min="0" max="100" step="0.01"></div>
+          <div><label for="editKitCommissionTarget">Target commission %</label><input id="editKitCommissionTarget" type="number" min="0" max="100" step="0.01"></div>
+        </div>
+        <label for="editKitHybridFloor">Minimum hybrid guarantee</label><input id="editKitHybridFloor" type="number" min="0" step="0.01">
+        <label for="editKitNegotiationNotes">Negotiation notes</label><textarea id="editKitNegotiationNotes" maxlength="1000" rows="2" placeholder="Usage rights, exclusivity, or deliverable boundaries"></textarea>
+      </fieldset>
       <p id="kitEditStatus" class="status-text" role="status" aria-live="assertive"></p>
       <div class="button-row">
         <button id="cancelKitEdit" type="button" class="ghost">Cancel</button>
