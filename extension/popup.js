@@ -711,6 +711,24 @@ async function dismissNegotiation(deal, card, button) {
   }
 }
 
+async function createNegotiationTestDraft(deal, card, button) {
+  setBusy(button, true, "Creating draft…");
+  const status = card.querySelector(".card-status");
+  status.textContent = "";
+  status.classList.remove("error");
+  try {
+    const result = await api("negotiation_test_draft_create", { negotiation_id: deal.id }, { timeout: 25000 });
+    status.textContent = result.already_created
+      ? "Your existing unsent Gmail test draft is ready."
+      : "Unsent self-addressed Gmail test draft created.";
+    await loadDigest({ quiet: true });
+  } catch (error) {
+    status.textContent = Core.safeErrorMessage(error);
+    status.classList.add("error");
+    setBusy(button, false);
+  }
+}
+
 function renderNegotiationCard(deal) {
   const tier = negotiationTier(deal.threshold_status);
   const card = create("article", `card negotiation-card deal-${tier}`);
@@ -734,14 +752,20 @@ function renderNegotiationCard(deal) {
   }
   context.appendChild(create("p", "negotiation-meta", "CaughtUp will not send or accept negotiation terms without your review."));
   card.appendChild(context);
-  appendReplyDetails(card, deal.proposed_reply, "See proposed reply");
+  appendReplyDetails(card, deal.proposed_reply, "Preview proposed reply");
 
   const footer = create("div", "cardfoot");
-  if (!deal.is_test && deal.draft_email?.gmail_draft_id) {
+  if (deal.draft_email?.gmail_draft_id) {
     const review = create("button", "sendbtn", "Review, edit & send");
     review.type = "button";
     review.addEventListener("click", () => openDraftPreview(deal.draft_email, card, review));
     footer.appendChild(review);
+  } else if (deal.is_test) {
+    const createDraft = create("button", "sendbtn", "Create editable test draft");
+    createDraft.type = "button";
+    createDraft.title = "Creates one unsent Gmail draft addressed to your own connected account.";
+    createDraft.addEventListener("click", () => createNegotiationTestDraft(deal, card, createDraft));
+    footer.appendChild(createDraft);
   }
   if (!deal.is_test && deal.thread_id) {
     const link = create("a", "timeline-link", "Open Gmail");

@@ -199,7 +199,7 @@ test("client targets the audited API actions", () => {
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
-    "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss",
+    "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss", "negotiation_test_draft_create",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -209,8 +209,10 @@ test("negotiations share the Today timeline with tier colors, details, replies, 
   assert.match(script, /renderTodayFeed\(result\.emails \|\| \[\], result\.negotiations \|\| \[\]\)/);
   assert.match(script, /function negotiationTier/);
   assert.match(script, /What this is about/);
-  assert.match(script, /See proposed reply/);
+  assert.match(script, /Preview proposed reply/);
   assert.match(script, /api\("negotiation_dismiss"/);
+  assert.match(script, /api\("negotiation_test_draft_create"/);
+  assert.match(script, /Create editable test draft/);
   assert.match(script, /deal\.draft_email\?\.gmail_draft_id/);
   assert.match(script, /Review, edit & send/);
   assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
@@ -325,7 +327,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.2");
+  assert.equal(manifest.version, "0.5.3");
 });
 
 test("focus and reduced-motion styles are present", () => {

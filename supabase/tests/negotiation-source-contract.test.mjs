@@ -38,6 +38,21 @@ test("negotiation draft edits remain manual and update only owned negotiation me
   assert.doesNotMatch(api, /case "draft_update"[\s\S]*?drafts\/send/);
 });
 
+test("test negotiations can create one recoverable self-addressed Gmail draft without sending", () => {
+  assert.match(api, /case "negotiation_test_draft_create"/);
+  assert.match(api, /\.eq\("id", negotiationId\)\.eq\("user_id", user\.id\)\.eq\("is_test", true\)/);
+  assert.match(api, /rfc822msgid:\$\{messageId\}/);
+  assert.match(api, /buildOpportunityMime\(account\.gmail_address, subject, draftText, kit\.attachment, rfcMessageId\)/);
+  assert.match(api, /gmail_message_id: gmailMessageId/);
+  assert.match(api, /thread_id: testThreadId/);
+  assert.match(api, /auto_sent: false/);
+  assert.match(api, /delivery_status: "draft"/);
+  assert.match(api, /negotiation_id: negotiation\.id/);
+  const action = api.match(/case "negotiation_test_draft_create": \{([\s\S]*?)\n      case "sweep"/)?.[1] ?? "";
+  assert.match(action, /users\/me\/drafts"/);
+  assert.doesNotMatch(action, /drafts\/send|messages\/send/);
+});
+
 test("dismissal is owner scoped and new inbound terms can resurface a negotiation", () => {
   assert.match(api, /case "negotiation_dismiss"/);
   assert.match(api, /\.eq\("id", negotiationId\)\.eq\("user_id", user\.id\)\.is\("dismissed_at", null\)/);

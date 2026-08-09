@@ -255,10 +255,22 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(value);
 }
 
-function buildOpportunityMime(to: string, subject: string, bodyText: string, attachment?: { name: string; mime: string; b64: string }): string {
+function buildOpportunityMime(
+  to: string,
+  subject: string,
+  bodyText: string,
+  attachment?: { name: string; mime: string; b64: string },
+  messageId?: string,
+): string {
   const recipient = parseStrictRecipient(to);
   if (!recipient) throw new InputError("contact_email is invalid");
-  const headers = [`To: ${recipient}`, `Subject: ${sanitizeHeader(subject, 200)}`, "MIME-Version: 1.0"];
+  const safeMessageId = messageId && /^<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>$/.test(messageId) ? messageId : "";
+  const headers = [
+    `To: ${recipient}`,
+    `Subject: ${sanitizeHeader(subject, 200)}`,
+    safeMessageId ? `Message-ID: ${safeMessageId}` : "",
+    "MIME-Version: 1.0",
+  ].filter(Boolean);
   if (!attachment) return b64urlEncode([...headers, 'Content-Type: text/plain; charset="UTF-8"', "", bodyText].join("\r\n"));
   const boundary = `caughtup-${crypto.randomUUID()}`;
   const filename = quoteFilename(attachment.name);
@@ -269,6 +281,17 @@ function buildOpportunityMime(to: string, subject: string, bodyText: string, att
     `Content-Disposition: attachment; filename="${filename}"`, "Content-Transfer-Encoding: base64", "",
     ...(attachment.b64.match(/.{1,76}/g) ?? []), `--${boundary}--`,
   ].join("\r\n"));
+}
+
+async function findDraftByRfcMessageId(accessToken: string, messageId: string): Promise<{ id: string; message?: any } | null> {
+  const query = new URLSearchParams({ q: `rfc822msgid:${messageId}`, maxResults: "10" });
+  const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/drafts?${query}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!response.ok) return null;
+  const payload = await response.json();
+  const candidate = Array.isArray(payload?.drafts) ? payload.drafts[0] : null;
+  return candidate?.id ? candidate : null;
 }
 
 function buildEditableReplyMime(input: {
@@ -1795,6 +1818,95 @@ Deno.serve(async (req: Request) => {
           selected_media_kit_id: mediaKitId,
           media_kit_label: nextAttachment.label ?? null,
         });
+      }
+
+      case "negotiation_test_draft_create": {
+        const negotiationId = cleanUuid(body.negotiation_id, "negotiation_id");
+        const { data: negotiation, error: negotiationError } = await supabase.from("ia_negotiations")
+          .select("id,gmail_account_id,brand_name,latest_subject,summary,proposed_reply,media_kit_id,is_test,dismissed_at")
+          .eq("id", negotiationId).eq("user_id", user.id).eq("is_test", true).maybeSingle();
+        if (negotiationError) throw new Error(negotiationError.message);
+        if (!negotiation || negotiation.dismissed_at) return json({ error: "test negotiation not found" }, 404);
+
+        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
+          .select("id,gmail_address,refresh_token")
+          .eq("id", negotiation.gmail_account_id).eq("user_id", user.id).maybeSingle();
+        if (accountError) throw new Error(accountError.message);
+        if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
+
+        const gmailMessageId = `qa-inbox-message:editable-negotiation:${negotiation.id}`;
+        const testThreadId = `qa-inbox:editable-negotiation:${negotiation.id}`;
+        const rfcMessageId = `<caughtup-test-${negotiation.id}@caughtup.local>`;
+        const { data: existing, error: existingError } = await supabase.from("ia_processed_emails")
+          .select("id,gmail_draft_id,gmail_draft_message_id,delivery_status")
+          .eq("gmail_account_id", account.id).eq("gmail_message_id", gmailMessageId).maybeSingle();
+        if (existingError) throw new Error(existingError.message);
+
+        const accessToken = await gmailAccessToken(account.refresh_token, CFG);
+        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
+        if (existing?.gmail_draft_id && existing.delivery_status === "draft") {
+          const current = await liveDraft(accessToken, existing.gmail_draft_id);
+          if (current) {
+            return json({ ok: true, created_in_gmail: true, already_created: true, auto_sent: false, draft_email: {
+              id: existing.id, gmail_draft_id: existing.gmail_draft_id, delivery_status: "draft", draft_created: true,
+            } });
+          }
+        }
+
+        const proposedReply = String(negotiation.proposed_reply ?? "").trim();
+        const proposedWordCount = (proposedReply.match(/\S+/g) ?? []).length;
+        const safeFallback = "Thanks for the update. I'd like to review the complete campaign scope. Could you confirm the deliverables, usage period, exclusivity terms, payment schedule, and timeline?\n\nBest,\nYafet";
+        const draftText = proposedReply && proposedWordCount <= 150 && !draftSafetyViolations(proposedReply).length
+          ? proposedReply : safeFallback;
+        if (draftSafetyViolations(draftText).length) return json({ error: "test draft failed safety review", code: "review_required" }, 422);
+        const kit = negotiation.media_kit_id
+          ? await opportunityAttachment(supabase, user.id, negotiation.media_kit_id) : {};
+        if (negotiation.media_kit_id && !kit.attachment) return json({ error: "media kit is unavailable" }, 422);
+        const subject = `[TEST] Editable negotiation reply — ${sanitizeHeader(negotiation.brand_name || "Brand", 120)}`;
+
+        let gmailDraft = await findDraftByRfcMessageId(accessToken, rfcMessageId);
+        let alreadyCreated = Boolean(gmailDraft);
+        if (!gmailDraft) {
+          const draftResponse = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
+            method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ message: {
+              raw: buildOpportunityMime(account.gmail_address, subject, draftText, kit.attachment, rfcMessageId),
+            } }),
+          });
+          if (!draftResponse.ok) return json({ error: "Gmail test draft creation failed", code: "gmail_error" }, 502);
+          gmailDraft = await draftResponse.json();
+          alreadyCreated = false;
+        }
+        if (!gmailDraft?.id) return json({ error: "Gmail test draft could not be verified", code: "draft_update_reconcile" }, 503);
+        const current = await liveDraft(accessToken, gmailDraft.id);
+        if (!current || current.recipient.toLowerCase() !== String(account.gmail_address).toLowerCase()) {
+          return json({ error: "Gmail test draft could not be verified", code: "draft_update_reconcile" }, 503);
+        }
+
+        const now = new Date().toISOString();
+        const { data: stored, error: stateError } = await supabase.from("ia_processed_emails").upsert({
+          gmail_account_id: account.id,
+          gmail_message_id: gmailMessageId,
+          thread_id: testThreadId,
+          category: "urgent",
+          sender: account.gmail_address,
+          subject,
+          summary: `Editable no-send harness for the ${negotiation.brand_name || "brand"} negotiation.`,
+          draft_created: true,
+          draft_text: draftText,
+          auto_sent: false,
+          delivery_status: "draft",
+          gmail_draft_id: gmailDraft.id,
+          gmail_draft_message_id: gmailDraft.message?.id ?? existing?.gmail_draft_message_id ?? null,
+          selected_media_kit_id: negotiation.media_kit_id ?? null,
+          negotiation_id: negotiation.id,
+          human_review_required: true,
+          processed_at: now,
+          is_test: true,
+        }, { onConflict: "gmail_account_id,gmail_message_id" })
+          .select("id,gmail_draft_id,delivery_status,draft_created").single();
+        if (stateError) return json({ error: "Gmail draft created; state reconciliation required", code: "draft_update_reconcile" }, 503);
+        return json({ ok: true, created_in_gmail: true, already_created: alreadyCreated, auto_sent: false, draft_email: stored });
       }
 
       case "sweep": {
