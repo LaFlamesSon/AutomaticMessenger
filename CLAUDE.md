@@ -10,12 +10,14 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit preview/send flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.0** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.1** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
-Today also surfaces creator negotiations that need human review, with the
-current/previous terms, pinned media kit, and threshold result. Negotiation
-messages are always Review-only even when Auto-send is enabled.
+Today interleaves actionable inbox messages and creator negotiations by event
+time. Negotiations expose context and a safe proposed reply, use green/yellow/red
+threshold states, pin the relevant media kit, and can be dismissed until new
+inbound activity resurfaces them. Negotiation messages are always Review-only
+even when Auto-send is enabled.
 
 ## Safety posture
 
@@ -55,8 +57,8 @@ messages are always Review-only even when Auto-send is enabled.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 34 | Gmail triage plus durable, media-kit-pinned creator negotiation detection; active deal terms force urgent human review and can never auto-send |
-| `agent-api` | 21 | Extension API plus creator opportunities, media-kit rate thresholds, negotiation memory in Today, live preview, and explicit idempotent opportunity send |
+| `agent-sweep` | 35 | Gmail triage plus durable, media-kit-pinned negotiation detection, safe proposed replies, and automatic resurfacing on new inbound deal activity |
+| `agent-api` | 22 | Extension API plus mixed Today timeline, owner-scoped negotiation dismissal, creator opportunities, media-kit rate thresholds, and explicit preview/send flows |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -80,6 +82,12 @@ The live no-send harness for `yafet2132@gmail.com` is isolated behind three
 draft, label, or send. If its active media kit had no rate profile, the harness
 added clearly marked temporary demonstration thresholds without overwriting an
 existing profile.
+
+Migration `20260809214727_negotiation_timeline_controls.sql` adds proposal and
+dismissal memory and three `qa-inbox:*` processed-email fixtures. These are
+database-only display records: `draft_created=false`, `auto_sent=false`,
+`delivery_status=none`, and no Gmail draft ID. Existing Gmail and Auto-send
+state remain untouched.
 
 Calendar rows are service-role only under RLS. Security-definer RPCs use an
 empty `search_path`. A GiST exclusion constraint is the authoritative atomic
