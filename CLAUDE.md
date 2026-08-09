@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit user-confirmed flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.5** with five tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.6** with five tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 Today interleaves actionable inbox messages and creator negotiations by event
@@ -112,6 +112,13 @@ state remain untouched.
 Extension 0.5.5 removes the **Add 10 normal test emails** control and its backend
 fixture endpoint. Test messages created by earlier runs were not deleted. Existing
 database-only timeline fixtures remain clearly marked and dismissible.
+
+Extension 0.5.6 uses iOS blue for direct Send controls and aligns Test badges with
+the other compact controls. Migration `20260809230135_today_visual_harness_55.sql`
+adds 38 isolated database-only inbox fixtures, bringing the live Today view for
+`yafet2132@gmail.com` to 55 visible test cards (52 inbox cards and 3 negotiations).
+The nine pending test Gmail drafts were repaired in place with category-matched,
+owned media-kit attachments; all nine were re-read and verified. No email was sent.
 
 Calendar rows are service-role only under RLS. Security-definer RPCs use an
 empty `search_path`. A GiST exclusion constraint is the authoritative atomic
