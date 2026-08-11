@@ -1,0 +1,19 @@
+{
+  "name": "caughtup-www-redirect",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "www.getcaughtup.io",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    }
+  }
+}
