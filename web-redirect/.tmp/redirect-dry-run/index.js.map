@@ -1,8 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../src/index.js"],
-  "sourceRoot": ".tmp\\redirect-dry-run",
-  "sourcesContent": ["export default {\n  fetch(request) {\n    const target = new URL(request.url);\n    target.protocol = \"https:\";\n    target.hostname = \"getcaughtup.io\";\n    target.port = \"\";\n\n    return Response.redirect(target.toString(), 301);\n  },\n};\n"],
-  "mappings": ";AAAA,IAAO,gBAAQ;AAAA,EACb,MAAM,SAAS;AACb,UAAM,SAAS,IAAI,IAAI,QAAQ,GAAG;AAClC,WAAO,WAAW;AAClB,WAAO,WAAW;AAClB,WAAO,OAAO;AAEd,WAAO,SAAS,SAAS,OAAO,SAAS,GAAG,GAAG;AAAA,EACjD;AACF;",
-  "names": []
-}
