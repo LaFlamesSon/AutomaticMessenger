@@ -2,5 +2,5 @@ README.md
 wrangler.jsonc
 .assetsignore
 .gitignore
-.tmp/
-.wrangler/
+**/.tmp
+**/.wrangler
