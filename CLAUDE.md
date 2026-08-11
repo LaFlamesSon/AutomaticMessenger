@@ -10,8 +10,10 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit user-confirmed flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.6** with five tabs: Today, Opportunities, Kits, Calendar,
-and Settings. Calendar currently manages CaughtUp availability and internal
+The extension source is version **0.5.7** with five visible tabs: Today, Opportunities, Kits, Calendar,
+and Settings. Opportunities is disabled and visibly labeled Coming soon; it does not load
+opportunity data or expose marketplace connection controls while business registration and
+TikTok approval remain open. Calendar currently manages CaughtUp availability and internal
 bookings; it does not claim or provide Google Calendar synchronization.
 Today interleaves actionable inbox messages and creator negotiations by event
 time. Negotiations expose context and a safe proposed reply, use green/yellow/red

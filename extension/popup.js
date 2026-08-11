@@ -544,8 +544,8 @@ function connectedIdentityLabel() {
 }
 
 function activateTab(name, focus = true) {
-  if (!PANELS.includes(name)) return;
-  document.querySelectorAll("[role=tab]").forEach((tab) => {
+  if (!PANELS.includes(name) || name === "opportunities") return;
+  document.querySelectorAll("#tabs [role=tab]").forEach((tab) => {
     const selected = tab.dataset.tab === name;
     tab.classList.toggle("active", selected);
     tab.setAttribute("aria-selected", String(selected));
@@ -554,12 +554,12 @@ function activateTab(name, focus = true) {
   });
   PANELS.forEach((panel) => $(panel).classList.toggle("hidden", panel !== name));
   if (name === "kits" && !kitsLoaded && !kitsLoading) loadKits();
-  if (name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading) loadOpportunities();
   if (name === "calendar" && !calendarLoaded && !calendarLoading) loadCalendar();
   if (name === "settings" && !settingsLoaded) loadProfile();
 }
 
-document.querySelectorAll("[role=tab]").forEach((tab, index, tabs) => {
+const enabledPrimaryTabs = Array.from(document.querySelectorAll("#tabs [role=tab]:not(:disabled)"));
+enabledPrimaryTabs.forEach((tab, index, tabs) => {
   tab.addEventListener("click", () => activateTab(tab.dataset.tab, false));
   tab.addEventListener("keydown", (event) => {
     let next = null;

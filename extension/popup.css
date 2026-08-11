@@ -61,6 +61,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 }
 .tab:hover { color: var(--ink); background: #faf9f6; }
 .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+.tab.tab-coming-soon:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  color: #9b9891;
+  background: #efede8;
+}
+.tab-coming-soon span, .tab-coming-soon small { display: block; }
+.tab-coming-soon small { margin-top: 1px; color: #aaa69d; font-size: 7.5px; line-height: 1; text-transform: uppercase; }
 
 main { min-height: 0; display: flex; flex: 1; }
 .panel { width: 100%; padding: 15px; overflow-y: auto; }

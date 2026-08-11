@@ -79,12 +79,12 @@ test("empty Today and successful sweeps use the requested caught-up states", () 
   assert.doesNotMatch(`${html}\n${script}\n${css}`, /duck/i);
 });
 
-test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-first destination", () => {
+test("Ask CaughtUp lives in Today while Opportunities remains unavailable until launch", () => {
   const todayPanel = html.match(/<section id="today"[\s\S]*?<section id="opportunities"/)?.[0] ?? "";
   assert.match(todayPanel, /id="askCaughtUpTitle"[^>]*>Ask CaughtUp/);
   assert.match(todayPanel, /id="chatForm"/);
   assert.match(todayPanel, /id="messages"[^>]+class="ask-messages hidden"/);
-  assert.match(html, /id="tab-opportunities"[^>]+data-tab="opportunities"[^>]*>Opportunities/);
+  assert.match(html, /id="tab-opportunities"[^>]+aria-disabled="true"[^>]+data-tab="opportunities"[^>]+disabled[^>]*><span>Opportunities<\/span><small>Coming soon<\/small>/);
   assert.match(html, /id="opportunityProfileForm"/);
   assert.match(html, /id="opportunityAddForm"/);
   assert.match(html, /id="affiliateMetricForm"/);
@@ -106,7 +106,10 @@ test("Ask CaughtUp lives in Today while Opportunities is an affiliate-products-f
   assert.match(script, /chrome\.tabs\.create\(\{ url: chrome\.runtime\.getURL\("connect\.html\?flow=tiktok"\) \}\)/);
   assert.match(script, /opportunity\.description/);
   assert.doesNotMatch(script, /card\.append\(create\("p", "product-brand"/);
-  assert.match(script, /if \(name === "opportunities" && !opportunitiesLoaded && !opportunitiesLoading\) loadOpportunities\(\)/);
+  assert.match(script, /if \(!PANELS\.includes\(name\) \|\| name === "opportunities"\) return/);
+  assert.match(script, /#tabs \[role=tab\]:not\(:disabled\)/);
+  assert.doesNotMatch(script, /if \(name === "opportunities" && !opportunitiesLoaded/);
+  assert.match(css, /\.tab\.tab-coming-soon:disabled/);
   assert.match(script, /api\("opportunity_draft_get"/);
   assert.match(script, /api\("opportunity_send"/);
   assert.match(script, /api\("affiliate_metric_upsert"/);
@@ -344,7 +347,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.6");
+  assert.equal(manifest.version, "0.5.7");
 });
 
 test("focus and reduced-motion styles are present", () => {
