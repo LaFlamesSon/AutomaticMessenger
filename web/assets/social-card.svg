@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">CaughtUp — Your creator inbox, organized</title>
+  <desc id="desc">CaughtUp helps creators review collaboration email and discover relevant affiliate opportunities.</desc>
+  <rect width="1200" height="630" fill="#f7f5f0"/>
+  <circle cx="1090" cy="90" r="210" fill="#f8e8dc"/>
+  <rect x="78" y="72" width="74" height="74" rx="20" fill="#17181c"/>
+  <path d="M96 100h38v25H96z" fill="none" stroke="#f7f5f0" stroke-width="4"/><path d="m98 102 17 13 17-13" fill="none" stroke="#f7f5f0" stroke-width="4"/><path d="M128 89v14m-7-7h14" stroke="#ef9b67" stroke-width="5" stroke-linecap="round"/>
+  <text x="170" y="124" fill="#17181c" font-family="Arial, sans-serif" font-size="42" font-weight="700">CaughtUp</text>
+  <text x="78" y="280" fill="#17181c" font-family="Arial, sans-serif" font-size="78" font-weight="800">Your creator inbox,</text>
+  <text x="78" y="370" fill="#b9541e" font-family="Arial, sans-serif" font-size="78" font-weight="800">organized.</text>
+  <text x="82" y="460" fill="#62636a" font-family="Arial, sans-serif" font-size="32">Reviewable replies. Negotiation context. Better-fit opportunities.</text>
+  <rect x="82" y="515" width="308" height="62" rx="31" fill="#17181c"/>
+  <text x="236" y="556" text-anchor="middle" fill="#fff" font-family="Arial, sans-serif" font-size="24" font-weight="700">getcaughtup.io</text>
+</svg>

@@ -1,123 +1,74 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CaughtUp — Your inbox, already handled</title>
-<style>
-  :root {
-    --ink: #17181c; --cream: #f7f5f0; --accent: #e07a3f;
-    --soft: #6f7075; --line: #e4e1da; --good: #2c7a4b;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--cream); line-height: 1.6; }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
-
-  header { background: var(--ink); color: var(--cream); }
-  nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; }
-  .logo { font-weight: 800; font-size: 20px; }
-  .logo .mark { color: var(--accent); }
-  nav a.cta { background: var(--accent); color: #fff; padding: 9px 20px; border-radius: 8px; text-decoration: none; font-weight: 700; }
-
-  .hero { padding: 72px 0 88px; text-align: center; background: var(--ink); color: var(--cream); }
-  .hero h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.1; max-width: 17ch; margin: 0 auto 20px; }
-  .hero h1 em { color: var(--accent); font-style: normal; }
-  .hero p { color: #b9bac0; font-size: 19px; max-width: 52ch; margin: 0 auto 32px; }
-  .hero .cta { font-size: 17px; padding: 14px 32px; }
-  .hero .note { font-size: 13px; color: #8a8b92; margin-top: 14px; }
-
-  section { padding: 72px 0; }
-  h2 { font-size: 32px; margin-bottom: 12px; text-align: center; }
-  .lead { text-align: center; color: var(--soft); max-width: 60ch; margin: 0 auto 48px; }
-
-  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
-  .step { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 26px; }
-  .step .n { display: inline-block; width: 30px; height: 30px; line-height: 30px; text-align: center; border-radius: 99px; background: var(--accent); color: #fff; font-weight: 800; margin-bottom: 12px; }
-  .step h3 { margin-bottom: 8px; }
-  .step p { color: var(--soft); font-size: 15px; }
-
-  .demo { background: #fff; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .digestcard { max-width: 420px; margin: 0 auto; background: var(--cream); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 12px 40px rgba(23,24,28,.08); }
-  .digestcard h4 { font-size: 12px; letter-spacing: .1em; color: var(--accent); margin-bottom: 10px; }
-  .mail { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; font-size: 14px; }
-  .mail b { display: block; }
-  .mail span { color: var(--soft); font-size: 13px; }
-  .pill { display: inline-block; font-size: 11px; font-weight: 700; background: #fdeee3; color: var(--accent); border-radius: 99px; padding: 2px 10px; margin-top: 8px; }
-  .caught { text-align: center; color: var(--good); font-weight: 700; padding-top: 6px; }
-
-  .price { text-align: center; }
-  .pricecard { display: inline-block; background: #fff; border: 2px solid var(--ink); border-radius: 18px; padding: 36px 48px; }
-  .amount { font-size: 54px; font-weight: 800; }
-  .amount small { font-size: 18px; color: var(--soft); font-weight: 600; }
-  .pricecard ul { list-style: none; padding: 18px 0 26px; text-align: left; }
-  .pricecard li { padding: 5px 0 5px 26px; position: relative; }
-  .pricecard li::before { content: "✓"; position: absolute; left: 0; color: var(--good); font-weight: 800; }
-  .cta.big { background: var(--accent); color: #fff; padding: 14px 40px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 17px; }
-
-  footer { background: var(--ink); color: #8a8b92; padding: 32px 0; font-size: 14px; text-align: center; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CaughtUp — Creator inbox and opportunity assistant</title>
+  <meta name="description" content="CaughtUp helps creators organize collaboration email, review editable replies, keep negotiations visible, and discover better-fit affiliate opportunities.">
+  <link rel="canonical" href="https://getcaughtup.io/">
+  <meta property="og:title" content="CaughtUp — Your creator inbox, organized">
+  <meta property="og:description" content="Reviewable replies, negotiation context, media-kit matching, and relevant creator opportunities.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://getcaughtup.io/">
+  <meta property="og:image" content="https://getcaughtup.io/assets/social-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/logo-512.png">
+  <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
-
-<header>
-  <div class="wrap">
-    <nav>
-      <div class="logo"><span class="mark">✉</span> CaughtUp</div>
-      <a class="cta" href="#pricing">Get started</a>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <nav class="site-nav shell" aria-label="Main navigation">
+      <a class="brand" href="/" aria-label="CaughtUp home"><img class="brand-mark" src="/assets/logo.svg" alt="" width="31" height="31">CaughtUp</a>
+      <div class="nav-links">
+        <a href="#features">Features</a><a href="#connections">Connections</a><a href="/support/">Support</a><a class="nav-cta" href="/reviewer/">Reviewer guide</a>
+      </div>
     </nav>
-  </div>
-  <div class="hero wrap">
-    <h1>Never miss a <em>paid opportunity</em> in your inbox again</h1>
-    <p>CaughtUp is an AI agent that lives in your Gmail. It triages every email, drafts replies in your voice, and attaches your media kit when brands ask — so you open your inbox to work that's already done.</p>
-    <a class="cta" href="#pricing">Add to Chrome — free trial</a>
-    <div class="note">It never sends anything without your say-so. You stay in control.</div>
-  </div>
-</header>
-
-<section class="wrap">
-  <h2>How it works</h2>
-  <p class="lead">Three minutes to set up. Then it just runs.</p>
-  <div class="steps">
-    <div class="step"><span class="n">1</span><h3>Connect Gmail</h3><p>One click, Google's official sign-in. No passwords, revoke anytime.</p></div>
-    <div class="step"><span class="n">2</span><h3>Teach it your voice</h3><p>Tell it what you do and how you write — or just chat with it. Every correction makes it sharper.</p></div>
-    <div class="step"><span class="n">3</span><h3>Open your inbox to done</h3><p>Urgent deals surfaced, replies drafted in-thread, junk filtered, media kit attached when asked.</p></div>
-  </div>
-</section>
-
-<section class="demo">
-  <div class="wrap">
-    <h2>Your morning, with CaughtUp</h2>
-    <p class="lead">A digest that reads itself — urgent first, noise collapsed.</p>
-    <div class="digestcard">
-      <h4>⚡ URGENT</h4>
-      <div class="mail"><b>Vela Skincare — partnerships</b><span>Paid UGC collab, finalizing creators by Friday.</span><span class="pill">draft ready · media kit attached</span></div>
-      <h4>✋ ACTION NEEDED</h4>
-      <div class="mail"><b>Atlas Coffee</b><span>Wants a packaging refresh quote for Q4.</span><span class="pill">draft ready</span></div>
-      <div class="caught">+ 23 newsletters &amp; pitches handled for you 🎉</div>
-    </div>
-  </div>
-</section>
-
-<section class="wrap price" id="pricing">
-  <h2>Simple pricing</h2>
-  <p class="lead">Less than one missed brand deal per year.</p>
-  <div class="pricecard">
-    <div class="amount">$12<small>/month</small></div>
-    <ul>
-      <li>Unlimited email triage</li>
-      <li>Reply drafts in your voice</li>
-      <li>Media kit auto-attach</li>
-      <li>Chat to fine-tune your agent</li>
-      <li>Auto-send mode (optional)</li>
-      <li>14-day free trial</li>
-    </ul>
-    <a class="cta big" href="#">Start free trial</a>
-  </div>
-</section>
-
-<footer>
-  <div class="wrap">CaughtUp · It never sends anything you didn't approve · Privacy · Terms</div>
-</footer>
-
+  </header>
+  <main id="main">
+    <section class="hero">
+      <div class="hero-grid shell">
+        <div class="hero-copy">
+          <p class="eyebrow">Built for creator work</p>
+          <h1>Your inbox, <span class="accent">caught up.</span></h1>
+          <p>CaughtUp organizes brand collaboration email, prepares editable replies in your voice, keeps negotiations visible, and helps you find affiliate opportunities that fit your content.</p>
+          <div class="actions"><a class="button" href="/reviewer/">View the review build</a><a class="button secondary" href="#features">See how it works</a></div>
+          <p class="fineprint">Private review access. CaughtUp is not yet publicly listed in the Chrome Web Store.</p>
+        </div>
+        <div class="product-window" aria-label="Illustration of the CaughtUp Today view">
+          <div class="window-bar"><span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span><span class="window-title">Today</span></div>
+          <div class="product-screen">
+            <div class="screen-head"><div><p class="eyebrow">Monday, 9:41 AM</p><h2>Good morning</h2></div><span>✓ Sweep complete</span></div>
+            <article class="inbox-card"><div class="inbox-row"><strong>Northline Studio</strong><span class="pill">Review</span></div><p>Campaign brief received. A reply is ready with your general media kit.</p><div class="review-strip"><span>Draft ready · editable</span><span>Open review →</span></div></article>
+            <article class="inbox-card"><div class="inbox-row"><strong>Vela Skincare</strong><span class="pill green">Negotiation</span></div><p>New commercial terms arrived after your reply. Kept visible for your decision.</p><div class="review-strip"><span>Terms detected · never auto-sent</span><span>Review →</span></div></article>
+            <article class="inbox-card"><div class="inbox-row"><strong>Creator opportunity</strong><span class="pill">92% match</span></div><p>A product aligned with your selected interests and media-kit positioning.</p></article>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="proof" aria-label="Product principles"><div class="proof-grid shell"><div class="proof-item"><strong>Editable before sending</strong><span>Review the exact reply and attachment.</span></div><div class="proof-item"><strong>Commercial decisions stay yours</strong><span>Negotiations remain review-only.</span></div><div class="proof-item"><strong>Accounts connect separately</strong><span>Google access never implies TikTok access.</span></div></div></section>
+    <section class="section shell" id="features">
+      <div class="section-head"><div><p class="eyebrow">Less inbox archaeology</p><h2>One place for the work hiding in your email.</h2></div><p>CaughtUp is designed around reviewable assistance: it surfaces what matters, prepares a useful next step, and leaves consequential choices with you.</p></div>
+      <div class="cards">
+        <article class="feature-card"><span class="icon" aria-hidden="true">01</span><h3>Inbox triage</h3><p>Recent Gmail messages are classified so urgent work and action-needed conversations rise above low-priority noise.</p></article>
+        <article class="feature-card"><span class="icon" aria-hidden="true">02</span><h3>Draft review</h3><p>Open, edit, and confirm a bounded reply. Replace or remove the single suggested media kit before deciding whether to send.</p></article>
+        <article class="feature-card"><span class="icon" aria-hidden="true">03</span><h3>Negotiation context</h3><p>Commercial terms are highlighted in the thread timeline and always stay review-only—CaughtUp does not accept, reject, or counter for you.</p></article>
+        <article class="feature-card"><span class="icon" aria-hidden="true">04</span><h3>Media-kit matching</h3><p>Use your owned kits and matching rules to bring the most relevant context into a collaboration reply without guessing.</p></article>
+        <article class="feature-card"><span class="icon" aria-hidden="true">05</span><h3>Creator opportunities</h3><p>Rank configured affiliate products using creator-selected interests, audience context, listing evidence, and media-kit positioning.</p></article>
+        <article class="feature-card"><span class="icon" aria-hidden="true">06</span><h3>Your communication style</h3><p>Teach CaughtUp bounded style preferences and make edits during review so future drafts can better reflect how you write.</p></article>
+      </div>
+    </section>
+    <section class="section dark" id="connections">
+      <div class="shell"><div class="section-head"><div><p class="eyebrow">Clear account boundaries</p><h2>Google and TikTok connect separately.</h2></div><p>You choose which platform to authorize and can disconnect each connection independently.</p></div>
+        <div class="connections"><article class="connection-card"><span class="number">1</span><h3>Connect Google</h3><p>Google sign-in and Gmail permission support the inbox workflow. CaughtUp does not ask for your Google password.</p></article><div class="connection-arrow" aria-hidden="true">→</div><article class="connection-card"><span class="number">2</span><h3>Connect TikTok Shop</h3><p>A separate Creator authorization will support eligible open-collaboration product retrieval once TikTok enables and verifies access for the app.</p></article></div>
+        <p class="connection-note"><strong>Current integration status:</strong> TikTok Creator OAuth and live Creator product search are not yet verified. The review build must not present that integration as generally available.</p>
+      </div>
+    </section>
+    <section class="section shell"><div class="closing"><div><h2>See exactly what reviewers can test.</h2><p>The reviewer guide documents installation, account connections, expected results, and current limitations.</p></div><a class="button" href="/reviewer/">Open reviewer guide →</a></div></section>
+  </main>
+  <footer class="site-footer"><div class="shell"><div class="footer-grid"><div class="footer-brand"><a class="brand" href="/"><img class="brand-mark" src="/assets/logo.svg" alt="" width="31" height="31">CaughtUp</a><p>A creator-controlled inbox and affiliate-opportunity assistant.</p></div><nav class="footer-links" aria-label="Footer"><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/support/">Support</a><a href="/reviewer/">Reviewer guide</a></nav></div><div class="footer-bottom"><span>© 2026 CaughtUp</span><span>Private review build · Free plan</span></div></div></footer>
 </body>
 </html>
