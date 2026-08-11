@@ -1,0 +1,17 @@
+{
+  "name": "caughtup-public-site-worker",
+  "compatibility_date": "2026-08-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "getcaughtup.io",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}
