@@ -14,7 +14,6 @@ This uses only local static files. Do not add `--remote`.
 
 ## Required before any public deployment
 
-- Provision the dedicated reviewer account and deliver its password only through TikTok's protected form.
 - Confirm TikTok Creator OAuth allowlist/testing-account status before describing it as live.
 - Authenticate Cloudflare, verify the `getcaughtup.io` zone, deploy a preview, and visually accept it before touching DNS or custom domains.
 
