@@ -1,8 +1,11 @@
 # CaughtUp Security and Privacy Program
 
-Owner: CaughtUp owner and operator  
-Security and privacy contact: support@getcaughtup.io  
-Effective date: August 10, 2026  
+Owner: CaughtUp owner and operator
+
+Security and privacy contact: support@getcaughtup.io
+
+Effective date: August 10, 2026
+
 Review cycle: At least annually and after material product, provider, regulatory, or security changes
 
 This directory contains the policies adopted for the CaughtUp service. They apply
