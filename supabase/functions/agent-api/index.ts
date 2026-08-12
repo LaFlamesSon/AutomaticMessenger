@@ -336,31 +336,6 @@ function buildEditableReplyMime(input: {
   ].join("\r\n"));
 }
 
-function buildTestInboxMime(input: {
-  from: string;
-  fromName: string;
-  to: string;
-  subject: string;
-  body: string;
-  messageId: string;
-}): string {
-  const from = parseStrictRecipient(input.from);
-  const to = parseStrictRecipient(input.to);
-  if (!from || !to || !/^<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>$/.test(input.messageId)) {
-    throw new InputError("test message envelope is invalid");
-  }
-  return b64urlEncode([
-    `From: ${sanitizeHeader(input.fromName, 120)} <${from}>`,
-    `To: ${to}`,
-    `Subject: ${sanitizeHeader(input.subject, 500)}`,
-    `Message-ID: ${input.messageId}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    input.body,
-  ].join("\r\n"));
-}
-
 async function sha256(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(bytes)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -1955,74 +1930,6 @@ Deno.serve(async (req: Request) => {
           .select("id,gmail_draft_id,delivery_status,draft_created").single();
         if (stateError) return json({ error: "Gmail draft created; state reconciliation required", code: "draft_update_reconcile" }, 503);
         return json({ ok: true, created_in_gmail: true, already_created: alreadyCreated, auto_sent: false, draft_email: stored });
-      }
-
-      case "qa_seed_inbox_30": {
-        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
-          .select("id,gmail_address,refresh_token").eq("user_id", user.id)
-          .order("connected_at", { ascending: true }).limit(1).maybeSingle();
-        if (accountError) throw new Error(accountError.message);
-        if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
-        const accessToken = await gmailAccessToken(account.refresh_token, CFG);
-        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
-
-        const scenarios = [
-          ["Northstar Wellness", "Spring wellness collaboration", "We are planning a spring wellness campaign and enjoyed your recent content. Could you share the types of creator partnerships you are interested in and what information you need from us?"],
-          ["Harbor Skin", "Media kit request", "We are considering creators for an upcoming skincare launch. Could you send your current media kit and audience overview?"],
-          ["Juniper Labs", "Virtual product preview", "We would like to invite you to a virtual product preview next month. Would you like us to send the event details and campaign brief?"],
-          ["Arc Desk", "Desk setup campaign inquiry", "Your desk setup content caught our eye. Are you interested in hearing more about a possible accessories campaign?"],
-          ["Canvas Journal", "Creator spotlight profile", "We are putting together a creator spotlight. Could you share a short bio and your preferred social links?"],
-          ["ClearSpring", "Hydration bottle sample", "Would you be open to receiving a sample of our new hydration bottle for consideration? Please let us know what product details you need first."],
-          ["Brightside Creative", "Current content focus", "Could you tell us which content categories you are focusing on this season? We would like to determine whether our upcoming brief is relevant."],
-          ["Atlas Weekend", "Destination story introduction", "We enjoyed your recent travel post and would like to share a destination story brief for your review. May we send more details?"],
-          ["Mosaic Goods", "Creator profile received", "Thanks for sending your creator profile. Our team is reviewing it and will follow up with next steps. No response is needed."],
-          ["Creator Field Notes", "Newsletter confirmed", "Your registration for our creator newsletter is confirmed. We will send the next edition when it is ready. No action is required."],
-          ["Pine Audio", "Podcast accessory collaboration", "We are exploring a creator campaign for a compact microphone. Could you share whether audio and creator-tool partnerships fit your content?"],
-          ["Lumen Home", "Home lighting campaign", "We liked your home setup content and would like to discuss a possible lighting feature. Could you tell us what campaign information you need?"],
-          ["Trail Thread", "Outdoor apparel introduction", "Our team is preparing an outdoor apparel campaign. Would you be interested in reviewing an introductory brief?"],
-          ["Kindred Kitchen", "Kitchen product feature", "We are looking for creators to demonstrate a new kitchen organizer. Could you share your preferred collaboration format?"],
-          ["Orbit Mobile", "Creator technology campaign", "We are planning a creator campaign around mobile accessories. May we send you the objectives, deliverables, and timeline?"],
-          ["Willow Reads", "Reading campaign inquiry", "We are organizing a seasonal reading campaign and think your audience may be a fit. Are you open to learning more?"],
-          ["Cloud Nine Sleep", "Sleep routine content", "We would like to explore a sleep-routine content collaboration. Could you share what details you require before considering a project?"],
-          ["Cedar Fitness", "Fitness accessory sample", "Would you be interested in reviewing information about our resistance-band set and sample process?"],
-          ["Sage Pet", "Pet care creator inquiry", "We are exploring educational pet-care content with creators. Could you let us know whether this category is relevant to your audience?"],
-          ["Ember Coffee", "Coffee launch introduction", "We are preparing a new coffee launch and would like to introduce the campaign. May we share the brief?"],
-          ["Dawn Beauty", "Beauty launch media kit", "Our beauty team is evaluating creators for an upcoming launch. Could you provide your current media kit?"],
-          ["North Coast Gear", "Travel gear collaboration", "We would like to discuss a travel gear collaboration. Could you share your typical process for evaluating new brand projects?"],
-          ["Studio Fern", "Home decor campaign", "Your visual style may suit our home decor campaign. Would you like to review the creative direction and requirements?"],
-          ["Pulse Learning", "Education app feature", "We are considering a creator feature for our study app. Could you tell us whether education technology is relevant to your content?"],
-          ["Aster Finance", "Financial education partnership", "We are developing a financial education campaign and want to understand your review process. What compliance and campaign details would you need?"],
-          ["Golden Hour", "Photography accessory brief", "We would like to send you a brief for a photography accessory campaign. Are you open to reviewing it?"],
-          ["Meadow Care", "Personal care introduction", "Our personal care team is researching creator partners. Could you share your current content focus and media kit?"],
-          ["Summit Cases", "Protective case campaign", "We are planning a protective phone case campaign. May we send the proposed scope and content requirements?"],
-          ["River Games", "Family game feature", "We would like to explore a family game feature with your audience. Could you tell us what information you need to assess fit?"],
-          ["Beacon Bags", "Everyday bag collaboration", "We enjoyed your everyday carry content and would like to introduce a bag collaboration. Are you interested in more details?"],
-        ] as const;
-        const batchId = crypto.randomUUID();
-        const localPart = String(account.gmail_address).split("@")[0];
-        const domain = String(account.gmail_address).split("@")[1];
-        if (!localPart || !domain) return json({ error: "Gmail address is invalid", code: "gmail_provider_unavailable" }, 422);
-        const results = [];
-        for (let index = 0; index < scenarios.length; index += 1) {
-          const [brand, subject, messageBody] = scenarios[index];
-          const alias = `${localPart}+caughtup-test-${String(index + 1).padStart(2, "0")}@${domain}`;
-          const messageId = `<caughtup-sweep-${batchId}-${index + 1}@caughtup.local>`;
-          const raw = buildTestInboxMime({
-            from: alias, fromName: brand, to: account.gmail_address,
-            subject: `[CAUGHTUP TEST ${String(index + 1).padStart(2, "0")}/30] ${subject}`,
-            body: `${messageBody}\n\nSynthetic test message ${index + 1} of 30.`, messageId,
-          });
-          const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ raw, labelIds: ["INBOX", "UNREAD"] }),
-          });
-          if (!response.ok) return json({ error: "Gmail test insertion failed", code: "test_email_reconcile", created: results.length }, 503);
-          const message = await response.json();
-          if (!message?.id) return json({ error: "Gmail test insertion could not be verified", code: "test_email_reconcile", created: results.length }, 503);
-          results.push({ index: index + 1, gmail_message_id: message.id });
-        }
-        return json({ ok: true, count: results.length, batch_id: batchId, messages: results });
       }
 
       case "sweep": {
