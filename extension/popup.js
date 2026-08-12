@@ -136,12 +136,11 @@ async function api(action, extra = {}, options = {}) {
   if (!options.public && !options.noRefresh && Core.shouldRefreshSession(session)) {
     try {
       await refreshSession();
-    } catch (error) {
-      const expiry = Core.expiryToMs(session?.expires_at);
-      if (expiry !== null && expiry <= Date.now()) {
+    } catch (refreshError) {
+      if (Core.isTerminalSessionError(refreshError)) {
         await expireSession();
-        throw error;
       }
+      throw refreshError;
     }
   }
   try {
@@ -151,9 +150,12 @@ async function api(action, extra = {}, options = {}) {
       try {
         await refreshSession();
         return await fetchApi(action, extra, { ...options, noRefresh: true });
-      } catch { /* reconnect below */ }
+      } catch (refreshError) {
+        if (Core.isTerminalSessionError(refreshError)) await expireSession();
+        throw refreshError;
+      }
     }
-    if (error.status === 401 && !options.public) await expireSession();
+    if (Core.isTerminalSessionError(error) && !options.public) await expireSession();
     throw error;
   }
 }
@@ -436,15 +438,11 @@ $("confirmOpportunitySend").addEventListener("click", async () => {
 
 async function refreshSession() {
   const refreshed = await fetchApi("auth_refresh", { refresh_token: session?.refresh_token }, { public: true, noRefresh: true });
-  if (!refreshed.access_token || !refreshed.refresh_token) {
+  const nextSession = Core.normalizeAuthSession(refreshed);
+  if (!nextSession) {
     throw new Core.ApiError("Your session could not be refreshed.", 401, "invalid_session");
   }
-  session = {
-    access_token: refreshed.access_token,
-    refresh_token: refreshed.refresh_token,
-    expires_at: refreshed.expires_at || (refreshed.expires_in ? Math.floor(Date.now() / 1000) + Number(refreshed.expires_in) : null),
-    token_type: refreshed.token_type || "bearer",
-  };
+  session = nextSession;
   await chrome.storage.local.set({ caughtup_session: session });
 }
 
@@ -515,16 +513,24 @@ function showSetup(show, message = "", mode = "app") {
   $("sweepBtn").classList.toggle("hidden", show);
   PANELS.forEach((panel) => $(panel).classList.add("hidden"));
   if (!show) activateTab("today", false);
-  if (show && mode === "gmail") {
+  if (show && mode === "retry") {
+    $("setupTitle").textContent = "CaughtUp couldn't load";
+    $("setupCopy").textContent = "Your saved session is still here. Check your connection and try again.";
+    $("connectGoogle").textContent = "Try again";
+    $("connectGoogle").dataset.label = "Try again";
+    $("connectGoogle").dataset.action = "retry";
+  } else if (show && mode === "gmail") {
     $("setupTitle").textContent = "Connect your Gmail inbox";
     $("setupCopy").textContent = `Signed in${appEmail ? ` as ${appEmail}` : ""}. Connect the Gmail inbox you want CaughtUp to manage. Scheduled work starts only after Gmail is connected.`;
     $("connectGoogle").textContent = "Connect Gmail";
     $("connectGoogle").dataset.label = "Connect Gmail";
+    $("connectGoogle").dataset.action = "connect";
   } else if (show) {
     $("setupTitle").textContent = "Your inbox, handled";
     $("setupCopy").textContent = "Sign in with Google, then connect Gmail so CaughtUp can prepare replies. Nothing sends automatically unless you turn it on later.";
     $("connectGoogle").textContent = "Continue with Google";
     $("connectGoogle").dataset.label = "Continue with Google";
+    $("connectGoogle").dataset.action = "connect";
   }
   setStatus("setupStatus", message, message ? "error" : "");
 }
@@ -578,6 +584,10 @@ $("connectGoogle").addEventListener("click", async () => {
   setBusy(button, true, "Opening secure setup…");
   setStatus("setupStatus", "");
   try {
+    if (button.dataset.action === "retry") {
+      location.reload();
+      return;
+    }
     if (!chrome.tabs?.create || !chrome.runtime?.getURL) {
       throw new Core.ApiError("Reload CaughtUp as an unpacked Chrome extension to connect.", 0, "identity_unavailable");
     }
@@ -1448,7 +1458,7 @@ function renderBookings(bookings) {
   const list = $("bookingList");
   list.replaceChildren();
   if (!bookings.length) {
-    stateCard("bookingsStatus", "No internal bookings yet.");
+    stateCard("bookingsStatus", "No bookings yet.");
     list.classList.add("hidden");
     return;
   }
@@ -1513,7 +1523,7 @@ $("bookingForm").addEventListener("submit", async (event) => {
 });
 
 async function deleteBooking(booking, button) {
-  if (!confirm(`Delete the internal booking "${booking.title || "Untitled booking"}"?`)) return;
+  if (!confirm(`Delete this booking "${booking.title || "Untitled booking"}"?`)) return;
   setBusy(button, true, "Deleting...");
   try {
     const result = await api("booking_delete", { id: booking.id });
@@ -2031,7 +2041,8 @@ function hydrateViewCache() {
       return;
     }
     const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE, VIEW_CACHE_STORAGE]);
-    session = local.caughtup_session || null;
+    const storedSession = local.caughtup_session || null;
+    session = Core.normalizeAuthSession(local.caughtup_session);
     viewCache = local[VIEW_CACHE_STORAGE] && typeof local[VIEW_CACHE_STORAGE] === "object" ? local[VIEW_CACHE_STORAGE] : {};
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
@@ -2045,7 +2056,8 @@ function hydrateViewCache() {
       ? local[BOOKING_REQUEST_STORAGE]
       : null;
     if (!session) {
-      showSetup(true);
+      if (storedSession) await chrome.storage.local.remove("caughtup_session");
+      showSetup(true, storedSession ? "Your saved session needs a one-time reconnect." : "");
       return;
     }
     const profileResult = await api("profile_get");
@@ -2071,6 +2083,7 @@ function hydrateViewCache() {
     await digestRefresh;
     if (manualSweepState) void pollPendingSweep();
   } catch (error) {
-    showSetup(true, Core.safeErrorMessage(error));
+    if (session && !Core.isTerminalSessionError(error)) showSetup(true, Core.safeErrorMessage(error), "retry");
+    else showSetup(true, Core.safeErrorMessage(error));
   }
 })();

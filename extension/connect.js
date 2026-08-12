@@ -58,7 +58,9 @@ async function fetchApi(action, extra = {}, publicRequest = false) {
 }
 
 async function saveSession(nextSession) {
-  session = nextSession;
+  const normalized = Core.normalizeAuthSession(nextSession);
+  if (!normalized) throw new Core.ApiError("Google did not return a reusable CaughtUp session. Try connecting again.", 401, "invalid_session");
+  session = normalized;
   await chrome.storage.local.set({ caughtup_session: session });
 }
 
@@ -69,13 +71,7 @@ async function clearSession() {
 
 async function refreshSession() {
   const result = await fetchApi("auth_refresh", { refresh_token: session?.refresh_token }, true);
-  if (!result.access_token || !result.refresh_token) throw new Core.ApiError("Your Google session expired. Try connecting again.", 401, "unauthorized");
-  await saveSession({
-    access_token: result.access_token,
-    refresh_token: result.refresh_token,
-    expires_at: result.expires_at || (result.expires_in ? Math.floor(Date.now() / 1000) + Number(result.expires_in) : null),
-    token_type: result.token_type || "bearer",
-  });
+  await saveSession(result);
 }
 
 async function api(action, extra = {}) {
@@ -124,12 +120,9 @@ async function signInWithGoogle() {
   const auth = Core.parseOAuthCallback(await launchAuthFlow(authorize.toString()));
   if (auth.error) throw new Core.ApiError("Google sign-in did not finish. Try again.", 0, "oauth_error");
   if (!auth.access_token) throw new Core.ApiError("Google sign-in did not create a CaughtUp session.", 0, "missing_session");
-  await saveSession({
-    access_token: auth.access_token,
-    refresh_token: auth.refresh_token,
-    expires_at: auth.expires_at,
-    token_type: auth.token_type || "bearer",
-  });
+  const nextSession = Core.normalizeAuthSession(auth);
+  if (!nextSession) throw new Core.ApiError("Google did not return a reusable CaughtUp session. Try connecting again.", 401, "invalid_session");
+  await saveSession(nextSession);
   const providerTokens = auth.provider_token && auth.provider_refresh_token ? {
     provider_access_token: auth.provider_token,
     provider_refresh_token: auth.provider_refresh_token,
@@ -148,7 +141,8 @@ async function connectGoogle() {
   let providerTokens = null;
   try {
     const stored = await chrome.storage.local.get(["caughtup_session", GMAIL_RECONNECT_STORAGE]);
-    session = stored.caughtup_session || null;
+    session = Core.normalizeAuthSession(stored.caughtup_session);
+    if (stored.caughtup_session && !session) await clearSession();
     let profile = null;
     if (session) {
       try {

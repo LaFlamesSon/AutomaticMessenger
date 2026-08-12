@@ -245,6 +245,31 @@
     return expiry !== null && expiry <= now + leewayMs;
   }
 
+  function normalizeAuthSession(value, now = Date.now()) {
+    if (!value || typeof value !== "object") return null;
+    const accessToken = typeof value.access_token === "string" ? value.access_token : "";
+    const refreshToken = typeof value.refresh_token === "string" ? value.refresh_token : "";
+    if (!accessToken || !refreshToken || /\s/.test(accessToken) || /\s/.test(refreshToken)) return null;
+    let expiresAt = value.expires_at ?? null;
+    if (expiryToMs(expiresAt) === null) {
+      const expiresIn = Number(value.expires_in);
+      expiresAt = Number.isFinite(expiresIn) && expiresIn > 0
+        ? Math.floor(now / 1000) + expiresIn
+        : null;
+    }
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_at: expiresAt,
+      token_type: typeof value.token_type === "string" && value.token_type ? value.token_type : "bearer",
+    };
+  }
+
+  function isTerminalSessionError(error) {
+    const code = String(error?.code || "").toLowerCase();
+    return error?.status === 401 && ["invalid_session", "unauthorized"].includes(code);
+  }
+
   function parseOAuthCallback(callbackUrl) {
     let url;
     try {
@@ -260,6 +285,7 @@
       access_token: read("access_token") || null,
       refresh_token: read("refresh_token") || null,
       expires_at: read("expires_at") || null,
+      expires_in: read("expires_in") || null,
       token_type: read("token_type") || null,
       provider_token: read("provider_token") || null,
       provider_refresh_token: read("provider_refresh_token") || null,
@@ -380,6 +406,8 @@
     authHeaders,
     expiryToMs,
     shouldRefreshSession,
+    normalizeAuthSession,
+    isTerminalSessionError,
     parseOAuthCallback,
     sameStringSet,
     autoSendPolicyChanged,

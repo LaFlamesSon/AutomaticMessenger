@@ -284,9 +284,9 @@
 
       <section id="internalBookings" class="booking-section" aria-labelledby="bookingsTitle">
         <hr>
-        <h2 id="bookingsTitle">Internal bookings</h2>
-        <p class="hint">CaughtUp prevents conflicts between bookings saved here. It is not yet synced with Google Calendar or other external calendars.</p>
-        <p id="bookingCreateNote" class="hint">Save Scheduled call as your contact mode to add a booking. Existing bookings remain manageable in every mode.</p>
+        <h2 id="bookingsTitle">Bookings</h2>
+        <p class="hint">CaughtUp blocks overlapping times for bookings saved here.</p>
+        <p id="bookingCreateNote" class="hint">Choose Scheduled call as your contact preference to add a booking. Existing bookings remain manageable in every mode.</p>
         <form id="bookingForm" class="form-card hidden">
           <label for="bookingTitle">Title <span class="required">required</span></label>
           <input id="bookingTitle" type="text" maxlength="120" placeholder="Intro call with Acme" required>
@@ -299,7 +299,7 @@
             <div><label for="bookingStart">Starts</label><input id="bookingStart" type="datetime-local" required></div>
             <div><label for="bookingEnd">Ends</label><input id="bookingEnd" type="datetime-local" required></div>
           </div>
-          <button id="createBooking" type="submit" class="primary">Add internal booking</button>
+          <button id="createBooking" type="submit" class="primary">Add booking</button>
           <p id="bookingFormStatus" class="status-text" role="status" aria-live="polite"></p>
         </form>
         <div id="bookingsStatus" class="state-card" role="status" aria-live="polite">Loading bookings&hellip;</div>

@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit user-confirmed flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.7** with five visible tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.8** with five visible tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Opportunities is disabled and visibly labeled Coming soon; it does not load
 opportunity data or expose marketplace connection controls while business registration and
 TikTok approval remain open. Calendar currently manages CaughtUp availability and internal
@@ -23,6 +23,11 @@ even when Auto-send is enabled.
 First-contact brand messages remain normal inbox items. Negotiation memory starts
 only when commercial terms arrive in a later inbound message after the creator
 has sent a reply in that Gmail thread.
+The extension requires and persists a reusable Supabase refresh token for Google
+sign-in, derives missing OAuth expiry timestamps, and keeps recoverable sessions
+during transient startup or refresh failures instead of showing a false sign-in
+prompt. Calendar copy describes CaughtUp bookings without implying Google Calendar
+access or synchronization.
 Real Gmail drafts now open in an editable extension review dialog. The creator
 can change the bounded reply, replace or remove the single owned media kit, save
 those changes back to the same version-checked Gmail draft, and then explicitly

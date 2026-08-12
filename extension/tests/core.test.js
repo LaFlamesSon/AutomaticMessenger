@@ -114,6 +114,31 @@ test("session refresh recognizes epoch and ISO expiries", () => {
   assert.equal(Core.shouldRefreshSession({ expires_at: now }, now), false);
 });
 
+test("OAuth sessions require reusable refresh credentials and derive missing expiry", () => {
+  const now = Date.parse("2026-08-11T12:00:00Z");
+  assert.deepEqual(Core.normalizeAuthSession({
+    access_token: "access-token",
+    refresh_token: "refresh-token",
+    expires_in: "3600",
+    token_type: "bearer",
+  }, now), {
+    access_token: "access-token",
+    refresh_token: "refresh-token",
+    expires_at: now / 1000 + 3600,
+    token_type: "bearer",
+  });
+  assert.equal(Core.normalizeAuthSession({ access_token: "access-token" }, now), null);
+  assert.equal(Core.normalizeAuthSession({ refresh_token: "refresh-token" }, now), null);
+});
+
+test("only terminal refresh failures invalidate a saved session", () => {
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("expired", 401, "invalid_session")), true);
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("unauthorized", 401, "unauthorized")), true);
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("offline", 0, "network")), false);
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("busy", 503, "auth_unavailable")), false);
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("slow down", 429, "rate_limited")), false);
+});
+
 test("active Auto-send policy changes require a fresh confirmation", () => {
   const current = {
     auto_send_categories: ["urgent"],
@@ -220,6 +245,7 @@ test("OAuth callbacks parse fragment sessions and query-based Gmail completion",
   assert.equal(session.access_token, "access");
   assert.equal(session.refresh_token, "refresh");
   assert.equal(session.expires_at, "123");
+  assert.equal(Core.parseOAuthCallback("https://example.chromiumapp.org/caughtup#access_token=access&refresh_token=refresh&expires_in=3600").expires_in, "3600");
   assert.equal(session.provider_token, "temporary");
   assert.equal(Core.parseOAuthCallback("https://example.chromiumapp.org/caughtup?caughtup_gmail=connected").caughtup_gmail, "connected");
   assert.equal(Core.parseOAuthCallback("not a URL").error, "invalid_callback");

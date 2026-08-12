@@ -253,23 +253,23 @@ test("Calendar conditionally exposes validated contact and availability controls
   assert.match(script, /classList\.toggle\("hidden", !scheduledMode\)/);
 });
 
-test("Calendar discloses internal-only conflict protection and Review fallback", () => {
-  assert.match(html, /prevents conflicts between bookings saved here/);
-  assert.match(html, /not yet synced with Google Calendar or other external calendars/);
+test("Calendar explains CaughtUp booking conflict protection without implying Google access", () => {
+  assert.match(html, /blocks overlapping times for bookings saved here/);
+  assert.doesNotMatch(html, /Google Calendar|external calendars/);
   assert.match(html, /returns replies to Review mode/);
   assert.match(script, /applyCalendarReviewFallback\(result\)/);
   assert.match(script, /updateModeBadge\("draft_only"\)/);
   assert.match(script, /auto_send_disabled !== true/);
 });
 
-test("internal bookings are timezone-aware, idempotent, and deletions are confirmed", () => {
+test("bookings are timezone-aware, idempotent, and deletions are confirmed", () => {
   assert.match(html, /id="bookingStart" type="datetime-local"/);
   assert.match(html, /id="bookingEnd" type="datetime-local"/);
   assert.match(script, /Core\.zonedLocalToIso/);
   assert.match(script, /BOOKING_REQUEST_STORAGE/);
   assert.match(script, /request_id: pendingBookingRequest\.request_id/);
   assert.match(script, /\^booking-\[a-zA-Z0-9-\]/);
-  assert.match(script, /confirm\(`Delete the internal booking/);
+  assert.match(script, /confirm\(`Delete this booking/);
   assert.match(html, /Existing bookings remain manageable in every mode/);
   assert.match(html, /id="bookingActionStatus"[^>]+aria-live="polite"/);
   assert.doesNotMatch(script, /internalBookings"\)\.classList\.toggle\("hidden"/);
@@ -289,18 +289,27 @@ test("Google onboarding runs in a durable extension page with a safe Gmail fallb
   assert.match(connectScript, /authorize\.searchParams\.set\("prompt", "consent"\)/);
   assert.match(connectScript, /auth\.provider_token/);
   assert.match(connectScript, /auth\.provider_refresh_token/);
+  assert.match(connectScript, /Core\.normalizeAuthSession\(auth\)/);
   assert.match(connectScript, /api\("gmail_connect_provider", providerTokens\)/);
   assert.match(connectScript, /"gmail_connect_start"/);
   assert.match(connectScript, /gmailAuth\.caughtup_gmail/);
   assert.match(connectScript, /searchParams\.get\("flow"\)/);
   assert.match(connectScript, /"tiktok_connect_start"/);
   assert.match(connectScript, /caughtup_tiktok/);
-  const persistedSessions = [...connectScript.matchAll(/await saveSession\(\{([\s\S]*?)\}\);/g)].map((match) => match[1]);
-  assert.ok(persistedSessions.length >= 2);
-  persistedSessions.forEach((persisted) => assert.doesNotMatch(persisted, /provider_token|provider_refresh_token/));
+  assert.match(connectScript, /const normalized = Core\.normalizeAuthSession\(nextSession\)/);
+  assert.match(connectScript, /chrome\.storage\.local\.set\(\{ caughtup_session: session \}\)/);
+  const saveSessionBody = connectScript.match(/async function saveSession\(nextSession\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  assert.doesNotMatch(saveSessionBody, /provider_token|provider_refresh_token/);
   assert.doesNotMatch(html, /tokenInput|Paste your access token/i);
   assert.doesNotMatch(allScripts, /x-api-token/);
   assert.match(connectCss, /prefers-reduced-motion/);
+});
+
+test("saved sessions survive transient startup and refresh failures", () => {
+  assert.match(script, /Core\.normalizeAuthSession\(local\.caughtup_session\)/);
+  assert.match(script, /Core\.isTerminalSessionError\(refreshError\)/);
+  assert.match(script, /showSetup\(true, Core\.safeErrorMessage\(error\), "retry"\)/);
+  assert.match(script, /dataset\.action = "retry"/);
 });
 
 test("authenticated users can resume Gmail consent and identity labels stay distinct", () => {
@@ -347,7 +356,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.7");
+  assert.equal(manifest.version, "0.5.8");
 });
 
 test("focus and reduced-motion styles are present", () => {
