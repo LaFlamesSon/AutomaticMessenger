@@ -966,16 +966,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  let user = await authenticate(supabase, req);
-  if (!user && body.action === "qa_seed_inbox_30") {
-    const supplied = req.headers.get("x-qa-seed-secret") ?? "";
-    const suppliedHash = supplied ? await sha256(supplied) : "";
-    if (suppliedHash === "f56b5e7f32d1150b0aca1e1b14ea08fef13a308a6e9ec143cc2c90b461c79fa7") {
-      const { data: qaUser } = await supabase.from("ia_users")
-        .select("id,email,auth_user_id").eq("id", "1d123152-0221-4d21-8138-868550a8903f").maybeSingle();
-      user = qaUser ?? null;
-    }
-  }
+  const user = await authenticate(supabase, req);
   if (!user) return json({ error: "unauthorized" }, 401);
 
   const { data: cfgRows, error: cfgError } = await supabase.rpc("ia_get_config");
