@@ -592,6 +592,9 @@ Deno.serve(async (req: Request) => {
           const from = header(msg.payload, "From");
           const subject = header(msg.payload, "Subject") || "(no subject)";
           const emailBody = extractBody(msg.payload);
+          const messageIdHeader = header(msg.payload, "Message-ID").trim();
+          const syntheticTest = header(msg.payload, "X-CaughtUp-Test").trim().toLowerCase() === "stress-v1" ||
+            /^<caughtup-(?:nego|gen|grad)-[^>]+@caughtup\.local>$/i.test(messageIdHeader);
           const senderAddr = (from.match(/<([^>]+)>/)?.[1] ?? from).toLowerCase();
           const senderDomain = senderAddr.split("@")[1] ?? "";
           const commercialTerms = extractCommercialTerms(subject, emailBody);
@@ -753,7 +756,7 @@ Deno.serve(async (req: Request) => {
               summary: triage.summary,
               proposed_reply: triage.draft && !draftSafetyViolations(triage.draft).length ? triage.draft : null,
               last_inbound_at: new Date(Number(msg.internalDate ?? Date.now())).toISOString(),
-              is_test: false,
+              is_test: syntheticTest,
               dismissed_at: null,
               updated_at: new Date().toISOString(),
             };
@@ -769,7 +772,7 @@ Deno.serve(async (req: Request) => {
               event_type: negotiationEventType(Boolean(existingNegotiation), commercialTerms),
               terms: currentTerms,
               summary: triage.summary,
-              is_test: false,
+              is_test: syntheticTest,
             }, { onConflict: "negotiation_id,gmail_message_id", ignoreDuplicates: true });
             if (eventError) throw new Error("negotiation event could not be saved");
           }
@@ -788,6 +791,9 @@ Deno.serve(async (req: Request) => {
           if (matchedRules.some((rule: any) => rule.action === "never_draft")) decision = "none";
           if (decision === "auto_send" && matchedRules.some((rule: any) => rule.action === "require_approval")) decision = "draft";
           if (negotiationRequired && decision === "auto_send") decision = "draft";
+          // Synthetic Gmail fixtures are allowed to exercise the real drafting
+          // pipeline, but no profile setting may ever turn them into a send.
+          if (syntheticTest && decision === "auto_send") decision = "draft";
           if (triageSafety.length) decision = "none";
 
           let draftCreated = false;
@@ -906,6 +912,7 @@ Deno.serve(async (req: Request) => {
             selected_media_kit_id: attachments.length ? selectedKit?.id ?? null : null,
             negotiation_id: negotiationId,
             human_review_required: negotiationRequired,
+            is_test: syntheticTest,
           });
           if (insertError) throw new Error(`processed email: ${insertError.message}`);
           await gmailPost(token, `/messages/${ref.id}/modify`, { addLabelIds: [labelId] });

@@ -1,9 +1,8 @@
 "use strict";
 
-// Keeps the saved Supabase session fresh even when the popup is closed, so
-// opening CaughtUp never lands on the sign-in screen just because the access
-// token expired. The popup remains the only place that may sign the user out;
-// this worker never deletes the stored session.
+// Keeps the saved Supabase session fresh even when the popup is closed. All
+// extension surfaces refresh through this worker so rotating refresh tokens
+// are serialized instead of being exchanged concurrently.
 
 importScripts("core.js");
 
@@ -11,6 +10,7 @@ const API = "https://xkrpxvswdkreglmefuot.supabase.co/functions/v1/agent-api";
 const Core = globalThis.CaughtUpCore;
 const ALARM_NAME = "caughtup-session-refresh";
 const REFRESH_AHEAD_MS = 30 * 60_000;
+let refreshInFlight = null;
 
 function ensureAlarm() {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 20 });
@@ -20,20 +20,28 @@ chrome.runtime.onInstalled.addListener(ensureAlarm);
 chrome.runtime.onStartup.addListener(ensureAlarm);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) void refreshSoonExpiringSession();
+  if (alarm.name === ALARM_NAME) void refreshPersistedSession(false);
 });
 
-async function refreshSoonExpiringSession() {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "caughtup-refresh-session") return false;
+  void refreshPersistedSession(message.force === true).then(sendResponse);
+  return true;
+});
+
+async function performSessionRefresh(force) {
   let stored;
   try {
     stored = (await chrome.storage.local.get("caughtup_session")).caughtup_session;
   } catch {
-    return;
+    return { ok: false, status: 503, code: "auth_unavailable" };
   }
   const session = Core.normalizeAuthSession(stored);
-  if (!session) return;
+  if (!session) return { ok: false, status: 401, code: "invalid_session" };
   const expiry = Core.expiryToMs(session.expires_at);
-  if (expiry === null || expiry > Date.now() + REFRESH_AHEAD_MS) return;
+  if (!force && (expiry === null || expiry > Date.now() + REFRESH_AHEAD_MS)) {
+    return { ok: true, session };
+  }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -48,17 +56,28 @@ async function refreshSoonExpiringSession() {
     } finally {
       clearTimeout(timeout);
     }
-    if (!response.ok) return;
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      return { ok: false, status: response.status, code: payload?.code || "auth_unavailable" };
+    }
     const next = Core.normalizeAuthSession(await response.json());
-    if (!next) return;
-    // If the popup rotated the session while this refresh was in flight, its
-    // newer tokens win; saving ours would clobber a fresher pair.
+    if (!next) return { ok: false, status: 401, code: "invalid_session" };
     const current = Core.normalizeAuthSession(
       (await chrome.storage.local.get("caughtup_session")).caughtup_session,
     );
-    if (current && current.refresh_token !== session.refresh_token) return;
+    if (current && current.refresh_token !== session.refresh_token) return { ok: true, session: current };
     await chrome.storage.local.set({ caughtup_session: next });
+    return { ok: true, session: next };
   } catch {
-    /* transient failure — the next alarm retries; the popup handles real expiry */
+    return { ok: false, status: 503, code: "auth_unavailable" };
   }
 }
+
+function refreshPersistedSession(force) {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = performSessionRefresh(force).finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
+// Recreate the idempotent alarm when a reloaded service worker starts too.
+ensureAlarm();

@@ -19,6 +19,18 @@ test("negotiations deterministically force Review and persist by Gmail thread", 
   assert.match(sweep, /commercialTerms\.detected && creatorPreviouslyReplied/);
   assert.match(sweep, /hasEarlierOwnerSent\(msg, thread\.messages \?\? \[\]\)/);
   assert.match(sweep, /const negotiationRequired = !hostileInbound/);
+  assert.match(sweep, /X-CaughtUp-Test/);
+  assert.match(sweep, /if \(syntheticTest && decision === "auto_send"\) decision = "draft"/);
+  assert.match(sweep, /is_test: syntheticTest/);
+});
+
+test("stress fixtures have deterministic chronology and cannot be manually sent", () => {
+  assert.match(api, /internalDateSource=dateHeader/);
+  assert.match(api, /X-CaughtUp-Test: stress-v1/);
+  assert.match(api, /date: inquiryDate/);
+  assert.match(api, /date: replyDate/);
+  assert.match(api, /date: termsDate/);
+  assert.match(api, /if \(row\.is_test\) return json\(\{ error: "test drafts can never be sent", code: "test_send_blocked" \}/);
 });
 
 test("negotiation storage is owner scoped and not directly exposed", () => {

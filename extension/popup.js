@@ -440,13 +440,16 @@ $("confirmOpportunitySend").addEventListener("click", async () => {
 });
 
 async function refreshSession() {
-  const refreshed = await fetchApi("auth_refresh", { refresh_token: session?.refresh_token }, { public: true, noRefresh: true });
-  const nextSession = Core.normalizeAuthSession(refreshed);
+  const refreshed = await chrome.runtime.sendMessage({ type: "caughtup-refresh-session", force: true })
+    .catch(() => ({ ok: false, status: 503, code: "auth_unavailable" }));
+  if (!refreshed?.ok) {
+    throw new Core.ApiError("Your session could not be refreshed.", refreshed?.status || 503, refreshed?.code || "auth_unavailable");
+  }
+  const nextSession = Core.normalizeAuthSession(refreshed.session);
   if (!nextSession) {
     throw new Core.ApiError("Your session could not be refreshed.", 401, "invalid_session");
   }
   session = nextSession;
-  await chrome.storage.local.set({ caughtup_session: session });
 }
 
 async function expireSession() {

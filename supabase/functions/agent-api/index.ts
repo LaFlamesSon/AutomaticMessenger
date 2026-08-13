@@ -348,6 +348,7 @@ function buildTestInboxMime(input: {
   subject: string;
   body: string;
   messageId: string;
+  date: Date;
   extraHeaders?: string[];
 }): string {
   const from = parseStrictRecipient(input.from);
@@ -359,8 +360,9 @@ function buildTestInboxMime(input: {
     `From: ${sanitizeHeader(input.fromName, 120)} <${from}>`,
     `To: ${to}`,
     `Subject: ${sanitizeHeader(input.subject, 500)}`,
-    `Date: ${new Date().toUTCString()}`,
+    `Date: ${input.date.toUTCString()}`,
     `Message-ID: ${input.messageId}`,
+    "X-CaughtUp-Test: stress-v1",
     ...(input.extraHeaders ?? []).map((line) => sanitizeHeader(line, 500)),
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
@@ -1686,10 +1688,11 @@ Deno.serve(async (req: Request) => {
         const accountIds = await ownedAccountIds(supabase, user.id);
         if (!accountIds.length) return json({ error: "not found" }, 404);
         const { data: row, error: rowError } = await supabase.from("ia_processed_emails")
-          .select("id, gmail_draft_id, auto_sent, delivery_status, gmail_account_id, sender, subject, draft_text, ia_gmail_accounts(refresh_token)")
+          .select("id, gmail_draft_id, auto_sent, delivery_status, gmail_account_id, sender, subject, draft_text, is_test, ia_gmail_accounts(refresh_token)")
           .eq("id", rowId).in("gmail_account_id", accountIds).maybeSingle();
         if (rowError) throw new Error(rowError.message);
         if (!row) return json({ error: "not found" }, 404);
+        if (row.is_test) return json({ error: "test drafts can never be sent", code: "test_send_blocked" }, 422);
         if (row.delivery_status === "sent" || row.auto_sent) return json({ ok: true, already_sent: true });
         if (!row.gmail_draft_id) return json({ error: "draft is not sendable from CaughtUp" }, 422);
         const accessToken = await gmailAccessToken((row as any).ia_gmail_accounts.refresh_token, CFG);
@@ -1978,7 +1981,7 @@ Deno.serve(async (req: Request) => {
         if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
         const gmailHeaders = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
         const insertMessage = async (raw: string, labelIds: string[], threadId?: string) => {
-          const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages?internalDateSource=receivedTime", {
+          const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages?internalDateSource=dateHeader", {
             method: "POST", headers: gmailHeaders,
             body: JSON.stringify(threadId ? { raw, labelIds, threadId } : { raw, labelIds }),
           });
@@ -2022,19 +2025,22 @@ Deno.serve(async (req: Request) => {
             const inquiryId = `<caughtup-nego-${batchId}-${index + 1}-1@caughtup.local>`;
             const replyId = `<caughtup-nego-${batchId}-${index + 1}-2@caughtup.local>`;
             const termsId = `<caughtup-nego-${batchId}-${index + 1}-3@caughtup.local>`;
+            const termsDate = new Date(Date.now() - (index * 3 * 60_000));
+            const replyDate = new Date(termsDate.getTime() - 60_000);
+            const inquiryDate = new Date(termsDate.getTime() - 120_000);
             const first = await insertMessage(buildTestInboxMime({
               from: sender, fromName: brandName, to: account.gmail_address,
               subject, body: "We'd love to work with you on an upcoming campaign. Are you open to hearing the details?",
-              messageId: inquiryId,
+              messageId: inquiryId, date: inquiryDate,
             }), []);
             await insertMessage(buildTestInboxMime({
               from: account.gmail_address, fromName: "Yafet", to: sender,
-              subject: `Re: ${subject}`, body: ownerReplyBody, messageId: replyId,
+              subject: `Re: ${subject}`, body: ownerReplyBody, messageId: replyId, date: replyDate,
               extraHeaders: [`In-Reply-To: ${inquiryId}`, `References: ${inquiryId}`],
             }), ["SENT"], first.threadId);
             await insertMessage(buildTestInboxMime({
               from: sender, fromName: brandName, to: account.gmail_address,
-              subject: `Re: ${subject}`, body: terms, messageId: termsId,
+              subject: `Re: ${subject}`, body: terms, messageId: termsId, date: termsDate,
               extraHeaders: [`In-Reply-To: ${replyId}`, `References: ${inquiryId} ${replyId}`],
             }), ["INBOX", "UNREAD"], first.threadId);
             negotiationThreads.push({ thread_id: first.threadId, brand: brandName, subject });
@@ -2087,11 +2093,15 @@ Deno.serve(async (req: Request) => {
           for (let index = 0; index < topics.length; index += 1) {
             const [sender, brandName, subject, messageBody] = topics[index];
             const messageId = `<caughtup-gen-${batchId}-${index + 1}@caughtup.local>`;
+            const messageDate = new Date(Date.now() - (index * 60_000));
             const inserted = await insertMessage(buildTestInboxMime({
               from: sender, fromName: brandName, to: account.gmail_address,
-              subject, body: messageBody, messageId,
+              subject, body: messageBody, messageId, date: messageDate,
             }), ["INBOX", "UNREAD"]);
-            generalThreads.push({ thread_id: inserted.threadId, from: sender, brand: brandName, subject, message_id: messageId });
+            generalThreads.push({
+              thread_id: inserted.threadId, from: sender, brand: brandName,
+              subject, message_id: messageId, message_date: messageDate.toISOString(),
+            });
           }
           return json({ ok: true, phase: 1, batch_id: batchId, negotiation_threads: negotiationThreads, general_threads: generalThreads });
         }
@@ -2115,15 +2125,19 @@ Deno.serve(async (req: Request) => {
             const brandName = sanitizeHeader(String(item.brand ?? ""), 120);
             const subject = sanitizeHeader(String(item.subject ?? ""), 300);
             const originalMessageId = String(item.message_id ?? "");
+            const originalDate = new Date(String(item.message_date ?? ""));
             if (!/^[a-zA-Z0-9_-]{5,64}$/.test(threadId) || !sender || !brandName || !subject ||
-              !/^<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>$/.test(originalMessageId)) {
+              !/^<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>$/.test(originalMessageId) ||
+              !Number.isFinite(originalDate.getTime())) {
               return json({ error: `phase 2 thread ${index + 1} is invalid`, graduated: graduated.length }, 400);
             }
             const replyId = `<caughtup-grad-${batchId}-${index + 1}-r@caughtup.local>`;
             const termsId = `<caughtup-grad-${batchId}-${index + 1}-t@caughtup.local>`;
+            const replyDate = new Date(originalDate.getTime() + 60_000);
+            const termsDate = new Date(originalDate.getTime() + 120_000);
             await insertMessage(buildTestInboxMime({
               from: account.gmail_address, fromName: "Yafet", to: sender,
-              subject: `Re: ${subject}`, body: ownerReplyBody, messageId: replyId,
+              subject: `Re: ${subject}`, body: ownerReplyBody, messageId: replyId, date: replyDate,
               extraHeaders: [`In-Reply-To: ${originalMessageId}`, `References: ${originalMessageId}`],
             }), ["SENT"], threadId);
             // Amounts sweep across red, yellow, and green threshold bands; every
@@ -2135,7 +2149,7 @@ Deno.serve(async (req: Request) => {
             const termsBody = template.replace("%AMOUNT%", String(amount)).replace("%RATE%", String(rate));
             await insertMessage(buildTestInboxMime({
               from: sender, fromName: brandName, to: account.gmail_address,
-              subject: `Re: ${subject}`, body: termsBody, messageId: termsId,
+              subject: `Re: ${subject}`, body: termsBody, messageId: termsId, date: termsDate,
               extraHeaders: [`In-Reply-To: ${replyId}`, `References: ${originalMessageId} ${replyId}`],
             }), ["INBOX", "UNREAD"], threadId);
             graduated.push({ thread_id: threadId, brand: brandName });

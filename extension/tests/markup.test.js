@@ -12,6 +12,7 @@ const css = fs.readFileSync(path.join(extensionDir, "popup.css"), "utf8");
 const connectHtml = fs.readFileSync(path.join(extensionDir, "connect.html"), "utf8");
 const connectScript = fs.readFileSync(path.join(extensionDir, "connect.js"), "utf8");
 const connectCss = fs.readFileSync(path.join(extensionDir, "connect.css"), "utf8");
+const backgroundScript = fs.readFileSync(path.join(extensionDir, "background.js"), "utf8");
 const allScripts = `${script}\n${connectScript}`;
 const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
 
@@ -310,6 +311,15 @@ test("saved sessions survive transient startup and refresh failures", () => {
   assert.match(script, /Core\.isTerminalSessionError\(refreshError\)/);
   assert.match(script, /showSetup\(true, Core\.safeErrorMessage\(error\), "retry"\)/);
   assert.match(script, /dataset\.action = "retry"/);
+});
+
+test("all extension surfaces serialize rotating session refresh through the background worker", () => {
+  assert.match(backgroundScript, /let refreshInFlight = null/);
+  assert.match(backgroundScript, /message\?\.type !== "caughtup-refresh-session"/);
+  assert.match(backgroundScript, /if \(refreshInFlight\) return refreshInFlight/);
+  assert.match(backgroundScript, /ensureAlarm\(\);/);
+  assert.match(script, /chrome\.runtime\.sendMessage\(\{ type: "caughtup-refresh-session", force: true \}\)/);
+  assert.match(connectScript, /chrome\.runtime\.sendMessage\(\{ type: "caughtup-refresh-session", force: true \}\)/);
 });
 
 test("authenticated users can resume Gmail consent and identity labels stay distinct", () => {

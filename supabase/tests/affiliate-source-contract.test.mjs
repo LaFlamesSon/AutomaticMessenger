@@ -21,7 +21,8 @@ test("affiliate API exposes private metrics, sources, preview, and product creat
   assert.match(api, /matchAffiliateOpportunity/);
   assert.match(api, /\.eq\("user_id", user\.id\)/);
   assert.match(api, /provider_verified: false/);
-  assert.doesNotMatch(api, /auto_sent: true[\s\S]*affiliate/);
+  const createAction = api.match(/case "affiliate_opportunity_create": \{([\s\S]*?)\n      case /)?.[1] ?? "";
+  assert.doesNotMatch(createAction, /auto_sent:\s*true|drafts\/send|messages\/send/);
 });
 
 test("affiliate relevance remains email-derived while TikTok login only unlocks its catalog", () => {

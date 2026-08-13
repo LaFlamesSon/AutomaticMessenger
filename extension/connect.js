@@ -70,8 +70,14 @@ async function clearSession() {
 }
 
 async function refreshSession() {
-  const result = await fetchApi("auth_refresh", { refresh_token: session?.refresh_token }, true);
-  await saveSession(result);
+  const result = await chrome.runtime.sendMessage({ type: "caughtup-refresh-session", force: true })
+    .catch(() => ({ ok: false, status: 503, code: "auth_unavailable" }));
+  if (!result?.ok) {
+    throw new Core.ApiError("Your session could not be refreshed.", result?.status || 503, result?.code || "auth_unavailable");
+  }
+  const normalized = Core.normalizeAuthSession(result.session);
+  if (!normalized) throw new Core.ApiError("Your session could not be refreshed.", 401, "invalid_session");
+  session = normalized;
 }
 
 async function api(action, extra = {}) {
