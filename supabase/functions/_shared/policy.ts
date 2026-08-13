@@ -110,7 +110,7 @@ export function enforceConfiguredSignoff(draft: string, identity: DraftIdentity)
   const signoff = String(identity.signoff ?? "Best").trim().replace(/\s+/g, " ").slice(0, 100) || "Best";
   const name = String(identity.display_name ?? "").trim().replace(/\s+/g, " ").slice(0, 100);
   const withoutExisting = draft.trim().replace(
-    /\n{1,3}(?:best|thanks|thank you|sincerely|regards|warmly|cheers|kind regards)[,!]?\s*(?:\n+\s*)?[^\n]{0,100}\s*$/i,
+    /\n{1,3}(?:best|thanks|thank you|sincerely|regards|warmly|cheers|kind regards|talk soon|speak soon|take care|all the best|looking forward|warm regards)[,!]?\s*(?:\n+\s*)?[^\n]{0,100}\s*$/i,
     "",
   ).trim();
   return `${withoutExisting}\n\n${signoff},${name ? `\n${name}` : ""}`.trim();
