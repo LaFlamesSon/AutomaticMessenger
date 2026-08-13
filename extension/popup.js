@@ -86,6 +86,9 @@ function safeApiMessage(data, status) {
   if (code === "gmail_reconnect_required") {
     return { code, message: "Gmail access expired. Reconnect Gmail to continue." };
   }
+  if (code === "rate_limited" || status === 429) {
+    return { code: "rate_limited", message: "You've swept several times recently. Try again in a little while." };
+  }
   if (code === "version_conflict") return { code, message: "These preferences changed elsewhere. Reload and try again." };
   if (code === "booking_conflict") return { code, message: "That time overlaps an existing CaughtUp booking." };
   if (code === "outside_availability") return { code, message: "Choose a time inside your saved weekly availability." };

@@ -1944,6 +1944,9 @@ Deno.serve(async (req: Request) => {
         if (resp.ok && resultError?.code === "gmail_reconnect_required") {
           return json({ error: "Gmail access expired. Reconnect Gmail to continue.", code: "gmail_reconnect_required" }, 422);
         }
+        if (resp.ok && resultError?.code === "rate_limited") {
+          return json({ error: "You've swept several times recently. Try again in a little while.", code: "rate_limited" }, 429);
+        }
         if (resp.ok && resultError) {
           return json({ error: "Inbox sweep failed. Try again.", code: "sweep_failed" }, 502);
         }

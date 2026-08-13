@@ -354,9 +354,19 @@ test("Chat writing-style updates are reflected in extension state", () => {
 });
 
 test("manifest requests only the extension capabilities used by this UI", () => {
-  assert.deepEqual(manifest.permissions.sort(), ["identity", "storage"]);
+  assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.8");
+  assert.equal(manifest.version, "0.5.9");
+  assert.equal(manifest.background.service_worker, "background.js");
+});
+
+test("background worker refreshes sessions but never signs the user out", () => {
+  const background = fs.readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
+  assert.match(background, /importScripts\("core\.js"\)/);
+  assert.match(background, /chrome\.alarms\.create/);
+  assert.match(background, /auth_refresh/);
+  assert.match(background, /refresh_token !== session\.refresh_token/);
+  assert.doesNotMatch(background, /storage\.local\.remove/);
 });
 
 test("focus and reduced-motion styles are present", () => {

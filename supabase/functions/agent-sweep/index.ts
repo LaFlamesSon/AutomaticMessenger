@@ -35,6 +35,11 @@ import {
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
 const LABEL_NAME = "AI-Processed";
 const MAX_EMAILS_PER_ACCOUNT = 25;
+// Server-enforced abuse and spend caps. The hourly limit stops manual sweep
+// loops; the daily budget bounds LLM triage cost per account no matter how
+// much mail arrives or how often sweeps run.
+const MAX_MANUAL_RUNS_PER_HOUR = 8;
+const DAILY_TRIAGE_BUDGET = 200;
 // Configuration comes from Supabase Vault (via the ia_get_config RPC), with
 // environment variables as fallback. Vault keys are prefixed ia_*.
 // LLM: any OpenAI-compatible chat-completions API. Default is Gemini's free
@@ -451,6 +456,20 @@ Deno.serve(async (req: Request) => {
       const intervalMs = Math.max(15, Number(profile.sweep_interval_minutes ?? 180)) * 60_000;
       if (account.last_sweep_at && Date.now() - new Date(account.last_sweep_at).getTime() < intervalMs) continue;
     }
+    if (trigger === "manual") {
+      const { count: recentRuns, error: recentRunsError } = await supabase
+        .from("ia_agent_runs").select("id", { count: "exact", head: true })
+        .eq("gmail_account_id", account.id)
+        .gte("started_at", new Date(Date.now() - 3600_000).toISOString());
+      if (recentRunsError) {
+        results.push({ account: account.gmail_address, error: "rate check failed", code: "sweep_failed" });
+        continue;
+      }
+      if ((recentRuns ?? 0) >= MAX_MANUAL_RUNS_PER_HOUR) {
+        results.push({ account: account.gmail_address, error: "rate limited", code: "rate_limited" });
+        continue;
+      }
+    }
     const requestId = String(requestBody.request_id ?? crypto.randomUUID()).slice(0, 200);
     const windowKey = trigger === "manual"
       ? `manual:${requestId}`
@@ -518,6 +537,16 @@ Deno.serve(async (req: Request) => {
         messageRefs = list.messages ?? [];
       }
 
+      const dayStart = new Date();
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const { count: claimsToday, error: budgetError } = await supabase
+        .from("ia_message_claims").select("id", { count: "exact", head: true })
+        .eq("gmail_account_id", account.id).gte("claimed_at", dayStart.toISOString());
+      if (budgetError) throw new Error("triage budget unavailable");
+      const remainingBudget = Math.max(0, DAILY_TRIAGE_BUDGET - (claimsToday ?? 0));
+      const budgetReached = messageRefs.length > 0 && remainingBudget === 0;
+      messageRefs = messageRefs.slice(0, remainingBudget);
+
       for (const ref of messageRefs) {
         const { data: seen, error: seenError } = await supabase
           .from("ia_processed_emails").select("id")
@@ -572,9 +601,19 @@ Deno.serve(async (req: Request) => {
               : rule.match_value.toLowerCase() === senderDomain
           );
 
+          // Bulk marketing and automated mail is filtered deterministically so
+          // unrelated content is never read by the model at all.
+          const precedence = header(msg.payload, "Precedence").toLowerCase().trim();
+          const autoSubmitted = header(msg.payload, "Auto-Submitted").toLowerCase().trim();
+          const bulkMail = Boolean(header(msg.payload, "List-Unsubscribe")) ||
+            ["bulk", "list", "junk"].includes(precedence) ||
+            (autoSubmitted !== "" && autoSubmitted !== "no");
+
           let triage: Triage;
           if (/^(no[-._]?reply|do[-._]?not[-._]?reply|noreply)/.test(senderAddr.split("@")[0])) {
             triage = { category: "low_priority", summary: "Automated no-reply message.", draft: null, wants_portfolio: false, missing_required: [], confidence: 1 };
+          } else if (bulkMail) {
+            triage = { category: "low_priority", summary: "Bulk marketing or automated mail.", draft: null, wants_portfolio: false, missing_required: [], confidence: 1 };
           } else {
             triage = await triageEmail(systemPrompt, from, subject, emailBody);
           }
@@ -889,6 +928,7 @@ Deno.serve(async (req: Request) => {
         account: account.gmail_address,
         scanned, drafted, auto_sent: autoSentCount, review_drafts: drafted - autoSentCount,
         style_examples_learned: learned,
+        daily_budget_reached: budgetReached || undefined,
         digest: scanned === 0 ? "All caught up" : digest,
         diagnostics: targeted ? targetedDiagnostics : undefined,
       });
