@@ -89,8 +89,8 @@ style learning.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 42 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, plural-aware injection filter, and negotiation detection |
-| `agent-api` | 34 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and rate-limit surfacing |
+| `agent-sweep` | 44 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, plural-aware injection filter, and negotiation detection that never hides verified commercial follow-ups on a model-only spam judgment |
+| `agent-api` | 38 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and rate-limit surfacing |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -150,8 +150,16 @@ double-booking guard; API idempotency and owner checks sit above it.
   that signs the user out.
 - Live QA preserves the user's current Auto-send setting; unattended QA replies
   must stay inside explicitly controlled accounts.
-- Runtime model `deepseek-v4-flash` returned valid JSON after the retired
+- Runtime model `deepseek-v4-pro` is active after a controlled Flash/Pro comparison;
+  Pro returned valid non-thinking JSON and handled the forced-instruction case
+  better than Flash. The retired
   `deepseek-chat` name caused HTTP 400 failures.
+- Supabase sign-in persistence and Gmail authorization persistence are separate.
+  The extension saves and refreshes the reusable Supabase session, but Google
+  OAuth projects in Testing expire authorizations (including offline refresh
+  tokens for Gmail scopes) after seven days. Durable Gmail persistence therefore
+  requires moving the Google OAuth app to In production/verified status; no
+  extension refresh loop can renew a Google-revoked Testing token.
 - The current unpacked-extension callback is allowed by both Supabase Auth and
   the encrypted backend allowlist. A real manual extension sweep completed
   after reinstall: a valid sponsorship fixture became `action_needed` and
