@@ -61,3 +61,21 @@ removed seed gate returns 401.
 were reactivated on 2026-08-12 at the user's request. Note: the cron job
 definitions embed `x-agent-secret` in plaintext in `cron.job`, and that value
 has now also appeared in a chat transcript — rotate it before public launch.
+
+## Launch hardening follow-up (same day)
+
+- `agent-sweep` v39: manual sweeps rate-limited to 8 runs/account/hour
+  (`rate_limited`), hard daily triage budget of 200 message claims/account,
+  and a deterministic bulk-mail prefilter (List-Unsubscribe, Precedence
+  bulk/list, Auto-Submitted) that categorizes marketing/automated mail
+  `low_priority` without any model call.
+- `agent-api` v33 surfaces `rate_limited` as HTTP 429 with a friendly message.
+- Extension 0.5.9 adds a background service worker (alarms permission) that
+  refreshes the saved session every 20 minutes when within 30 minutes of
+  expiry. It never deletes the stored session and yields if the popup rotated
+  tokens concurrently. Local suites pass 22/22 (core) and 29/29 (markup).
+- `ia_agent_cron_secret` was rotated in a single Postgres transaction
+  (`vault.update_secret` + `cron.alter_job` × 2) using a server-generated
+  value that never left the database. Verified: neither cron job contains the
+  old value, both contain the current Vault value, and a live call with the
+  old secret returned HTTP 401.

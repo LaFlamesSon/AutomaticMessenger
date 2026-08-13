@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit user-confirmed flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.8** with five visible tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.9** with five visible tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Opportunities is disabled and visibly labeled Coming soon; it does not load
 opportunity data or expose marketplace connection controls while business registration and
 TikTok approval remain open. Calendar currently manages CaughtUp availability and internal
@@ -48,8 +48,14 @@ style learning.
 ## Safety posture
 
 - Email content is untrusted data, never agent instructions.
-- Auto-send is currently enabled for the production profile's explicitly
-  confirmed Urgent and Action needed categories.
+- The production profile is currently in Review mode (`reply_mode=draft_only`,
+  `auto_send=false`); Auto-send remains an explicit confirmed opt-in for the
+  Urgent and Action needed categories.
+- Bulk marketing and automated mail (List-Unsubscribe, Precedence bulk/list,
+  Auto-Submitted headers) is categorized deterministically and never sent to
+  the model.
+- Manual sweeps are limited to eight runs per account per hour, and every
+  account has a hard daily triage budget of two hundred message claims.
 - Contact details and scheduling slots come from owner-controlled server state.
 - A draft may offer server-verified open slots, but never claim a meeting is
   confirmed, booked, or reserved.
@@ -83,12 +89,13 @@ style learning.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 37 | Gmail triage plus reply-stage-gated negotiation detection and final safe draft synchronization for negotiation proposals |
-| `agent-api` | 26 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, and verified manual send |
+| `agent-sweep` | 39 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, plural-aware injection filter, and negotiation detection |
+| `agent-api` | 33 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and rate-limit surfacing |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
 | `stripe-webhook` | 1 | Billing webhook; billing remains dormant until configured |
+| `tiktok-oauth` | 1 | TikTok creator OAuth callback; awaiting TikTok approval |
 
 All functions perform their own request authentication; `verify_jwt=false` at
 the platform edge is intentional, not an authorization bypass.
@@ -133,7 +140,14 @@ double-booking guard; API idempotency and owner checks sit above it.
 
 ## Operations and live verification
 
-- Scheduled sweep cron is paused during iterative live QA.
+- The scheduled sweep cron (`0 */3 * * *`) and daily digest (`0 15 * * *`)
+  were reactivated on 2026-08-12.
+- `ia_agent_cron_secret` was rotated entirely inside Postgres on 2026-08-12
+  after the prior value appeared in chat transcripts; the old value is
+  rejected and both cron jobs carry the new Vault value.
+- Extension 0.5.9 adds a background service worker that proactively refreshes
+  the saved session every twenty minutes; the popup remains the only surface
+  that signs the user out.
 - Live QA preserves the user's current Auto-send setting; unattended QA replies
   must stay inside explicitly controlled accounts.
 - Runtime model `deepseek-v4-flash` returned valid JSON after the retired
