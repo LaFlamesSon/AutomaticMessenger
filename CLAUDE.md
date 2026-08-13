@@ -10,7 +10,7 @@ triage recent unprocessed Inbox mail, prepare reviewable replies in the user's l
 send only through an explicit user-confirmed flow, attach a matching media kit,
 and apply the user's email, phone, or scheduled-call contact preference.
 
-The extension source is version **0.5.9** with five visible tabs: Today, Opportunities, Kits, Calendar,
+The extension source is version **0.5.10** with five visible tabs: Today, Opportunities, Kits, Calendar,
 and Settings. Opportunities is disabled and visibly labeled Coming soon; it does not load
 opportunity data or expose marketplace connection controls while business registration and
 TikTok approval remain open. Calendar currently manages CaughtUp availability and internal
@@ -89,8 +89,8 @@ style learning.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 44 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, plural-aware injection filter, and negotiation detection that never hides verified commercial follow-ups on a model-only spam judgment |
-| `agent-api` | 38 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and rate-limit surfacing |
+| `agent-sweep` | 45 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, negotiation detection that never hides verified commercial follow-ups, and a hard no-send boundary for marked stress fixtures |
+| `agent-api` | 39 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and deterministic no-send stress fixtures |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
@@ -145,9 +145,9 @@ double-booking guard; API idempotency and owner checks sit above it.
 - `ia_agent_cron_secret` was rotated entirely inside Postgres on 2026-08-12
   after the prior value appeared in chat transcripts; the old value is
   rejected and both cron jobs carry the new Vault value.
-- Extension 0.5.9 adds a background service worker that proactively refreshes
-  the saved session every twenty minutes; the popup remains the only surface
-  that signs the user out.
+- Extension 0.5.10 serializes every rotating Supabase refresh-token exchange
+  through the background service worker, recreates its refresh alarm whenever
+  the worker loads, and keeps transient failures from deleting the saved session.
 - Live QA preserves the user's current Auto-send setting; unattended QA replies
   must stay inside explicitly controlled accounts.
 - Runtime model `deepseek-v4-pro` is active after a controlled Flash/Pro comparison;
@@ -155,11 +155,11 @@ double-booking guard; API idempotency and owner checks sit above it.
   better than Flash. The retired
   `deepseek-chat` name caused HTTP 400 failures.
 - Supabase sign-in persistence and Gmail authorization persistence are separate.
-  The extension saves and refreshes the reusable Supabase session, but Google
-  OAuth projects in Testing expire authorizations (including offline refresh
-  tokens for Gmail scopes) after seven days. Durable Gmail persistence therefore
-  requires moving the Google OAuth app to In production/verified status; no
-  extension refresh loop can renew a Google-revoked Testing token.
+  The Google OAuth app is already in Production. A 2026-08-13 read-only audit
+  found many Supabase login sessions but no recorded session refreshes, so the
+  active persistence defect was in extension refresh coordination rather than
+  Google consent-screen status. Extension 0.5.10 makes the background worker the
+  single refresh owner; reload the unpacked extension to activate that code.
 - The current unpacked-extension callback is allowed by both Supabase Auth and
   the encrypted backend allowlist. A real manual extension sweep completed
   after reinstall: a valid sponsorship fixture became `action_needed` and

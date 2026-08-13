@@ -56,9 +56,26 @@ dates or invoke exact message IDs.
 - `npx deno check` passed for both Edge Functions during the cycle.
 - Focused Deno negotiation/policy suites: 36/36 pass.
 - Full Deno suite before deployment: 142/142 pass.
-- Broader Node source contracts: 55/56 pass; the existing affiliate regex test
-  over-scans unrelated `auto_sent` and later `affiliate` text in the enlarged
-  API source and is not a runtime failure.
-- Deployed `agent-sweep` v44 and `agent-api` v38 are ACTIVE.
+- Broader Node/source contracts now pass 109/109 after scoping the affiliate
+  assertion to its own action. Deno policy/backend tests pass 142/142, and both
+  changed Edge Functions type-check.
+- Deployed `agent-sweep` v45 and `agent-api` v39 are ACTIVE.
 - Final database audit: normal 40/40 drafted; negotiations 28 with 0 missing
   proposed replies; 0 new sends; 0 apparent unsafe drafts.
+
+## Follow-up fixes
+
+Every harness-created Gmail message now carries `X-CaughtUp-Test: stress-v1`.
+Sweep persists that marker as `is_test`, forces any automatic decision back to
+Review, and the manual extension send endpoint rejects test rows. Fixture insert
+uses the RFC Date header as Gmail's internal date, with inquiry, owner reply, and
+new inbound terms separated deterministically by one minute.
+
+The prior OAuth Testing-mode diagnosis was incorrect: the project is already in
+Production. Auth records instead showed repeated login sessions with no recorded
+refresh. Extension 0.5.10 routes popup, connection page, and alarm refreshes
+through one background-worker promise so rotating Supabase refresh tokens cannot
+race. A new live stress batch was not added after deployment because the account
+had reached its server-enforced 200-claim UTC daily cap; deployed source and local
+verification pass, while a fresh post-reset live batch remains the final runtime
+acceptance check.
