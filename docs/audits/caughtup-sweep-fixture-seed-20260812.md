@@ -79,3 +79,38 @@ has now also appeared in a chat transcript — rotate it before public launch.
   value that never left the database. Verified: neither cron job contains the
   old value, both contain the current Vault value, and a live call with the
   old secret returned HTTP 401.
+
+## Draft-yield investigation (same day)
+
+A temporary read-only triage probe (hashed one-time secret, no Gmail access,
+no writes, removed after the cycle) replayed the eleven fixtures that had
+fallen back to the deterministic safe reply through the live model with the
+production prompt.
+
+**Root cause:** `deepseek-v4-flash` classified genuine sponsorship and
+collaboration inquiries as `spam_or_poor_fit` (up to 0.95 confidence) or
+`low_priority` whenever the topic fell outside the configured profile niche
+(the profile is a freelance brand designer; the fixtures were creator
+sponsorships). Nine of eleven were rescued only by deterministic category
+recovery, which produces the voice-less generic draft. Because
+`spam_or_poor_fit` never renders on Today, a real off-niche inquiry without
+recovery signals could have been silently dropped.
+
+**Fix:** category definitions now reserve `spam_or_poor_fit` for deception,
+scams, and behavioral manipulation; brief concrete collaboration asks stay
+`action_needed`; niche fit is explicitly the user's decision.
+
+**Post-fix probe (15 cases):** nine of eleven previously voice-less fixtures
+now receive safety-clean model drafts in the configured voice; the remaining
+two still land in deterministic recovery (visible, safe). All negatives held:
+growth-spam → `spam_or_poor_fit` 0.98, prompt injection → `spam_or_poor_fit`
+1.0 and independently flagged by the fixed hostile regex, newsletter and
+no-response notification → `fyi`.
+
+**Second defect found by the probe:** model drafts ending "Talk soon," gained
+a duplicated "Best," block because the signoff enforcer stripped only a fixed
+closing list. The strip pattern now covers talk soon, speak soon, take care,
+all the best, looking forward, and warm regards.
+
+Final deployed state after this cycle: `agent-sweep` v42, `agent-api` v34,
+probe removed (verified 401), extension 0.5.9.

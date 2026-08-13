@@ -89,8 +89,8 @@ style learning.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 39 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, plural-aware injection filter, and negotiation detection |
-| `agent-api` | 33 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and rate-limit surfacing |
+| `agent-sweep` | 42 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, plural-aware injection filter, and negotiation detection |
+| `agent-api` | 34 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and rate-limit surfacing |
 | `gmail-oauth` | 5 | Gmail OAuth connection |
 | `daily-digest` | 2 | Daily digest delivery |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
