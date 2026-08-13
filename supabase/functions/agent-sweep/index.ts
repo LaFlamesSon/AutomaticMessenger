@@ -21,6 +21,7 @@ import {
   legitimateInquiryFallbackAllowed,
   type MediaKitCandidate,
   safeInformationDraft,
+  safeNegotiationDraft,
   selectMediaKit,
   safeCalendarPreference,
   type VerifiedOpenSlot,
@@ -29,7 +30,7 @@ import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds
 import { hasEarlierOwnerSent, hasLaterOwnerAction, isOwnerAction } from "../_shared/gmail.ts";
 import { senderBusinessDomain } from "../_shared/opportunities.ts";
 import {
-  evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage,
+  evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage, negotiationSummary,
 } from "../_shared/negotiations.ts";
 
 const GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -85,7 +86,7 @@ class GmailReconnectRequiredError extends Error {
 }
 
 function suggestedBrandName(from: string, domain: string): string {
-  const display = sanitizeHeader(from.replace(/<[^>]+>/g, "").replace(/^['"]|['"]$/g, "").trim(), 120);
+  const display = sanitizeHeader(from.replace(/<[^>]+>/g, "").trim().replace(/^['"]+|['"]+$/g, "").trim(), 120);
   if (display && !display.includes("@")) return display;
   return domain.split(".")[0].split(/[-_]/).filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ").slice(0, 120);
 }
@@ -636,16 +637,20 @@ Deno.serve(async (req: Request) => {
           const negotiationRequired = triage.category !== "spam_or_poor_fit" &&
             ((commercialTerms.detected && creatorPreviouslyReplied) || Boolean(activeNegotiation));
           if (negotiationRequired) {
+            // Every negotiation card gets a specific terms summary and a safe
+            // Review-only proposed reply, regardless of what the model returned.
+            const summaryTerms = (commercialTerms.detected
+              ? commercialTerms
+              : existingNegotiation?.current_terms ?? commercialTerms) as typeof commercialTerms;
             triage = {
               ...triage,
               category: "urgent",
-              summary: commercialTerms.counteroffer
-                ? "A brand counteroffer requires your decision."
-                : commercialTerms.detected
-                ? "Commercial terms require your review."
-                : "An active brand negotiation requires your review.",
+              summary: negotiationSummary(summaryTerms, Boolean(existingNegotiation)),
               confidence: 1,
             };
+            if (!triage.draft || draftSafetyViolations(triage.draft).length) {
+              triage = { ...triage, draft: safeNegotiationDraft(profile) };
+            }
           }
 
           const portfolioRequested = explicitPortfolioRequest(subject, emailBody);

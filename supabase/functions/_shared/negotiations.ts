@@ -98,6 +98,24 @@ export function evaluateCommercialTerms(terms: CommercialTerms, profile: MediaKi
   return "within_range";
 }
 
+export function negotiationSummary(terms: CommercialTerms, hasExisting: boolean): string {
+  const parts: string[] = [];
+  if (terms.flat_fee_amount !== null) {
+    parts.push(`${terms.currency === null || terms.currency === "USD" ? "$" : `${terms.currency} `}${terms.flat_fee_amount.toLocaleString("en-US")} flat`);
+  }
+  if (terms.commission_rate !== null) parts.push(`${terms.commission_rate}% commission`);
+  if (terms.deliverables.length) parts.push(terms.deliverables.slice(0, 3).join(", "));
+  const extras: string[] = [];
+  if (terms.usage_rights) extras.push("usage rights");
+  if (terms.exclusivity) extras.push("exclusivity");
+  if (terms.deadline) extras.push("deadline mentioned");
+  const lead = terms.counteroffer ? "Counteroffer" : hasExisting ? "Updated terms" : "Offer";
+  if (!parts.length && !extras.length) {
+    return hasExisting ? "New message in an active negotiation." : "Commercial terms require your review.";
+  }
+  return `${lead}: ${parts.length ? parts.join(" + ") : "terms discussed"}${extras.length ? ` — ${extras.join(", ")}` : ""}.`;
+}
+
 export function negotiationStage(hasExisting: boolean, terms: CommercialTerms): "offer_received" | "negotiating" | "countered" {
   if (terms.counteroffer) return "countered";
   return hasExisting ? "negotiating" : "offer_received";

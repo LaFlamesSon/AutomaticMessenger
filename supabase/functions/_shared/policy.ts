@@ -98,6 +98,13 @@ export function collaborationMediaKitRelevant(subject: string, body: string): bo
   return legitimateInquiryFallbackAllowed(subject, body) && COLLABORATION_SIGNAL.test(text);
 }
 
+export function safeNegotiationDraft(identity: DraftIdentity): string {
+  return enforceConfiguredSignoff(
+    "Thanks for sending the terms — I want to give this a proper look before deciding.\n\nCould you confirm the timeline and any usage or exclusivity expectations so I can consider the full picture? I'll come back to you shortly.",
+    identity,
+  );
+}
+
 export function safeInformationDraft(identity: DraftIdentity, wantsPortfolio = false): string {
   const portfolio = wantsPortfolio ? "\n\nI can share relevant samples for review." : "";
   return enforceConfiguredSignoff(
