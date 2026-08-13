@@ -366,7 +366,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.9");
+  assert.equal(manifest.version, "0.5.10");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 
