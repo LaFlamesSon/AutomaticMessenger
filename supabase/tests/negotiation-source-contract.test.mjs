@@ -18,6 +18,7 @@ test("negotiations deterministically force Review and persist by Gmail thread", 
   assert.match(sweep, /proposed_reply: finalDraft && decision !== "none" && !finalSafety\.length \? finalDraft : null/);
   assert.match(sweep, /commercialTerms\.detected && creatorPreviouslyReplied/);
   assert.match(sweep, /hasEarlierOwnerSent\(msg, thread\.messages \?\? \[\]\)/);
+  assert.match(sweep, /const negotiationRequired = !hostileInbound/);
 });
 
 test("negotiation storage is owner scoped and not directly exposed", () => {

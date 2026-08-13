@@ -618,7 +618,8 @@ Deno.serve(async (req: Request) => {
           } else {
             triage = await triageEmail(systemPrompt, from, subject, emailBody);
           }
-          if (hostileInboundDetected(subject, emailBody)) {
+          const hostileInbound = hostileInboundDetected(subject, emailBody);
+          if (hostileInbound) {
             triage = {
               category: "spam_or_poor_fit",
               summary: "Message contains untrusted instructions directed at the agent.",
@@ -634,7 +635,10 @@ Deno.serve(async (req: Request) => {
             .eq("gmail_account_id", account.id).eq("thread_id", msg.threadId).maybeSingle();
           if (existingNegotiationError) throw new Error("negotiation memory unavailable");
           const activeNegotiation = existingNegotiation && !["agreed", "declined", "closed"].includes(existingNegotiation.stage);
-          const negotiationRequired = triage.category !== "spam_or_poor_fit" &&
+          // A model's subjective spam judgment must not hide verified commercial
+          // terms after the creator has already replied. Deterministic hostile
+          // instructions still win, and every negotiation remains Review-only.
+          const negotiationRequired = !hostileInbound &&
             ((commercialTerms.detected && creatorPreviouslyReplied) || Boolean(activeNegotiation));
           if (negotiationRequired) {
             // Every negotiation card gets a specific terms summary and a safe
