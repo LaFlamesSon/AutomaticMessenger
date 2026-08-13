@@ -416,6 +416,57 @@ Deno.serve(async (req: Request) => {
 
   const expected = cfg("ia_agent_cron_secret", "AGENT_CRON_SECRET");
   if (!expected || req.headers.get("x-agent-secret") !== expected) {
+    // Temporary read-only triage probe for the draft-yield investigation.
+    // No Gmail access, no database writes; removed after the diagnosis run.
+    const probeSecret = req.headers.get("x-qa-probe-secret") ?? "";
+    if (probeSecret) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(probeSecret));
+      const hash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      if (hash === "0932c9ba46c1362dad163bfa4b5f65261151d75b6a3048c33c95fa902ba0da19") {
+        let probeBody: any = {};
+        try { probeBody = await req.json(); } catch { /* validated below */ }
+        const probeUserId = String(probeBody.user_id ?? "");
+        const cases = Array.isArray(probeBody.cases) ? probeBody.cases.slice(0, 20) : [];
+        if (!/^[0-9a-f-]{36}$/i.test(probeUserId) || !cases.length) {
+          return new Response(JSON.stringify({ error: "probe input invalid" }), { status: 400 });
+        }
+        const { data: probeProfile } = await supabase.from("ia_voice_profiles")
+          .select("*").eq("user_id", probeUserId).maybeSingle();
+        const { data: probeEdits } = await supabase.from("ia_draft_edits")
+          .select("original_draft, edited_final").eq("user_id", probeUserId)
+          .order("created_at", { ascending: false }).limit(10);
+        const { data: probeCalendarRow } = await supabase.from("ia_calendar_preferences")
+          .select("contact_mode, phone_number, booking_url, timezone, weekly_availability")
+          .eq("user_id", probeUserId).maybeSingle();
+        const probeCalendar = safeCalendarPreference(probeCalendarRow, probeProfile?.timezone ?? "America/Los_Angeles");
+        const probePrompt = buildSystemPrompt(probeProfile ?? {}, probeEdits ?? [], probeCalendar);
+        const probeResults = [];
+        for (const item of cases) {
+          const from = String(item?.from ?? "");
+          const subject = String(item?.subject ?? "");
+          const body = String(item?.body ?? "");
+          try {
+            const triage = await triageEmail(probePrompt, from, subject, body);
+            probeResults.push({
+              subject,
+              category: triage.category,
+              confidence: triage.confidence,
+              draft_present: Boolean(triage.draft),
+              draft_safety: triage.draft ? draftSafetyViolations(triage.draft) : [],
+              wants_portfolio: triage.wants_portfolio,
+              hostile: hostileInboundDetected(subject, body),
+              fallback_allowed: legitimateInquiryFallbackAllowed(subject, body),
+              draft: triage.draft,
+            });
+          } catch (probeError) {
+            probeResults.push({ subject, error: probeError instanceof Error ? probeError.message : "probe_failed" });
+          }
+        }
+        return new Response(JSON.stringify({ probe: probeResults }, null, 2), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
   let requestBody: any = {};
