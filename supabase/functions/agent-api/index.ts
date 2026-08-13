@@ -1968,54 +1968,6 @@ Deno.serve(async (req: Request) => {
         if (stateError) return json({ error: "Gmail draft created; state reconciliation required", code: "draft_update_reconcile" }, 503);
         return json({ ok: true, created_in_gmail: true, already_created: alreadyCreated, auto_sent: false, draft_email: stored });
       }
-      case "qa_cleanup_previous_stress": {
-        if (body.confirm !== true) return json({ error: "confirmation required" }, 400);
-        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
-          .select("id,gmail_address,refresh_token").eq("user_id", user.id)
-          .eq("gmail_address", "yafet2132@gmail.com").maybeSingle();
-        if (accountError) throw new Error(accountError.message);
-        if (!account) return json({ error: "test account unavailable", code: "gmail_reconnect_required" }, 422);
-        const accessToken = await gmailAccessToken(account.refresh_token, CFG);
-        if (!accessToken) return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
-        const { data: targets, error: targetError } = await supabase.from("ia_processed_emails")
-          .select("id,thread_id,gmail_draft_id,is_test,processed_at")
-          .eq("gmail_account_id", account.id)
-          .or("is_test.eq.true,and(processed_at.gte.2026-08-13T04:58:00Z,processed_at.lt.2026-08-13T05:03:45Z)");
-        if (targetError) throw new Error(targetError.message);
-        const targetRows = targets ?? [];
-        const targetIds = targetRows.map((row: any) => row.id);
-        const targetThreads = Array.from(new Set(targetRows.map((row: any) => String(row.thread_id ?? ""))
-          .filter((value: string) => /^[a-f0-9]{16}$/.test(value))));
-        const targetDrafts = Array.from(new Set(targetRows.map((row: any) => String(row.gmail_draft_id ?? ""))
-          .filter((value: string) => /^[A-Za-z0-9_-]{5,200}$/.test(value))));
-        let deletedDrafts = 0;
-        for (const draftId of targetDrafts) {
-          const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(draftId)}`, {
-            method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (response.ok) deletedDrafts += 1;
-          else if (response.status !== 404) return json({ error: "Gmail draft cleanup failed", code: "cleanup_required" }, 503);
-        }
-        let trashedThreads = 0;
-        for (const threadId of targetThreads) {
-          const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}/trash`, {
-            method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: "{}",
-          });
-          if (response.ok) trashedThreads += 1;
-          else if (response.status !== 404) return json({ error: "Gmail thread cleanup failed", code: "cleanup_required" }, 503);
-        }
-        const allTargetThreads = Array.from(new Set(targetRows.map((row: any) => String(row.thread_id ?? "")).filter(Boolean)));
-        const { data: deletedNegotiations, error: negotiationDeleteError } = await supabase.from("ia_negotiations").delete()
-          .eq("gmail_account_id", account.id).or(`is_test.eq.true,thread_id.in.(${allTargetThreads.map((value) => `"${value}"`).join(",")})`)
-          .select("id");
-        if (negotiationDeleteError) throw new Error(negotiationDeleteError.message);
-        const { data: deletedProcessed, error: processedDeleteError } = targetIds.length
-          ? await supabase.from("ia_processed_emails").delete().in("id", targetIds).select("id")
-          : { data: [], error: null };
-        if (processedDeleteError) throw new Error(processedDeleteError.message);
-        return json({ ok: true, deleted_gmail_drafts: deletedDrafts, trashed_gmail_threads: trashedThreads,
-          deleted_processed_rows: deletedProcessed?.length ?? 0, deleted_negotiation_rows: deletedNegotiations?.length ?? 0 });
-      }
       case "qa_stage_negotiation": {
         const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
           .select("id,gmail_address,refresh_token").eq("user_id", user.id)
