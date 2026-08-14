@@ -17,8 +17,8 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: CFG["ia_google_client_id"],
-      client_secret: CFG["ia_google_client_secret"],
+      client_id: CFG["ia_google_send_client_id"],
+      client_secret: CFG["ia_google_send_client_secret"],
       refresh_token: refreshToken,
       grant_type: "refresh_token",
     }),
@@ -45,7 +45,8 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
-  const { data: accounts, error: accountsError } = await supabase.from("ia_gmail_accounts").select("*");
+  const { data: accounts, error: accountsError } = await supabase.from("ia_gmail_accounts")
+    .select("*").eq("oauth_capability", "send_only");
   if (accountsError) {
     return new Response(JSON.stringify({ error: "account query failed" }), {
       status: 500, headers: { "Content-Type": "application/json" },

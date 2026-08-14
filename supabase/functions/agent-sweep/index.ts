@@ -112,8 +112,8 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: cfg("ia_google_client_id", "GOOGLE_CLIENT_ID"),
-      client_secret: cfg("ia_google_client_secret", "GOOGLE_CLIENT_SECRET"),
+      client_id: cfg("ia_google_send_client_id", ""),
+      client_secret: cfg("ia_google_send_client_secret", ""),
       refresh_token: refreshToken,
       grant_type: "refresh_token",
     }),
@@ -436,11 +436,18 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: "targeted manual sweep requires valid Gmail account and message IDs" }), { status: 400 });
   }
 
-  let accountQuery = supabase.from("ia_gmail_accounts").select("*, ia_users(id, email)");
+  let accountQuery = supabase.from("ia_gmail_accounts").select("*, ia_users(id, email)")
+    .eq("oauth_capability", "inbox_read");
   if (requestedUserId) accountQuery = accountQuery.eq("user_id", requestedUserId);
   if (targeted) accountQuery = accountQuery.eq("id", requestedAccountId);
   const { data: accounts, error: accErr } = await accountQuery;
   if (accErr) return new Response(JSON.stringify({ error: "account query failed" }), { status: 500 });
+  if (requestedUserId && !(accounts ?? []).length) {
+    return new Response(JSON.stringify({
+      error: "Inbound email forwarding is required before CaughtUp can process inbox replies.",
+      code: "inbound_forwarding_required",
+    }), { status: 409, headers: { "Content-Type": "application/json" } });
+  }
 
   const results: any[] = [];
 

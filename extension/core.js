@@ -287,8 +287,6 @@
       expires_at: read("expires_at") || null,
       expires_in: read("expires_in") || null,
       token_type: read("token_type") || null,
-      provider_token: read("provider_token") || null,
-      provider_refresh_token: read("provider_refresh_token") || null,
       caughtup_gmail: read("caughtup_gmail") || null,
     };
   }

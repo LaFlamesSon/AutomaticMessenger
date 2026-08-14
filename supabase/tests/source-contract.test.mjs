@@ -131,7 +131,7 @@ test("extension-facing action contract is present", async () => {
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare",
     "auto_send_confirm", "auto_send_disable", "draft_get", "draft_update", "negotiation_test_draft_create", "send_draft", "sweep",
     "media_kit_list", "media_kit_upload_prepare", "media_kit_upload_complete",
-    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start", "gmail_send_probe_start",
+    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_start",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ]) assert.match(api, new RegExp(`case "${action}"`));
   assert.match(api, /body\.action === "auth_refresh"/);
@@ -245,18 +245,16 @@ test("OAuth redirects require an exact configured extension allowlist", async ()
   assert.match(oauth, /allowedChromeRedirect\(claimed\.redirect_uri, CFG\["ia_allowed_extension_ids"\]/);
 });
 
-test("combined Google handoff validates Gmail ownership before storing a refresh token", async () => {
+test("send-only Google callback validates Gmail ownership before storing a refresh token", async () => {
   const api = await read("functions/agent-api/index.ts");
-  assert.match(api, /case "gmail_connect_provider"/);
-  assert.match(api, /cleanProviderToken\(body\.provider_access_token/);
-  assert.match(api, /cleanProviderToken\(body\.provider_refresh_token/);
-  assert.match(api, /gmail\/v1\/users\/me\/profile/);
-  assert.match(api, /gmailAccessToken\(providerRefreshToken, CFG\)/);
-  assert.match(api, /refreshedAddress !== gmailAddress/);
-  assert.match(api, /existing && existing\.user_id !== user\.id/);
-  assert.match(api, /code: "gmail_already_connected"/);
-  assert.match(api, /refresh_token: providerRefreshToken/);
-  assert.doesNotMatch(api, /return json\(\{[^}]*provider_(?:access|refresh)_token/s);
+  const oauth = await read("functions/gmail-oauth/index.ts");
+  assert.doesNotMatch(api, /case "gmail_connect_provider"|cleanProviderToken|provider_refresh_token/);
+  assert.match(oauth, /openidconnect\.googleapis\.com\/v1\/userinfo/);
+  assert.match(oauth, /googleProfile\.email_verified/);
+  assert.match(oauth, /String\(owner\.email/);
+  assert.match(oauth, /existing && existing\.user_id !== claimed\.user_id/);
+  assert.match(oauth, /refresh_token: tokens\.refresh_token/);
+  assert.match(oauth, /oauth_capability: "send_only"/);
 });
 
 test("DeepSeek V4 JSON calls explicitly disable thinking without changing other providers", async () => {

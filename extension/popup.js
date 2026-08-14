@@ -92,8 +92,8 @@ function safeApiMessage(data, status) {
   if (code === "version_conflict") return { code, message: "These preferences changed elsewhere. Reload and try again." };
   if (code === "booking_conflict") return { code, message: "That time overlaps an existing CaughtUp booking." };
   if (code === "outside_availability") return { code, message: "Choose a time inside your saved weekly availability." };
-  if (code === "gmail_provider_unavailable") {
-    return { code, message: "Google did not return reusable Gmail access. Continue with the Gmail connection step." };
+  if (code === "inbound_forwarding_required") {
+    return { code, message: "Connect inbound email forwarding before processing inbox replies." };
   }
   if (code === "gmail_already_connected") {
     return { code, message: "That Gmail inbox is already connected to another CaughtUp account." };

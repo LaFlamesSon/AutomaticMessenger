@@ -71,12 +71,13 @@ style learning.
 - Server: Deno Edge Functions + Postgres + Storage + Vault.
 - LLM: OpenAI-compatible provider configured by Vault keys
   `ia_llm_base_url`, `ia_llm_model`, and `ia_llm_api_key`.
-- Extension auth: a new session requests Supabase Google identity and
-  `gmail.modify` in one Google launch. Transient provider tokens are validated
-  and matched server-side, never persisted by the extension, and the prior
-  separate Gmail consent remains only as a recovery path. A verified Supabase
-  JWT authenticates `agent-api`; the legacy per-user API token remains for
-  controlled diagnostics.
+- Extension auth: Supabase Google login requests identity only. A separate
+  production OAuth client requests identity plus `gmail.send`, validates the
+  verified Google email against the CaughtUp account, and stores a send-only
+  refresh token server-side. Inbox ingestion requires the separate inbound
+  forwarding pipeline; legacy broad-scope tokens are disabled. A verified
+  Supabase JWT authenticates `agent-api`; the legacy per-user API token remains
+  for controlled diagnostics.
 - Gmail worker auth: `x-agent-secret`; secrets are read through
   `ia_get_config()` from Supabase Vault.
 - Media kits: private Storage objects plus owner-scoped metadata. Matching uses

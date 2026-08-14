@@ -37,6 +37,11 @@ const REQUIRED_QUESTIONS = new Set([
   "timeline",
   "what brand materials they already have",
 ]);
+const INBOX_CAPABILITY_ACTIONS = new Set([
+  "sweep", "draft_get", "draft_update", "send_draft",
+  "negotiation_test_draft_create", "qa_stage_negotiation",
+  "opportunity_prepare_draft", "opportunity_draft_get", "opportunity_send",
+]);
 
 
 class InputError extends Error {}
@@ -61,12 +66,6 @@ function cleanUuid(value: unknown, name: string): string {
     throw new InputError(`${name} must be a UUID`);
   }
   return id;
-}
-
-function cleanProviderToken(value: unknown, name: string): string {
-  const token = cleanString(value, name, 8192);
-  if (token.length < 20 || /\s/.test(token)) throw new InputError(`${name} is invalid`);
-  return token;
 }
 
 function cleanCategories(value: unknown, name: string): string[] {
@@ -488,7 +487,7 @@ function filenameMatchesMime(filename: string, mime: string): boolean {
 
 async function gmailAccessToken(refreshToken: string, cfg: Record<string, string>): Promise<string | null> {
   const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({
-    client_id: cfg["ia_google_client_id"], client_secret: cfg["ia_google_client_secret"], refresh_token: refreshToken, grant_type: "refresh_token",
+    client_id: cfg["ia_google_send_client_id"], client_secret: cfg["ia_google_send_client_secret"], refresh_token: refreshToken, grant_type: "refresh_token",
   }) });
   if (!response.ok) return null;
   return (await response.json()).access_token ?? null;
@@ -988,6 +987,18 @@ Deno.serve(async (req: Request) => {
   const CFG: Record<string, string> = Object.fromEntries((cfgRows ?? []).map((r: any) => [r.name, r.secret]));
 
   try {
+    if (INBOX_CAPABILITY_ACTIONS.has(String(body.action ?? ""))) {
+      const { count, error: capabilityError } = await supabase.from("ia_gmail_accounts")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id).eq("oauth_capability", "inbox_read");
+      if (capabilityError) throw new Error(capabilityError.message);
+      if (!count) {
+        return json({
+          error: "Inbound email forwarding is required before CaughtUp can process inbox replies.",
+          code: "inbound_forwarding_required",
+        }, 409);
+      }
+    }
     switch (body.action) {
       case "digest": {
         const accountIds = await ownedAccountIds(supabase, user.id);
@@ -1156,7 +1167,8 @@ Deno.serve(async (req: Request) => {
           .select("id", { count: "exact", head: true }).eq("user_id", user.id);
         if (learningError) throw new Error(learningError.message);
         const { data: gmailAccount, error: gmailError } = await supabase.from("ia_gmail_accounts")
-          .select("gmail_address").eq("user_id", user.id).limit(1).maybeSingle();
+          .select("gmail_address,oauth_capability").eq("user_id", user.id)
+          .eq("oauth_capability", "send_only").limit(1).maybeSingle();
         if (gmailError) throw new Error(gmailError.message);
         const learning = {
           style_examples_count: styleExamples ?? 0,
@@ -1167,6 +1179,8 @@ Deno.serve(async (req: Request) => {
           email: user.email,
           gmail_connected: Boolean(gmailAccount),
           gmail_address: gmailAccount?.gmail_address ?? null,
+          gmail_access_mode: gmailAccount?.oauth_capability ?? null,
+          inbound_forwarding_ready: false,
           learning,
         });
       }
@@ -2182,62 +2196,15 @@ Deno.serve(async (req: Request) => {
         return json(payload, resp.status);
       }
 
-      case "gmail_connect_provider": {
-        const providerAccessToken = cleanProviderToken(body.provider_access_token, "provider_access_token");
-        const providerRefreshToken = cleanProviderToken(body.provider_refresh_token, "provider_refresh_token");
-        const profileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
-          headers: { Authorization: `Bearer ${providerAccessToken}` },
-          signal: AbortSignal.timeout(10_000),
-        }).catch(() => null);
-        if (!profileResp || !profileResp.ok) {
-          return json({ error: "Gmail authorization could not be confirmed", code: "gmail_provider_unavailable" }, 422);
-        }
-        const gmailProfile = await profileResp.json();
-        const gmailAddress = String(gmailProfile.emailAddress ?? "").trim().toLowerCase();
-        if (!gmailAddress || gmailAddress.length > 320) {
-          return json({ error: "Gmail account address is unavailable", code: "gmail_provider_unavailable" }, 422);
-        }
-        const refreshedAccessToken = await gmailAccessToken(providerRefreshToken, CFG).catch(() => null);
-        if (!refreshedAccessToken) {
-          return json({ error: "Reusable Gmail authorization is unavailable", code: "gmail_provider_unavailable" }, 422);
-        }
-        const refreshedProfileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
-          headers: { Authorization: `Bearer ${refreshedAccessToken}` },
-          signal: AbortSignal.timeout(10_000),
-        }).catch(() => null);
-        if (!refreshedProfileResp || !refreshedProfileResp.ok) {
-          return json({ error: "Reusable Gmail authorization could not be confirmed", code: "gmail_provider_unavailable" }, 422);
-        }
-        const refreshedProfile = await refreshedProfileResp.json();
-        const refreshedAddress = String(refreshedProfile.emailAddress ?? "").trim().toLowerCase();
-        if (refreshedAddress !== gmailAddress) {
-          return json({ error: "Google authorization accounts did not match", code: "gmail_provider_unavailable" }, 422);
-        }
-        const { data: existing, error: lookupError } = await supabase.from("ia_gmail_accounts")
-          .select("id, user_id").eq("gmail_address", gmailAddress).maybeSingle();
-        if (lookupError) throw new Error(lookupError.message);
-        if (existing && existing.user_id !== user.id) {
-          return json({ error: "This Gmail account is already connected", code: "gmail_already_connected" }, 409);
-        }
-        const now = new Date().toISOString();
-        const accountWrite = existing
-          ? supabase.from("ia_gmail_accounts")
-            .update({ refresh_token: providerRefreshToken, connected_at: now })
-            .eq("id", existing.id).eq("user_id", user.id)
-          : supabase.from("ia_gmail_accounts").insert({
-            user_id: user.id,
-            gmail_address: gmailAddress,
-            refresh_token: providerRefreshToken,
-          });
-        const { error: accountError } = await accountWrite;
-        if (accountError) throw new Error(accountError.message);
-        return json({ connected: true, gmail_address: gmailAddress });
-      }
-
       case "gmail_connect_start": {
         const redirectUri = cleanString(body.redirect_url, "redirect_url", 500);
         if (!allowedChromeRedirect(redirectUri, CFG["ia_allowed_extension_ids"] ?? "")) {
           return json({ error: "redirect_url must be a Chrome identity callback" }, 400);
+        }
+        const clientId = CFG["ia_google_send_client_id"] ?? "";
+        const clientSecret = CFG["ia_google_send_client_secret"] ?? "";
+        if (!/^[0-9]+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(clientId) || clientSecret.length < 20) {
+          return json({ error: "Gmail sending is not configured", code: "gmail_configuration_unavailable" }, 503);
         }
         const state = crypto.randomUUID() + crypto.randomUUID();
         const stateHash = await sha256(state);
@@ -2248,49 +2215,14 @@ Deno.serve(async (req: Request) => {
         if (error) throw new Error(error.message);
         const callback = `${Deno.env.get("SUPABASE_URL")}/functions/v1/gmail-oauth`;
         const consent = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-        consent.searchParams.set("client_id", CFG["ia_google_client_id"]);
-        consent.searchParams.set("redirect_uri", callback);
-        consent.searchParams.set("response_type", "code");
-        consent.searchParams.set("scope", "https://www.googleapis.com/auth/gmail.modify");
-        consent.searchParams.set("access_type", "offline");
-        consent.searchParams.set("prompt", "consent");
-        consent.searchParams.set("state", state);
-        return json({ authorization_url: consent.toString(), expires_at: expiresAt });
-      }
-
-      case "gmail_send_probe_start": {
-        const redirectUri = cleanString(body.redirect_url, "redirect_url", 500);
-        if (!allowedChromeRedirect(redirectUri, CFG["ia_allowed_extension_ids"] ?? "")) {
-          return json({ error: "redirect_url must be a Chrome identity callback" }, 400);
-        }
-        const probeClientId = CFG["ia_google_send_probe_client_id"] ?? "";
-        const probeClientSecret = CFG["ia_google_send_probe_client_secret"] ?? "";
-        const probeEmail = (CFG["ia_google_send_probe_email"] ?? "").trim().toLowerCase();
-        if (
-          CFG["ia_google_send_probe_enabled"] !== "true" ||
-          !/^[0-9]+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(probeClientId) ||
-          probeClientSecret.length < 20 ||
-          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(probeEmail)
-        ) {
-          return json({ error: "Gmail send probe is unavailable", code: "probe_unavailable" }, 503);
-        }
-        const state = crypto.randomUUID() + crypto.randomUUID();
-        const stateHash = await sha256(state);
-        const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-        const { error } = await supabase.from("ia_oauth_states").insert({
-          user_id: user.id, state_hash: stateHash, redirect_uri: redirectUri, expires_at: expiresAt,
-        });
-        if (error) throw new Error(error.message);
-        const callback = `${Deno.env.get("SUPABASE_URL")}/functions/v1/gmail-send-probe`;
-        const consent = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-        consent.searchParams.set("client_id", probeClientId);
+        consent.searchParams.set("client_id", clientId);
         consent.searchParams.set("redirect_uri", callback);
         consent.searchParams.set("response_type", "code");
         consent.searchParams.set("scope", "openid email profile https://www.googleapis.com/auth/gmail.send");
         consent.searchParams.set("access_type", "offline");
         consent.searchParams.set("prompt", "consent");
         consent.searchParams.set("include_granted_scopes", "false");
-        consent.searchParams.set("login_hint", probeEmail);
+        consent.searchParams.set("login_hint", user.email);
         consent.searchParams.set("state", state);
         return json({ authorization_url: consent.toString(), expires_at: expiresAt });
       }

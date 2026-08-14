@@ -42,7 +42,7 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const code = url.searchParams.get("code") ?? "";
   const state = url.searchParams.get("state") ?? "";
-  if (!code || !state || state.length > 200) return page("Connection failed", "Missing or invalid OAuth response.", 400);
+  if (!state || state.length > 200) return page("Connection failed", "Missing or invalid OAuth response.", 400);
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const { data: cfgRows, error: cfgError } = await supabase.rpc("ia_get_config");
@@ -58,31 +58,54 @@ Deno.serve(async (req: Request) => {
   if (!allowedChromeRedirect(claimed.redirect_uri, CFG["ia_allowed_extension_ids"] ?? "")) {
     return page("Connection failed", "The extension callback is not allowed.", 400);
   }
+  if (url.searchParams.get("error") || !code) {
+    return completionRedirect(claimed.redirect_uri, "failed", "authorization_declined");
+  }
+
+  const clientId = CFG["ia_google_send_client_id"] ?? "";
+  const clientSecret = CFG["ia_google_send_client_secret"] ?? "";
+  if (!clientId || !clientSecret) {
+    return completionRedirect(claimed.redirect_uri, "failed", "configuration_unavailable");
+  }
 
   const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: CFG["ia_google_client_id"],
-      client_secret: CFG["ia_google_client_secret"],
+      client_id: clientId,
+      client_secret: clientSecret,
       code,
       grant_type: "authorization_code",
       redirect_uri: selfUrl(),
     }),
-  });
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!tokenResp) return completionRedirect(claimed.redirect_uri, "failed", "code_exchange_failed");
   if (!tokenResp.ok) return completionRedirect(claimed.redirect_uri, "failed", "code_exchange_failed");
   const tokens = await tokenResp.json();
   if (!tokens.refresh_token || !tokens.access_token) {
     return completionRedirect(claimed.redirect_uri, "failed", "offline_access_missing");
   }
+  const grantedScopes = new Set(String(tokens.scope ?? "").split(/\s+/).filter(Boolean));
+  if (!grantedScopes.has("https://www.googleapis.com/auth/gmail.send")) {
+    return completionRedirect(claimed.redirect_uri, "failed", "send_scope_missing");
+  }
 
-  const profileResp = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+  const profileResp = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  if (!profileResp.ok) return completionRedirect(claimed.redirect_uri, "failed", "gmail_profile_failed");
-  const gmailProfile = await profileResp.json();
-  const gmailAddress = String(gmailProfile.emailAddress ?? "").toLowerCase();
-  if (!gmailAddress) return completionRedirect(claimed.redirect_uri, "failed", "gmail_address_missing");
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!profileResp?.ok) return completionRedirect(claimed.redirect_uri, "failed", "identity_profile_failed");
+  const googleProfile = await profileResp.json();
+  const gmailAddress = String(googleProfile.email ?? "").trim().toLowerCase();
+  if (!googleProfile.email_verified || !gmailAddress || gmailAddress.length > 320) {
+    return completionRedirect(claimed.redirect_uri, "failed", "gmail_address_missing");
+  }
+  const { data: owner, error: ownerError } = await supabase.from("ia_users")
+    .select("email").eq("id", claimed.user_id).maybeSingle();
+  if (ownerError || !owner || String(owner.email ?? "").trim().toLowerCase() !== gmailAddress) {
+    return completionRedirect(claimed.redirect_uri, "failed", "google_account_mismatch");
+  }
 
   const { data: existing, error: lookupError } = await supabase.from("ia_gmail_accounts")
     .select("id, user_id").eq("gmail_address", gmailAddress).maybeSingle();
@@ -92,10 +115,13 @@ Deno.serve(async (req: Request) => {
   }
 
   const accountWrite = existing
-    ? supabase.from("ia_gmail_accounts").update({ refresh_token: tokens.refresh_token, connected_at: now })
+    ? supabase.from("ia_gmail_accounts").update({
+      refresh_token: tokens.refresh_token, connected_at: now, oauth_capability: "send_only",
+    })
       .eq("id", existing.id).eq("user_id", claimed.user_id)
     : supabase.from("ia_gmail_accounts").insert({
       user_id: claimed.user_id, gmail_address: gmailAddress, refresh_token: tokens.refresh_token,
+      oauth_capability: "send_only",
     });
   const { error: accountError } = await accountWrite;
   if (accountError) return completionRedirect(claimed.redirect_uri, "failed", "account_save_failed");

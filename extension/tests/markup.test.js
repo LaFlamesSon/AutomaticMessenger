@@ -153,12 +153,11 @@ test("expired Gmail authorization opens a real reconnect flow", () => {
   assert.match(script, /gmailReconnectRequired/);
   assert.match(script, /GMAIL_RECONNECT_STORAGE/);
   assert.match(script, /rememberGmailReconnectRequired/);
-  assert.match(connectScript, /if \(providerTokens\)/);
-  assert.doesNotMatch(connectScript, /profile\?\.gmail_connected !== true && providerTokens/);
+  assert.doesNotMatch(connectScript, /providerTokens|providerHandoff/);
   assert.match(connectScript, /profile\?\.gmail_connected !== true \|\| reconnectState\[GMAIL_RECONNECT_STORAGE\] === true/);
   assert.match(script, /error\.code === "gmail_reconnect_required"/);
   assert.match(script, /showSetup\(true, "Gmail access expired\.[^\n]+", "gmail"\)/);
-  assert.match(connectScript, /startedWithoutSession && !providerHandoffCompleted/);
+  assert.match(connectScript, /api\("gmail_connect_start"/);
 });
 
 test("manual send requires an authoritative versioned preview", () => {
@@ -198,7 +197,7 @@ test("client targets the audited API actions", () => {
     "digest", "chat", "draft_get", "draft_update", "send_draft", "sweep", "profile_get", "profile_set",
     "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list", "media_kit_rate_update",
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
-    "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start", "gmail_send_probe_start",
+    "media_kit_delete", "learning_reset", "gmail_connect_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
@@ -277,7 +276,7 @@ test("bookings are timezone-aware, idempotent, and deletions are confirmed", () 
   assert.match(script, /canCreateBooking = scheduledMode && currentCalendar\?\.contact_mode === "scheduled_call"/);
 });
 
-test("Google onboarding runs in a durable extension page with a safe Gmail fallback", () => {
+test("Google onboarding separates identity from send-only Gmail consent", () => {
   assert.match(script, /chrome\.tabs\.create\(\{ url: chrome\.runtime\.getURL\("connect\.html"\) \}\)/);
   assert.doesNotMatch(script, /launchWebAuthFlow/);
   assert.match(connectHtml, /Keep this page open/);
@@ -285,13 +284,10 @@ test("Google onboarding runs in a durable extension page with a safe Gmail fallb
   assert.match(connectScript, /chrome\.identity\.getRedirectURL/);
   assert.match(connectScript, /chrome\.identity\.launchWebAuthFlow/);
   assert.match(connectScript, /SUPABASE_AUTH/);
-  assert.match(connectScript, /openid email profile https:\/\/www\.googleapis\.com\/auth\/gmail\.modify/);
-  assert.match(connectScript, /authorize\.searchParams\.set\("access_type", "offline"\)/);
-  assert.match(connectScript, /authorize\.searchParams\.set\("prompt", "consent"\)/);
-  assert.match(connectScript, /auth\.provider_token/);
-  assert.match(connectScript, /auth\.provider_refresh_token/);
+  assert.match(connectScript, /authorize\.searchParams\.set\("scopes", "openid email profile"\)/);
+  assert.match(connectScript, /authorize\.searchParams\.set\("prompt", "select_account"\)/);
+  assert.doesNotMatch(connectScript, /gmail\.modify|provider_token|provider_refresh_token/);
   assert.match(connectScript, /Core\.normalizeAuthSession\(auth\)/);
-  assert.match(connectScript, /api\("gmail_connect_provider", providerTokens\)/);
   assert.match(connectScript, /"gmail_connect_start"/);
   assert.match(connectScript, /gmailAuth\.caughtup_gmail/);
   assert.match(connectScript, /searchParams\.get\("flow"\)/);
@@ -306,18 +302,9 @@ test("Google onboarding runs in a durable extension page with a safe Gmail fallb
   assert.match(connectCss, /prefers-reduced-motion/);
 });
 
-test("isolated Gmail send probe is explicit, self-addressed, and separate from normal onboarding", () => {
+test("temporary Gmail send probe is absent from production onboarding", () => {
   assert.match(connectHtml, /id="safety"/);
-  assert.match(connectScript, /flow === "gmail-send-probe"/);
-  assert.match(connectScript, /"gmail_send_probe_start"/);
-  assert.match(connectScript, /chrome\.identity\.getRedirectURL\("caughtup_gmail_send_probe"\)/);
-  assert.match(connectScript, /one fixed email from the authorized company account back to itself/);
-  assert.match(connectScript, /No inbox mail is read\. No Google token is saved by this probe\./);
-  assert.match(connectScript, /callback\.caughtup_gmail_probe !== "sent"/);
-  const probeSignIn = connectScript.match(/async function signInForGmailSendProbe\(\)[\s\S]*?async function connectGoogle/)?.[0] ?? "";
-  assert.match(probeSignIn, /authorize\.searchParams\.set\("scopes", "openid email profile"\)/);
-  assert.doesNotMatch(probeSignIn, /gmail\.modify|gmail\.readonly|gmail\.compose|gmail\.settings/);
-  assert.match(connectScript, /await signInForGmailSendProbe\(\)/);
+  assert.doesNotMatch(connectScript, /gmail-send-probe|gmail_send_probe|runGmailSendProbe|signInForGmailSendProbe/);
 });
 
 test("saved sessions survive transient startup and refresh failures", () => {
@@ -380,7 +367,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.12");
+  assert.equal(manifest.version, "0.5.13");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

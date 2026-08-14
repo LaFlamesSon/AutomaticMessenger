@@ -240,13 +240,13 @@ test("unsafe provider details are not used for unknown errors", () => {
 
 test("OAuth callbacks parse fragment sessions and query-based Gmail completion", () => {
   const session = Core.parseOAuthCallback(
-    "https://example.chromiumapp.org/caughtup#access_token=access&refresh_token=refresh&expires_at=123&provider_token=temporary",
+    "https://example.chromiumapp.org/caughtup#access_token=access&refresh_token=refresh&expires_at=123",
   );
   assert.equal(session.access_token, "access");
   assert.equal(session.refresh_token, "refresh");
   assert.equal(session.expires_at, "123");
   assert.equal(Core.parseOAuthCallback("https://example.chromiumapp.org/caughtup#access_token=access&refresh_token=refresh&expires_in=3600").expires_in, "3600");
-  assert.equal(session.provider_token, "temporary");
+  assert.equal(session.provider_token, undefined);
   assert.equal(Core.parseOAuthCallback("https://example.chromiumapp.org/caughtup?caughtup_gmail=connected").caughtup_gmail, "connected");
   assert.equal(Core.parseOAuthCallback("not a URL").error, "invalid_callback");
 });
