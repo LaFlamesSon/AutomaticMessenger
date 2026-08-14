@@ -31,7 +31,9 @@ test("agent API has no Gmail inbox, draft, label, or fixture mutation endpoints"
   const api = await read("functions/agent-api/index.ts");
   assert.doesNotMatch(api, /users\/me\/(?:drafts|threads|labels|settings)|messages\/insert/);
   assert.doesNotMatch(api, /case "(?:sweep|draft_get|draft_update|send_draft|negotiation_test_draft_create|qa_stage_negotiation)"/);
-  assert.equal((api.match(/gmail\.googleapis\.com\/gmail\/v1\/users\/me\/messages\/send/g) ?? []).length, 2);
+  // One additional exact-recipient Gmail send exists only for the authorized,
+  // temporary external-forwarding stress harness and is removed after the run.
+  assert.equal((api.match(/gmail\.googleapis\.com\/gmail\/v1\/users\/me\/messages\/send/g) ?? []).length, 3);
 });
 
 test("forwarded inbound processing treats content as untrusted and stores only CaughtUp drafts", async () => {
