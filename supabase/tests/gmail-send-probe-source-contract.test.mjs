@@ -74,3 +74,12 @@ test("browser probe start is short-lived, signed, and retains the same minimal s
     /gmail\.modify|gmail\.readonly|gmail\.compose|gmail\.settings/,
   );
 });
+
+test("completed acceptance probe is retired before final deployment", async () => {
+  const probe = await read("functions/gmail-send-probe/index.ts");
+  assert.match(probe, /const PROBE_RETIRED = true/);
+  assert.match(
+    probe,
+    /if \(PROBE_RETIRED\)[\s\S]*?status.*410|if \(PROBE_RETIRED\)[\s\S]*?410/,
+  );
+});

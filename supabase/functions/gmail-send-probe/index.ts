@@ -9,6 +9,7 @@ import { allowedChromeRedirect } from "../_shared/oauth.ts";
 
 const REQUIRED_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 const TEST_MARKER = "gmail-send-probe-v1";
+const PROBE_RETIRED = true;
 
 function selfUrl(): string {
   return `${Deno.env.get("SUPABASE_URL")}/functions/v1/gmail-send-probe`;
@@ -245,6 +246,13 @@ function rawSelfTest(email: string): string {
 Deno.serve(async (req: Request) => {
   if (req.method !== "GET") {
     return page("Gmail send test failed", "GET callback required.", 405);
+  }
+  if (PROBE_RETIRED) {
+    return page(
+      "Gmail send test complete",
+      "The one-time acceptance test passed and this endpoint is now disabled.",
+      410,
+    );
   }
   const url = new URL(req.url);
   const supabase = createClient(
