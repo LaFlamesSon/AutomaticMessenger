@@ -57,3 +57,20 @@ test("probe callback returns only bounded status codes to the extension", async 
     /tokenResponse\.json\(\)[\s\S]*completionRedirect\([^)]*tokens/,
   );
 });
+
+test("browser probe start is short-lived, signed, and retains the same minimal scope", async () => {
+  const probe = await read("functions/gmail-send-probe/index.ts");
+  assert.match(probe, /url\.searchParams\.get\("start"\) === "1"/);
+  assert.match(probe, /signedBrowserState/);
+  assert.match(probe, /validBrowserState/);
+  assert.match(probe, /crypto\.subtle\.verify/);
+  assert.match(probe, /Date\.now\(\) \+ 10 \* 60_000/);
+  assert.match(probe, /scope", `openid email profile \$\{REQUIRED_SCOPE\}`/);
+  assert.match(probe, /login_hint", expectedEmail/);
+  const consentBlock =
+    probe.match(/function googleConsent[\s\S]*?return consent;/)?.[0] ?? "";
+  assert.doesNotMatch(
+    consentBlock,
+    /gmail\.modify|gmail\.readonly|gmail\.compose|gmail\.settings/,
+  );
+});

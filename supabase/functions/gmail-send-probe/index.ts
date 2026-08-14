@@ -64,6 +64,27 @@ function completionRedirect(
   return Response.redirect(target.toString(), 302);
 }
 
+function completionResponse(
+  redirectUri: string | null,
+  status: "sent" | "failed",
+  errorCode?: string,
+): Response {
+  if (redirectUri) return completionRedirect(redirectUri, status, errorCode);
+  if (status === "sent") {
+    return page(
+      "Gmail send test passed",
+      "One fixed self-addressed test message was sent. Check the company account's Inbox and Sent folder.",
+    );
+  }
+  return page(
+    "Gmail send test failed",
+    `The controlled test stopped safely (${
+      errorCode ?? "unknown_error"
+    }). No retry was started.`,
+    400,
+  );
+}
+
 function base64Url(value: string): string {
   const bytes = new TextEncoder().encode(value);
   let binary = "";
@@ -74,6 +95,31 @@ function base64Url(value: string): string {
     /=+$/g,
     "",
   );
+}
+
+function bytesBase64Url(value: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < value.length; offset += 0x8000) {
+    binary += String.fromCharCode(...value.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(
+    /=+$/g,
+    "",
+  );
+}
+
+function base64UrlBytes(value: string): ArrayBuffer {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(
+    Math.ceil(value.length / 4) * 4,
+    "=",
+  );
+  const binary = atob(padded);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return buffer;
 }
 
 function validEmail(value: string): boolean {
@@ -89,6 +135,91 @@ async function boundedFetch(
   } catch {
     return null;
   }
+}
+
+async function signedBrowserState(clientSecret: string): Promise<string> {
+  const expiresAt = Date.now() + 10 * 60_000;
+  const unsigned = `v1.${expiresAt}.${crypto.randomUUID()}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(clientSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(unsigned),
+  );
+  return `${unsigned}.${bytesBase64Url(new Uint8Array(signature))}`;
+}
+
+async function validBrowserState(
+  state: string,
+  clientSecret: string,
+): Promise<boolean> {
+  const parts = state.split(".");
+  if (
+    parts.length !== 4 || parts[0] !== "v1" ||
+    !/^\d{13}$/.test(parts[1]) ||
+    !/^[0-9a-f-]{36}$/i.test(parts[2]) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(parts[3])
+  ) return false;
+  const expiresAt = Number(parts[1]);
+  if (expiresAt <= Date.now() || expiresAt > Date.now() + 10 * 60_000) {
+    return false;
+  }
+  const unsigned = parts.slice(0, 3).join(".");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(clientSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  return crypto.subtle.verify(
+    "HMAC",
+    key,
+    base64UrlBytes(parts[3]),
+    new TextEncoder().encode(unsigned),
+  );
+}
+
+function configuredProbe(config: Record<string, string>): {
+  clientId: string;
+  clientSecret: string;
+  expectedEmail: string;
+} | null {
+  const clientId = config["ia_google_send_probe_client_id"] ?? "";
+  const clientSecret = config["ia_google_send_probe_client_secret"] ?? "";
+  const expectedEmail = (config["ia_google_send_probe_email"] ?? "").trim()
+    .toLowerCase();
+  if (
+    config["ia_google_send_probe_enabled"] !== "true" ||
+    !/^[0-9]+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(clientId) ||
+    clientSecret.length < 20 ||
+    !validEmail(expectedEmail)
+  ) return null;
+  return { clientId, clientSecret, expectedEmail };
+}
+
+function googleConsent(
+  clientId: string,
+  expectedEmail: string,
+  state: string,
+): URL {
+  const consent = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  consent.searchParams.set("client_id", clientId);
+  consent.searchParams.set("redirect_uri", selfUrl());
+  consent.searchParams.set("response_type", "code");
+  consent.searchParams.set("scope", `openid email profile ${REQUIRED_SCOPE}`);
+  consent.searchParams.set("access_type", "offline");
+  consent.searchParams.set("prompt", "consent");
+  consent.searchParams.set("include_granted_scopes", "false");
+  consent.searchParams.set("login_hint", expectedEmail);
+  consent.searchParams.set("state", state);
+  return consent;
 }
 
 function rawSelfTest(email: string): string {
@@ -116,16 +247,6 @@ Deno.serve(async (req: Request) => {
     return page("Gmail send test failed", "GET callback required.", 405);
   }
   const url = new URL(req.url);
-  const code = url.searchParams.get("code") ?? "";
-  const state = url.searchParams.get("state") ?? "";
-  if (!state || state.length > 200) {
-    return page(
-      "Gmail send test failed",
-      "Missing or invalid OAuth response.",
-      400,
-    );
-  }
-
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -141,54 +262,83 @@ Deno.serve(async (req: Request) => {
       row: { name: string; secret: string },
     ) => [row.name, row.secret]),
   );
-
-  const stateHash = await sha256(state);
-  const now = new Date().toISOString();
-  const { data: claimed, error: stateError } = await supabase.from(
-    "ia_oauth_states",
-  )
-    .update({ used_at: now }).eq("state_hash", stateHash).is("used_at", null)
-    .gt("expires_at", now)
-    .select("id,user_id,redirect_uri").maybeSingle();
-  if (stateError || !claimed) {
-    return page(
-      "Gmail send test failed",
-      "This test expired or was already used.",
-      409,
+  const probeConfig = configuredProbe(config);
+  if (url.searchParams.get("start") === "1") {
+    if (!probeConfig) {
+      return page(
+        "Gmail send test unavailable",
+        "The controlled probe is not enabled.",
+        503,
+      );
+    }
+    const state = await signedBrowserState(probeConfig.clientSecret);
+    return Response.redirect(
+      googleConsent(probeConfig.clientId, probeConfig.expectedEmail, state)
+        .toString(),
+      302,
     );
   }
-  if (
-    !allowedChromeRedirect(
-      claimed.redirect_uri,
-      config["ia_allowed_extension_ids"] ?? "",
-    )
-  ) {
+
+  const code = url.searchParams.get("code") ?? "";
+  const state = url.searchParams.get("state") ?? "";
+  if (!state || state.length > 200) {
     return page(
       "Gmail send test failed",
-      "The extension callback is not allowed.",
+      "Missing or invalid OAuth response.",
       400,
     );
   }
+
+  let redirectUri: string | null = null;
+  if (state.startsWith("v1.")) {
+    if (
+      !probeConfig ||
+      !(await validBrowserState(state, probeConfig.clientSecret))
+    ) {
+      return page(
+        "Gmail send test failed",
+        "This test expired or was invalid.",
+        409,
+      );
+    }
+  } else {
+    const stateHash = await sha256(state);
+    const now = new Date().toISOString();
+    const { data: claimed, error: stateError } = await supabase.from(
+      "ia_oauth_states",
+    )
+      .update({ used_at: now }).eq("state_hash", stateHash).is("used_at", null)
+      .gt("expires_at", now)
+      .select("id,user_id,redirect_uri").maybeSingle();
+    if (stateError || !claimed) {
+      return page(
+        "Gmail send test failed",
+        "This test expired or was already used.",
+        409,
+      );
+    }
+    if (
+      !allowedChromeRedirect(
+        claimed.redirect_uri,
+        config["ia_allowed_extension_ids"] ?? "",
+      )
+    ) {
+      return page(
+        "Gmail send test failed",
+        "The extension callback is not allowed.",
+        400,
+      );
+    }
+    redirectUri = claimed.redirect_uri;
+  }
   if (url.searchParams.get("error") || !code) {
-    return completionRedirect(claimed.redirect_uri, "failed", "oauth_denied");
+    return completionResponse(redirectUri, "failed", "oauth_denied");
   }
 
-  const clientId = config["ia_google_send_probe_client_id"] ?? "";
-  const clientSecret = config["ia_google_send_probe_client_secret"] ?? "";
-  const expectedEmail = (config["ia_google_send_probe_email"] ?? "").trim()
-    .toLowerCase();
-  if (
-    config["ia_google_send_probe_enabled"] !== "true" ||
-    !/^[0-9]+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(clientId) ||
-    clientSecret.length < 20 ||
-    !validEmail(expectedEmail)
-  ) {
-    return completionRedirect(
-      claimed.redirect_uri,
-      "failed",
-      "probe_unavailable",
-    );
+  if (!probeConfig) {
+    return completionResponse(redirectUri, "failed", "probe_unavailable");
   }
+  const { clientId, clientSecret, expectedEmail } = probeConfig;
 
   const tokenResponse = await boundedFetch(
     "https://oauth2.googleapis.com/token",
@@ -205,16 +355,16 @@ Deno.serve(async (req: Request) => {
     },
   );
   if (!tokenResponse?.ok) {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "code_exchange_failed",
     );
   }
   const tokens = await tokenResponse.json().catch(() => null);
   if (!tokens || typeof tokens !== "object") {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "code_exchange_failed",
     );
@@ -226,8 +376,8 @@ Deno.serve(async (req: Request) => {
     !tokens.access_token || !tokens.refresh_token ||
     !grantedScopes.has(REQUIRED_SCOPE)
   ) {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "minimal_scope_missing",
     );
@@ -240,16 +390,16 @@ Deno.serve(async (req: Request) => {
     },
   );
   if (!profileResponse?.ok) {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "identity_check_failed",
     );
   }
   const profile = await profileResponse.json().catch(() => null);
   if (!profile || typeof profile !== "object") {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "identity_check_failed",
     );
@@ -259,8 +409,8 @@ Deno.serve(async (req: Request) => {
     profile.email_verified !== true || authorizedEmail !== expectedEmail ||
     !validEmail(authorizedEmail)
   ) {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "wrong_test_account",
     );
@@ -278,8 +428,8 @@ Deno.serve(async (req: Request) => {
     },
   );
   if (!sendResponse?.ok) {
-    return completionRedirect(
-      claimed.redirect_uri,
+    return completionResponse(
+      redirectUri,
       "failed",
       "gmail_send_failed",
     );
@@ -289,5 +439,5 @@ Deno.serve(async (req: Request) => {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ token: String(tokens.refresh_token) }),
   });
-  return completionRedirect(claimed.redirect_uri, "sent");
+  return completionResponse(redirectUri, "sent");
 });
