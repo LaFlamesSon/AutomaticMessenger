@@ -12,12 +12,11 @@ This handoff records the work completed during the August 13-14 transition from 
 
 The continuation plan is in [CAUGHTUP-NEXT-STEPS-20260814.md](./CAUGHTUP-NEXT-STEPS-20260814.md).
 
-## Continuation update: local send-only cleanup candidate
+## Continuation update: send-only cleanup deployed
 
-The next work session completed the local source package described in Phases 0,
-1, 2, and 3 of the continuation plan. This is a local release candidate until
-the retirement migration and Edge Functions are explicitly authorized for
-production deployment.
+The next work session completed the source package described in Phases 0, 1, 2,
+and 3 of the continuation plan. Commit `b246bdb` was pushed to `origin/main`.
+The backend retirement portion was then explicitly authorized and deployed.
 
 - Aligned the three forwarding-acceptance migration filenames with their
   already-applied remote timestamps; the CLI now reports each pair aligned and
@@ -41,12 +40,25 @@ production deployment.
 - Local verification passed: 56 backend contract tests, 51 extension tests,
   JavaScript syntax checks, and Deno type checks for the four touched Edge
   Functions.
+- Applied `20260814051952_retire_inbox_sweep.sql` with Vault updates skipped.
+  Migration history is fully aligned, `inbox-agent-sweep` is absent, the daily
+  digest remains active, and the capability constraint now permits only
+  `legacy_disabled` and `send_only`.
+- Deployed `agent-api` v46 and `agent-sweep` v47. Retrieved deployed source and
+  confirmed that the API contains only `users.messages.send` Gmail data paths,
+  while the sweep returns HTTP 410 without Gmail or database work.
+- Ran controlled self-addressed Auto-send test
+  `0f5b7601-ae46-47c7-9913-7ce62d97674a`. It produced one `action_needed`
+  send, exactly one successful send attempt, no error code, a zero-length raw
+  inbound body after processing, and no Auto-send settings change. The selected
+  media-kit state was recorded; Gmail-side attachment contents still require
+  user-visible verification.
 
-Not completed by this local candidate: production deployment/migration, OAuth
-secret rotation, real external forwarding and send acceptance, Google Cloud
-console alignment, clean-grant recording, demo video, or verification
-resubmission. Those actions require explicit authorization and/or user-controlled
-accounts.
+Still open: extension installation/user-visible walkthrough, OAuth secret
+rotation, real external forwarding and manual-send acceptance, Gmail-visible
+attachment verification, creator-first negotiation acceptance, Google Cloud
+console alignment, clean-grant recording, demo video, and verification
+resubmission. Those actions require user-controlled accounts or console work.
 
 ## Executive summary
 

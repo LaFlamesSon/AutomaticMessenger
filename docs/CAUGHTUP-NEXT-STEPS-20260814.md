@@ -8,12 +8,14 @@ Read [CAUGHTUP-WORK-COMPLETED-20260814.md](./CAUGHTUP-WORK-COMPLETED-20260814.md
 
 ## Continuation status
 
-The local send-only cleanup candidate now covers migration-history alignment,
-the guarded sweep-retirement migration, removal of active Gmail Draft/read
-paths, forwarding onboarding/test/disconnect UI, and public documentation. Local
-contract and type checks are green. Production deployment, OAuth secret
-rotation, controlled live acceptance, Google Cloud alignment, and reviewer
-submission remain open and must not be inferred from the local checks.
+The send-only cleanup is committed at `b246bdb`. Migration history is aligned,
+the guarded sweep-retirement migration is applied, `agent-api` v46 and inert
+`agent-sweep` v47 are deployed, forwarding onboarding/test/disconnect UI is in
+source, and public documentation is updated. Local contract/type checks are
+green and controlled self-addressed test
+`0f5b7601-ae46-47c7-9913-7ce62d97674a` passed. OAuth secret rotation, real
+external forwarding/manual-send acceptance, user-visible extension validation,
+Google Cloud alignment, and reviewer submission remain open.
 
 ## Start-of-session warnings
 
@@ -143,7 +145,7 @@ Do not leave a visible button wired to an endpoint that requires `gmail.compose`
 
 ### 1.4 Retire the inbox-reading worker
 
-Live state has no `inbox_read` account, but `agent-sweep` v46 and the `inbox-agent-sweep` cron remain active.
+Live state has no `inbox_read` account. `agent-sweep` v47 is inert and the `inbox-agent-sweep` cron has been removed.
 
 Required sequence:
 

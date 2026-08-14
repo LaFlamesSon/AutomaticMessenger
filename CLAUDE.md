@@ -36,18 +36,18 @@ send-only relaunch.
 
 ## Release state
 
-The working tree contains a local send-only cleanup release candidate:
+The send-only runtime cleanup is committed on `main` at `b246bdb` and its
+backend retirement package is deployed:
 
-- Extension manifest: `0.6.1` locally (`0.6.0` was the last recorded production snapshot).
-- `agent-api`: local source removes Gmail Draft/read/fixture actions; deployed production snapshot is v45 until this candidate is deployed.
+- Extension manifest: `0.6.1` in source (`0.6.0` was the last installed production snapshot).
+- `agent-api`: deployed v46; Gmail Draft/read/fixture and dormant Opportunities send actions are removed.
 - `inbound-email`: local source continues forwarding ingestion and send-only replies; deployed production snapshot is v4.
-- `agent-sweep`: local source is an inert HTTP 410 handler; deployed production snapshot is v46 until this candidate is deployed.
+- `agent-sweep`: deployed v47; the endpoint is an inert HTTP 410 handler.
 - `gmail-oauth`: deployed production snapshot is v6 and validates verified-email ownership before storing a send-only credential.
 - `daily-digest`: deployed production snapshot is v3 and sends through the send-only account.
 
-The local named migration `20260814051952_retire_inbox_sweep.sql` unschedules
-`inbox-agent-sweep` and removes `inbox_read` as an allowed runtime capability.
-It has not been applied merely by existing in the repository.
+Migration `20260814051952_retire_inbox_sweep.sql` is applied. It unscheduled
+`inbox-agent-sweep` and removed `inbox_read` as an allowed runtime capability.
 
 The three forwarding-acceptance migration filenames have been aligned to their
 already-applied remote timestamps. Do not re-execute their SQL.
@@ -60,8 +60,9 @@ already-applied remote timestamps. Do not re-execute their SQL.
 - The creator explicitly enabled Auto-send for `urgent` and `action_needed`.
 - Do not disable or alter Auto-send without explicit authorization.
 - `caughtup-daily-digest` is active.
-- `inbox-agent-sweep` remains active in production until the retirement migration is authorized and applied.
+- `inbox-agent-sweep` is absent; `caughtup-daily-digest` remains active.
 - Controlled acceptance test `57aa6392-8a55-4d11-bb40-18f7a240cee7` produced one self-addressed Action-needed Auto-send, recorded Gmail/send-attempt state, and erased the raw inbound body.
+- Post-deployment controlled test `0f5b7601-ae46-47c7-9913-7ce62d97674a` also passed: one owner-addressed Action-needed send, one successful send attempt, zero raw-body length, and unchanged Auto-send settings version 112.
 - That controlled test does not prove the real external-mailbox -> Gmail -> forwarding hop.
 
 ## Safety and authorization
