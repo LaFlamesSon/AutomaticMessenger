@@ -245,11 +245,15 @@ test("temporary Gmail send probe is absent from production onboarding", () => {
   assert.doesNotMatch(connectScript, /gmail-send-probe|gmail_send_probe|runGmailSendProbe|signInForGmailSendProbe/);
 });
 
-test("saved sessions survive transient startup and refresh failures", () => {
+test("saved sessions stay in the app through transient startup and refresh failures", () => {
   assert.match(script, /Core\.normalizeAuthSession\(local\.caughtup_session\)/);
   assert.match(script, /Core\.isTerminalSessionError\(refreshError\)/);
-  assert.match(script, /showSetup\(true, Core\.safeErrorMessage\(error\), "retry"\)/);
-  assert.match(script, /dataset\.action = "retry"/);
+  assert.match(script, /async function readApi/);
+  assert.match(script, /if \(!Core\.isTransientApiError\(error\)\) throw error/);
+  assert.match(script, /const profileResult = await readApi\("profile_get"\)/);
+  assert.match(script, /stateCard\("todayStatus", Core\.safeErrorMessage\(error\), "error", initializePopup\)/);
+  assert.doesNotMatch(script, /showSetup\(true, Core\.safeErrorMessage\(error\), "retry"\)/);
+  assert.doesNotMatch(script, /dataset\.action = "retry"/);
 });
 
 test("all extension surfaces serialize rotating session refresh through the background worker", () => {
@@ -320,7 +324,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.6.1");
+  assert.equal(manifest.version, "0.6.2");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

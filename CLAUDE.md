@@ -39,7 +39,7 @@ send-only relaunch.
 The send-only runtime cleanup is committed on `main` at `b246bdb` and its
 backend retirement package is deployed:
 
-- Extension manifest: `0.6.1` in source (`0.6.0` was the last installed production snapshot).
+- Extension manifest: `0.6.2` in source (`0.6.0` was the last installed production snapshot). Transient startup reads retry once and keep saved sessions in the app instead of showing a login-style recovery screen.
 - `agent-api`: deployed v46; Gmail Draft/read/fixture and dormant Opportunities send actions are removed.
 - `inbound-email`: local source continues forwarding ingestion and send-only replies; deployed production snapshot is v4.
 - `agent-sweep`: deployed v47; the endpoint is an inert HTTP 410 handler.

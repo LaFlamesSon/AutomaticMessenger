@@ -139,6 +139,16 @@ test("only terminal refresh failures invalidate a saved session", () => {
   assert.equal(Core.isTerminalSessionError(new Core.ApiError("slow down", 429, "rate_limited")), false);
 });
 
+test("read retries are limited to transient failures", () => {
+  assert.equal(Core.isTransientApiError(new Core.ApiError("timeout", 0, "timeout")), true);
+  assert.equal(Core.isTransientApiError(new Core.ApiError("offline", 0, "network")), true);
+  assert.equal(Core.isTransientApiError(new Core.ApiError("busy", 503, "request_failed")), true);
+  assert.equal(Core.isTransientApiError(new Core.ApiError("expired", 401, "invalid_session")), false);
+  assert.equal(Core.isTransientApiError(new Core.ApiError("slow down", 429, "rate_limited")), false);
+  assert.equal(Core.isTransientApiError(new Core.ApiError("invalid", 422, "invalid")), false);
+  assert.equal(Core.isTransientApiError(new Error("unexpected client bug")), false);
+});
+
 test("active Auto-send policy changes require a fresh confirmation", () => {
   const current = {
     auto_send_categories: ["urgent"],

@@ -270,6 +270,13 @@
     return error?.status === 401 && ["invalid_session", "unauthorized"].includes(code);
   }
 
+  function isTransientApiError(error) {
+    const code = String(error?.code || "").toLowerCase();
+    const status = Number(error?.status || 0);
+    return ["timeout", "network", "auth_unavailable"].includes(code) ||
+      [408, 425, 500, 502, 503, 504].includes(status);
+  }
+
   function parseOAuthCallback(callbackUrl) {
     let url;
     try {
@@ -363,6 +370,7 @@
     shouldRefreshSession,
     normalizeAuthSession,
     isTerminalSessionError,
+    isTransientApiError,
     parseOAuthCallback,
     sameStringSet,
     autoSendPolicyChanged,

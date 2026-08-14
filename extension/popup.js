@@ -169,6 +169,16 @@ async function api(action, extra = {}, options = {}) {
   }
 }
 
+async function readApi(action, extra = {}, options = {}) {
+  try {
+    return await api(action, extra, options);
+  } catch (error) {
+    if (!Core.isTransientApiError(error)) throw error;
+    const retryTimeout = Math.max(Number(options.timeout) || 0, 30_000);
+    return api(action, extra, { ...options, timeout: retryTimeout });
+  }
+}
+
 function commaList(value) {
   return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
@@ -462,13 +472,7 @@ function showSetup(show, message = "", mode = "app") {
   $("refreshBtn").classList.toggle("hidden", show);
   PANELS.forEach((panel) => $(panel).classList.add("hidden"));
   if (!show) activateTab("today", false);
-  if (show && mode === "retry") {
-    $("setupTitle").textContent = "CaughtUp couldn't load";
-    $("setupCopy").textContent = "Your saved session is still here. Check your connection and try again.";
-    $("connectGoogle").textContent = "Try again";
-    $("connectGoogle").dataset.label = "Try again";
-    $("connectGoogle").dataset.action = "retry";
-  } else if (show && mode === "gmail") {
+  if (show && mode === "gmail") {
     $("setupTitle").textContent = "Connect your Gmail inbox";
     $("setupCopy").textContent = `Signed in${appEmail ? ` as ${appEmail}` : ""}. Connect the Gmail inbox you want CaughtUp to manage. Scheduled work starts only after Gmail is connected.`;
     $("connectGoogle").textContent = "Connect Gmail";
@@ -533,10 +537,6 @@ $("connectGoogle").addEventListener("click", async () => {
   setBusy(button, true, "Opening secure setup...");
   setStatus("setupStatus", "");
   try {
-    if (button.dataset.action === "retry") {
-      location.reload();
-      return;
-    }
     if (!chrome.tabs?.create || !chrome.runtime?.getURL) {
       throw new Core.ApiError("Reload CaughtUp as an unpacked Chrome extension to connect.", 0, "identity_unavailable");
     }
@@ -772,8 +772,8 @@ async function loadDigest(options = {}) {
   }
   try {
     const [result, profileResult] = await Promise.all([
-      api("digest"),
-      currentProfile ? Promise.resolve(null) : api("profile_get"),
+      readApi("digest"),
+      currentProfile ? Promise.resolve(null) : readApi("profile_get"),
     ]);
     if (profileResult?.profile) {
       currentProfile = Core.normalizeProfile({
@@ -1826,7 +1826,7 @@ async function loadProfile() {
   stateCard("settingsStatus", "Loading settings...");
   $("settingsForm").classList.add("hidden");
   try {
-    const result = await api("profile_get");
+    const result = await readApi("profile_get");
     applyIdentity(result);
     fillProfile({
       ...(result.profile || {}),
@@ -2028,7 +2028,7 @@ function hydrateViewCache() {
   return hydrated;
 }
 
-(async function init() {
+async function initializePopup() {
   try {
     if (!chrome.storage?.local || !chrome.storage?.sync) {
       showSetup(true);
@@ -2050,7 +2050,7 @@ function hydrateViewCache() {
       showSetup(true, storedSession ? "Your saved session needs a one-time reconnect." : "");
       return;
     }
-    const profileResult = await api("profile_get");
+    const profileResult = await readApi("profile_get");
     applyIdentity(profileResult);
     currentProfile = Core.normalizeProfile({
       ...(profileResult.profile || {}),
@@ -2073,7 +2073,14 @@ function hydrateViewCache() {
     void loadCalendar({ quiet: hydrated.calendar });
     await digestRefresh;
   } catch (error) {
-    if (session && !Core.isTerminalSessionError(error)) showSetup(true, Core.safeErrorMessage(error), "retry");
-    else showSetup(true, Core.safeErrorMessage(error));
+    if (session && !Core.isTerminalSessionError(error)) {
+      showSetup(false);
+      $("lastRun").textContent = "Your saved session is active";
+      stateCard("todayStatus", Core.safeErrorMessage(error), "error", initializePopup);
+      return;
+    }
+    showSetup(true, Core.safeErrorMessage(error));
   }
-})();
+}
+
+void initializePopup();
