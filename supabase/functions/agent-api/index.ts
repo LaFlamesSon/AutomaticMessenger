@@ -37,14 +37,15 @@ const REQUIRED_QUESTIONS = new Set([
   "timeline",
   "what brand materials they already have",
 ]);
-const INBOX_CAPABILITY_ACTIONS = new Set([
-  "sweep", "draft_get", "draft_update", "send_draft",
-  "negotiation_test_draft_create", "qa_stage_negotiation",
-  "opportunity_prepare_draft", "opportunity_draft_get", "opportunity_send",
-]);
+const INBOX_CAPABILITY_ACTIONS = new Set(["sweep"]);
 
 
 class InputError extends Error {}
+
+function gmailForwardingSettingsUrl(address?: string | null): string {
+  const account = address ? `?authuser=${encodeURIComponent(address)}` : "";
+  return `https://mail.google.com/mail/${account}#settings/fwdandpop`;
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -302,6 +303,7 @@ function buildEditableReplyMime(input: {
   body: string;
   inReplyTo: string;
   references: string;
+  messageId?: string;
   attachment?: { name: string; mime: string; b64: string };
 }): string {
   const to = input.to.map(parseStrictRecipient);
@@ -317,6 +319,7 @@ function buildEditableReplyMime(input: {
     cc.length ? `Cc: ${cc.join(", ")}` : "",
     bcc.length ? `Bcc: ${bcc.join(", ")}` : "",
     `Subject: ${sanitizeHeader(input.subject, 500)}`,
+    input.messageId && /^<[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+>$/.test(input.messageId) ? `Message-ID: ${input.messageId}` : "",
     replyId ? `In-Reply-To: ${replyId}` : "",
     references ? `References: ${references}` : "",
     "MIME-Version: 1.0",
@@ -333,6 +336,40 @@ function buildEditableReplyMime(input: {
     `Content-Disposition: attachment; filename="${filename}"`, "Content-Transfer-Encoding: base64", "",
     ...(input.attachment.b64.match(/.{1,76}/g) ?? []), `--${boundary}--`,
   ].join("\r\n"));
+}
+
+async function forwardedDraftPreview(supabase: any, userId: string, row: any): Promise<{ draft: any; selectedKit: any | null } | null> {
+  const recipient = parseStrictRecipient(row.reply_to_address);
+  const body = String(row.draft_text ?? "");
+  if (!recipient || !body.trim()) return null;
+  let selectedKit: any | null = null;
+  if (row.selected_media_kit_id) {
+    const { data, error } = await supabase.from("ia_media_kits")
+      .select("id,label,original_filename,mime_type,byte_size,updated_at")
+      .eq("id", row.selected_media_kit_id).eq("user_id", userId).eq("status", "active").maybeSingle();
+    if (error) throw new Error(error.message);
+    selectedKit = data ?? null;
+  }
+  const subject = sanitizeHeader(row.subject, 500);
+  const replySubject = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+  const fingerprintAttachments: StableDraftAttachment[] = selectedKit ? [{
+    filename: selectedKit.original_filename,
+    mime_type: selectedKit.mime_type,
+    byte_size: Number(selectedKit.byte_size),
+    content_sha256: await sha256(`owned-kit:${selectedKit.id}:${selectedKit.updated_at}:${selectedKit.byte_size}`),
+  }] : [];
+  const preview_version = await sha256(JSON.stringify(stableDraftPreview({
+    to: [recipient], cc: [], bcc: [], subject: replySubject, body, attachments: fingerprintAttachments,
+  })));
+  return {
+    draft: {
+      recipient, to: [recipient], cc: [], bcc: [], subject: replySubject, body,
+      draft_text: body,
+      attachments: fingerprintAttachments.map(({ content_sha256: _hash, ...attachment }) => attachment),
+      preview_version,
+    },
+    selectedKit,
+  };
 }
 
 async function sha256(value: string): Promise<string> {
@@ -990,9 +1027,12 @@ Deno.serve(async (req: Request) => {
     if (INBOX_CAPABILITY_ACTIONS.has(String(body.action ?? ""))) {
       const { count, error: capabilityError } = await supabase.from("ia_gmail_accounts")
         .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id).eq("oauth_capability", "inbox_read");
+        .eq("user_id", user.id).eq("oauth_capability", "send_only");
       if (capabilityError) throw new Error(capabilityError.message);
-      if (!count) {
+      const { count: forwardingCount, error: forwardingError } = await supabase.from("ia_forwarding_aliases")
+        .select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "active");
+      if (forwardingError) throw new Error(forwardingError.message);
+      if (!count || !forwardingCount) {
         return json({
           error: "Inbound email forwarding is required before CaughtUp can process inbox replies.",
           code: "inbound_forwarding_required",
@@ -1004,7 +1044,7 @@ Deno.serve(async (req: Request) => {
         const accountIds = await ownedAccountIds(supabase, user.id);
         if (!accountIds.length) return json({ emails: [], last_run: null });
         const { data: rows, error: emailError } = await supabase.from("ia_processed_emails")
-          .select("id, category, sender, subject, summary, draft_created, draft_text, auto_sent, delivery_status, sent_via, gmail_draft_id, selected_media_kit_id, negotiation_id, processed_at, is_test")
+          .select("id, category, sender, subject, summary, draft_created, draft_text, auto_sent, delivery_status, sent_via, gmail_draft_id, selected_media_kit_id, negotiation_id, processed_at, is_test, ingestion_source")
           .in("gmail_account_id", accountIds)
           .gte("processed_at", new Date(Date.now() - 86400_000 * 2).toISOString())
           .order("processed_at", { ascending: false }).limit(100);
@@ -1023,13 +1063,13 @@ Deno.serve(async (req: Request) => {
         const activeNegotiationIds = activeNegotiations.map((row: any) => row.id);
         if (activeNegotiationIds.length) {
           const { data: linkedRows, error: linkedError } = await supabase.from("ia_processed_emails")
-            .select("id,negotiation_id,gmail_draft_id,delivery_status,draft_created,processed_at")
+            .select("id,negotiation_id,gmail_draft_id,delivery_status,draft_created,processed_at,ingestion_source")
             .in("gmail_account_id", accountIds).in("negotiation_id", activeNegotiationIds)
-            .eq("delivery_status", "draft").not("gmail_draft_id", "is", null)
+            .eq("delivery_status", "draft")
             .order("processed_at", { ascending: false });
           if (linkedError) throw new Error(linkedError.message);
           for (const row of linkedRows ?? []) {
-            if (row.negotiation_id && !linkedNegotiationDrafts.has(row.negotiation_id)) {
+            if ((row.gmail_draft_id || row.ingestion_source === "forwarded") && row.negotiation_id && !linkedNegotiationDrafts.has(row.negotiation_id)) {
               linkedNegotiationDrafts.set(row.negotiation_id, row);
             }
           }
@@ -1170,6 +1210,9 @@ Deno.serve(async (req: Request) => {
           .select("gmail_address,oauth_capability").eq("user_id", user.id)
           .eq("oauth_capability", "send_only").limit(1).maybeSingle();
         if (gmailError) throw new Error(gmailError.message);
+        const { data: forwardingAlias, error: forwardingError } = await supabase.from("ia_forwarding_aliases")
+          .select("status,alias_address,verification_received_at,activated_at").eq("user_id", user.id).maybeSingle();
+        if (forwardingError) throw new Error(forwardingError.message);
         const learning = {
           style_examples_count: styleExamples ?? 0,
           standing_rules_count: String(profile?.custom_rules ?? "").split("\n").filter((line) => line.trim()).length,
@@ -1180,9 +1223,78 @@ Deno.serve(async (req: Request) => {
           gmail_connected: Boolean(gmailAccount),
           gmail_address: gmailAccount?.gmail_address ?? null,
           gmail_access_mode: gmailAccount?.oauth_capability ?? null,
-          inbound_forwarding_ready: false,
+          inbound_forwarding_ready: forwardingAlias?.status === "active",
+          inbound_forwarding_status: forwardingAlias?.status ?? "not_started",
           learning,
         });
+      }
+
+      case "forwarding_setup_get": {
+        const { data: alias, error } = await supabase.from("ia_forwarding_aliases")
+          .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at,gmail_account_id")
+          .eq("user_id", user.id).maybeSingle();
+        if (error) throw new Error(error.message);
+        const { data: forwardingAccount, error: accountError } = alias
+          ? await supabase.from("ia_gmail_accounts").select("gmail_address").eq("id", alias.gmail_account_id)
+            .eq("user_id", user.id).maybeSingle()
+          : { data: null, error: null };
+        if (accountError) throw new Error(accountError.message);
+        const { gmail_account_id: _gmailAccountId, ...publicAlias } = alias ?? { gmail_account_id: null, status: "not_started" };
+        return json({
+          forwarding: publicAlias,
+          gmail_settings_url: gmailForwardingSettingsUrl(forwardingAccount?.gmail_address),
+        });
+      }
+
+      case "forwarding_setup_start": {
+        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
+          .select("id,gmail_address").eq("user_id", user.id).eq("oauth_capability", "send_only")
+          .order("connected_at", { ascending: false }).limit(1).maybeSingle();
+        if (accountError) throw new Error(accountError.message);
+        if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
+        const { data: existing, error: existingError } = await supabase.from("ia_forwarding_aliases")
+          .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at")
+          .eq("user_id", user.id).maybeSingle();
+        if (existingError) throw new Error(existingError.message);
+        if (existing && existing.status !== "disabled") {
+          return json({ forwarding: existing, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
+        }
+        const bytes = crypto.getRandomValues(new Uint8Array(24));
+        const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const aliasAddress = `inbox+${token}@inbound.getcaughtup.io`;
+        const aliasValues = {
+          gmail_account_id: account.id, alias_token_hash: await sha256(token), alias_address: aliasAddress,
+          status: "pending", verification_code: null, confirmation_url: null,
+          verification_received_at: null, activated_at: null, updated_at: new Date().toISOString(),
+        };
+        const operation = existing
+          ? supabase.from("ia_forwarding_aliases").update(aliasValues).eq("user_id", user.id).eq("status", "disabled")
+          : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, ...aliasValues });
+        const { data: created, error } = await operation
+          .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at").single();
+        if (error) throw new Error(error.message);
+        return json({ forwarding: created, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
+      }
+
+      case "forwarding_setup_activate": {
+        if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
+        const now = new Date().toISOString();
+        const { data: activated, error } = await supabase.from("ia_forwarding_aliases").update({
+          status: "active", activated_at: now, updated_at: now,
+        }).eq("user_id", user.id).in("status", ["verification_received", "active"])
+          .select("status,alias_address,activated_at").maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!activated) return json({ error: "Google's forwarding verification has not reached CaughtUp yet", code: "verification_pending" }, 409);
+        return json({ ok: true, forwarding: activated });
+      }
+
+      case "forwarding_setup_disable": {
+        if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
+        const { data: disabled, error } = await supabase.from("ia_forwarding_aliases").update({
+          status: "disabled", updated_at: new Date().toISOString(),
+        }).eq("user_id", user.id).neq("status", "disabled").select("status,alias_address").maybeSingle();
+        if (error) throw new Error(error.message);
+        return json({ ok: true, forwarding: disabled ?? { status: "disabled" } });
       }
 
       case "profile_set": {
@@ -1694,6 +1806,177 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, gmail_message_id: sent.id ?? null });
       }
 
+      case "forwarded_draft_get": {
+        const rowId = cleanUuid(body.id, "id");
+        const accountIds = await ownedAccountIds(supabase, user.id);
+        const { data: row, error } = await supabase.from("ia_processed_emails")
+          .select("id,ingestion_source,delivery_status,draft_text,reply_to_address,subject,selected_media_kit_id,rfc_message_id,rfc_references,outbound_message_id")
+          .eq("id", rowId).in("gmail_account_id", accountIds).eq("ingestion_source", "forwarded").maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!row || row.delivery_status !== "draft") return json({ error: "draft is unavailable" }, 404);
+        const preview = await forwardedDraftPreview(supabase, user.id, row);
+        if (!preview) return json({ error: "draft is unavailable", code: "invalid_draft" }, 422);
+        const { data: kits, error: kitError } = await supabase.from("ia_media_kits").select("id,label")
+          .eq("user_id", user.id).eq("status", "active").order("is_default", { ascending: false }).order("label");
+        if (kitError) throw new Error(kitError.message);
+        return json({
+          draft: preview.draft, editing_supported: true, selected_media_kit_id: row.selected_media_kit_id,
+          media_kits: kits ?? [], storage: "caughtup",
+        });
+      }
+
+      case "forwarded_draft_update": {
+        const rowId = cleanUuid(body.id, "id");
+        const previewVersion = cleanString(body.preview_version ?? "", "preview_version", 64);
+        if (!/^[0-9a-f]{64}$/.test(previewVersion)) return json({ error: "preview_version is required", code: "invalid_request" }, 400);
+        const editedBody = cleanString(body.draft_text ?? "", "draft_text", 12_000);
+        if (!editedBody || (editedBody.match(/\S+/g) ?? []).length > 150) return json({ error: "reply must contain 1 to 150 words", code: "invalid_draft" }, 422);
+        if (draftSafetyViolations(editedBody).length) return json({ error: "reply contains pricing, commitment, availability, or other unsafe language", code: "unsafe_draft" }, 422);
+        const mediaKitId = body.media_kit_id === null || body.media_kit_id === "" || body.media_kit_id === undefined
+          ? null : cleanUuid(body.media_kit_id, "media_kit_id");
+        const accountIds = await ownedAccountIds(supabase, user.id);
+        const { data: row, error: rowError } = await supabase.from("ia_processed_emails")
+          .select("id,ingestion_source,delivery_status,draft_text,reply_to_address,subject,selected_media_kit_id,rfc_message_id,rfc_references,outbound_message_id,negotiation_id,draft_updated_at")
+          .eq("id", rowId).in("gmail_account_id", accountIds).eq("ingestion_source", "forwarded").maybeSingle();
+        if (rowError) throw new Error(rowError.message);
+        if (!row || row.delivery_status !== "draft") return json({ error: "draft is not editable" }, 422);
+        const current = await forwardedDraftPreview(supabase, user.id, row);
+        if (!current || current.draft.preview_version !== previewVersion) return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
+        if (mediaKitId) {
+          const { data: kit, error: kitError } = await supabase.from("ia_media_kits").select("id")
+            .eq("id", mediaKitId).eq("user_id", user.id).eq("status", "active").maybeSingle();
+          if (kitError) throw new Error(kitError.message);
+          if (!kit) return json({ error: "media kit is unavailable" }, 404);
+        }
+        const now = new Date().toISOString();
+        const { data: updated, error: updateError } = await supabase.from("ia_processed_emails").update({
+          draft_text: editedBody, selected_media_kit_id: mediaKitId, draft_updated_at: now,
+        }).eq("id", row.id).in("gmail_account_id", accountIds).eq("delivery_status", "draft")
+          .eq("draft_updated_at", row.draft_updated_at)
+          .select("id,ingestion_source,delivery_status,draft_text,reply_to_address,subject,selected_media_kit_id,rfc_message_id,rfc_references,outbound_message_id,negotiation_id,draft_updated_at").maybeSingle();
+        if (updateError || !updated) return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
+        if (row.draft_text !== editedBody) {
+          const { error: editError } = await supabase.from("ia_draft_edits").insert({
+            user_id: user.id, original_draft: row.draft_text, edited_final: editedBody,
+          });
+          if (editError) throw new Error(editError.message);
+        }
+        if (row.negotiation_id) {
+          const { error: negotiationError } = await supabase.from("ia_negotiations").update({
+            proposed_reply: editedBody, media_kit_id: mediaKitId, updated_at: now,
+          }).eq("id", row.negotiation_id).eq("user_id", user.id);
+          if (negotiationError) throw new Error(negotiationError.message);
+        }
+        const next = await forwardedDraftPreview(supabase, user.id, updated);
+        if (!next) return json({ error: "draft update requires reconciliation", code: "draft_update_reconcile" }, 503);
+        await supabase.from("ia_processed_emails").update({ draft_version: next.draft.preview_version })
+          .eq("id", row.id).eq("draft_updated_at", now);
+        return json({ ok: true, draft: next.draft, selected_media_kit_id: mediaKitId, media_kit_label: next.selectedKit?.label ?? null });
+      }
+
+      case "forwarded_send": {
+        const rowId = cleanUuid(body.id, "id");
+        const previewVersion = cleanString(body.preview_version ?? "", "preview_version", 64);
+        const idempotencyKey = cleanString(body.idempotency_key ?? `forwarded:${rowId}`, "idempotency_key", 200);
+        if (!/^[0-9a-f]{64}$/.test(previewVersion) || idempotencyKey.length < 8) return json({ error: "preview_version and idempotency_key are required", code: "invalid_request" }, 400);
+        const accountIds = await ownedAccountIds(supabase, user.id);
+        const { data: row, error: rowError } = await supabase.from("ia_processed_emails")
+          .select("id,ingestion_source,delivery_status,draft_text,reply_to_address,subject,selected_media_kit_id,rfc_message_id,rfc_references,outbound_message_id,is_test,gmail_account_id,draft_updated_at,ia_gmail_accounts(refresh_token)")
+          .eq("id", rowId).in("gmail_account_id", accountIds).eq("ingestion_source", "forwarded").maybeSingle();
+        if (rowError) throw new Error(rowError.message);
+        if (!row) return json({ error: "not found" }, 404);
+        if (row.is_test) return json({ error: "test drafts can never be sent", code: "test_send_blocked" }, 422);
+        if (row.delivery_status === "sent") return json({ ok: true, already_sent: true });
+        if (row.delivery_status === "sending") {
+          const { data: pendingAttempt } = await supabase.from("ia_send_attempts").select("id,status,gmail_message_id,updated_at")
+            .eq("user_id", user.id).eq("processed_email_id", row.id).in("status", ["sending", "sent", "reconcile"])
+            .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+          if (pendingAttempt?.status === "sent") return json({ ok: true, already_sent: true, gmail_message_id: pendingAttempt.gmail_message_id });
+          if (pendingAttempt?.status === "reconcile" || (pendingAttempt?.status === "sending" &&
+            new Date(pendingAttempt.updated_at).getTime() < Date.now() - 10 * 60_000)) {
+            if (pendingAttempt.status === "sending") {
+              await supabase.from("ia_send_attempts").update({ status: "reconcile", error_code: "stale_sending",
+                updated_at: new Date().toISOString() }).eq("id", pendingAttempt.id).eq("status", "sending");
+            }
+            return json({ error: "send state requires reconciliation", code: "reconcile_required" }, 409);
+          }
+          return json({ error: "send already in progress", code: "send_in_progress" }, 409);
+        }
+        if (row.delivery_status !== "draft") return json({ error: "draft is not sendable" }, 422);
+        const current = await forwardedDraftPreview(supabase, user.id, row);
+        if (!current || current.draft.preview_version !== previewVersion) return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
+        const replyBody = String(row.draft_text ?? "");
+        if (!replyBody.trim() || (replyBody.match(/\S+/g) ?? []).length > 150 || draftSafetyViolations(replyBody).length) {
+          return json({ error: "current CaughtUp draft failed the reply safety check", code: "unsafe_draft" }, 422);
+        }
+        const { data: attempt, error: attemptError } = await supabase.from("ia_send_attempts").insert({
+          user_id: user.id, processed_email_id: row.id, idempotency_key: idempotencyKey,
+        }).select("id").maybeSingle();
+        let attemptId = attempt?.id ?? null;
+        if (attemptError || !attemptId) {
+          const { data: existing } = await supabase.from("ia_send_attempts").select("id,status,gmail_message_id")
+            .eq("user_id", user.id).eq("processed_email_id", row.id).in("status", ["claimed", "sending", "sent", "reconcile"]).maybeSingle();
+          if (existing?.status === "sent") return json({ ok: true, already_sent: true, gmail_message_id: existing.gmail_message_id });
+          if (existing?.status === "reconcile") return json({ error: "send state requires reconciliation", code: "reconcile_required" }, 409);
+          if (existing?.status === "claimed" || existing?.status === "sending") return json({ error: "send already in progress", code: "send_in_progress" }, 409);
+          const { data: retry } = await supabase.from("ia_send_attempts").select("id,status,gmail_message_id")
+            .eq("user_id", user.id).eq("idempotency_key", idempotencyKey).maybeSingle();
+          if (retry?.status === "sent") return json({ ok: true, already_sent: true, gmail_message_id: retry.gmail_message_id });
+          if (retry?.status === "failed") {
+            const { data: reclaimed } = await supabase.from("ia_send_attempts").update({ status: "claimed", error_code: null, updated_at: new Date().toISOString() })
+              .eq("id", retry.id).eq("status", "failed").select("id").maybeSingle();
+            attemptId = reclaimed?.id ?? null;
+          }
+          if (!attemptId) return json({ error: "send could not be safely claimed", code: "claim_unavailable" }, 503);
+        }
+        const accessToken = await gmailAccessToken((row as any).ia_gmail_accounts.refresh_token, CFG);
+        if (!accessToken) {
+          await supabase.from("ia_send_attempts").update({ status: "failed", error_code: "gmail_auth", updated_at: new Date().toISOString() }).eq("id", attemptId);
+          return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
+        }
+        const kit = row.selected_media_kit_id ? await opportunityAttachment(supabase, user.id, row.selected_media_kit_id) : {};
+        if (row.selected_media_kit_id && !kit.attachment) {
+          await supabase.from("ia_send_attempts").update({ status: "failed", error_code: "media_kit_unavailable", updated_at: new Date().toISOString() }).eq("id", attemptId);
+          return json({ error: "media kit is unavailable" }, 422);
+        }
+        const { data: sending, error: sendingError } = await supabase.from("ia_send_attempts").update({ status: "sending", updated_at: new Date().toISOString() })
+          .eq("id", attemptId).eq("user_id", user.id).eq("status", "claimed").select("id").maybeSingle();
+        if (sendingError || !sending) return json({ error: "send could not be safely started", code: "claim_unavailable" }, 503);
+        const { data: lockedDraft, error: lockError } = await supabase.from("ia_processed_emails").update({ delivery_status: "sending" })
+          .eq("id", row.id).in("gmail_account_id", accountIds).eq("delivery_status", "draft")
+          .eq("draft_updated_at", row.draft_updated_at).select("id").maybeSingle();
+        if (lockError || !lockedDraft) {
+          await supabase.from("ia_send_attempts").update({ status: "failed", error_code: "draft_changed",
+            updated_at: new Date().toISOString() }).eq("id", attemptId).eq("status", "sending");
+          return json({ error: "draft changed; review it again", code: "draft_changed" }, 409);
+        }
+        const raw = buildEditableReplyMime({
+          to: current.draft.to, cc: [], bcc: [], subject: current.draft.subject, body: replyBody,
+          inReplyTo: row.rfc_message_id, references: row.rfc_references,
+          messageId: row.outbound_message_id, attachment: kit.attachment,
+        });
+        let response: Response | null = null;
+        try {
+          response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+            method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ raw }), signal: AbortSignal.timeout(30_000),
+          });
+        } catch { /* an interrupted Gmail request has an unknown outcome */ }
+        if (!response?.ok) {
+          await supabase.from("ia_send_attempts").update({ status: "reconcile",
+            error_code: response ? `gmail_${response.status}` : "gmail_transport", updated_at: new Date().toISOString() }).eq("id", attemptId);
+          return json({ error: "Gmail send failed", code: "reconcile_required" }, 502);
+        }
+        const sent = await response.json().catch(() => ({})); const sentAt = new Date().toISOString();
+        const { error: stateError } = await supabase.from("ia_processed_emails").update({
+          auto_sent: true, delivery_status: "sent", sent_via: "manual_extension", gmail_sent_message_id: sent.id ?? null, sent_at: sentAt,
+        }).eq("id", row.id).in("gmail_account_id", accountIds).eq("delivery_status", "sending");
+        await supabase.from("ia_send_attempts").update({ status: stateError ? "reconcile" : "sent", gmail_message_id: sent.id ?? null,
+          error_code: stateError ? "state_update_failed" : null, updated_at: sentAt }).eq("id", attemptId);
+        if (stateError) return json({ error: "sent by Gmail; state reconciliation required", code: "reconcile_required" }, 503);
+        return json({ ok: true, gmail_message_id: sent.id ?? null });
+      }
+
       case "send_draft": {
         const rowId = cleanString(body.id ?? "", "id", 100);
         const idempotencyKey = cleanString(body.idempotency_key ?? `draft:${rowId}`, "idempotency_key", 200);
@@ -2175,25 +2458,13 @@ Deno.serve(async (req: Request) => {
       }
 
       case "sweep": {
-        const requestId = cleanString(body.request_id ?? crypto.randomUUID(), "request_id", 200);
-        const resp = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/agent-sweep`, {
-          method: "POST",
-          headers: { "x-agent-secret": CFG["ia_agent_cron_secret"], "Content-Type": "application/json" },
-          body: JSON.stringify({ trigger: "manual", user_id: user.id, request_id: requestId }),
-        });
-        const payload = await resp.json().catch(() => ({ error: "sweep returned invalid JSON" }));
-        const resultError = Array.isArray(payload?.results)
-          ? payload.results.find((result: any) => result?.error) : null;
-        if (resp.ok && resultError?.code === "gmail_reconnect_required") {
-          return json({ error: "Gmail access expired. Reconnect Gmail to continue.", code: "gmail_reconnect_required" }, 422);
-        }
-        if (resp.ok && resultError?.code === "rate_limited") {
-          return json({ error: "You've swept several times recently. Try again in a little while.", code: "rate_limited" }, 429);
-        }
-        if (resp.ok && resultError) {
-          return json({ error: "Inbox sweep failed. Try again.", code: "sweep_failed" }, 502);
-        }
-        return json(payload, resp.status);
+        const { data: account } = await supabase.from("ia_gmail_accounts").select("gmail_address")
+          .eq("user_id", user.id).eq("oauth_capability", "send_only").limit(1).maybeSingle();
+        return json({ results: [{
+          account: account?.gmail_address ?? user.email, scanned: 0, drafted: 0, auto_sent: 0,
+          review_drafts: 0, automatic_forwarding: true,
+          digest: "Forwarding is active. New Gmail messages are processed automatically as they arrive.",
+        }] });
       }
 
       case "gmail_connect_start": {

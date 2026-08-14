@@ -20,12 +20,13 @@ test("verified Supabase identity bootstraps an owned user and default profile", 
   assert.doesNotMatch(api, /body\.user_id/);
 });
 
-test("manual sweep passes trusted authenticated ownership to the worker", async () => {
+test("Refresh requires an active owner-scoped forwarding alias and never invokes Gmail inbox reads", async () => {
   const api = await read("functions/agent-api/index.ts");
-  const sweep = await read("functions/agent-sweep/index.ts");
-  assert.match(api, /trigger: "manual", user_id: user\.id/);
-  assert.match(sweep, /accountQuery = accountQuery\.eq\("user_id", requestedUserId\)/);
-  assert.match(sweep, /manual sweep requires a valid user_id/);
+  assert.match(api, /INBOX_CAPABILITY_ACTIONS = new Set\(\["sweep"\]\)/);
+  assert.match(api, /from\("ia_forwarding_aliases"\)[\s\S]+\.eq\("user_id", user\.id\)\.eq\("status", "active"\)/);
+  const action = api.match(/case "sweep": \{([\s\S]*?)\n      case "gmail_connect_start"/)?.[1] ?? "";
+  assert.match(action, /automatic_forwarding: true/);
+  assert.doesNotMatch(action, /agent-sweep|gmail\.googleapis\.com/);
 });
 
 test("expired Gmail authorization is surfaced as a reconnect requirement", async () => {
@@ -35,8 +36,7 @@ test("expired Gmail authorization is surfaced as a reconnect requirement", async
   assert.match(sweep, /resp\.status === 400 \|\| resp\.status === 401/);
   assert.match(sweep, /error: reconnectRequired \? "gmail_reconnect_required" : "sweep_failed"/);
   assert.match(sweep, /code: "gmail_reconnect_required"/);
-  assert.match(api, /resultError\?\.code === "gmail_reconnect_required"/);
-  assert.match(api, /Gmail access expired\. Reconnect Gmail to continue\./);
+  assert.match(api, /error: "Gmail access expired", code: "gmail_reconnect_required"/);
 });
 
 test("targeted manual sweeps isolate one owned Gmail message", async () => {
@@ -196,10 +196,11 @@ test("manual send uses a full live-draft preview fingerprint before claiming", a
   assert.doesNotMatch(api, /attachmentId: String\(part\?\.body\?\.attachmentId/);
   assert.match(api, /\bto, cc, bcc\b/);
   assert.match(api, /attachments: flattened/);
-  assert.ok(api.indexOf("currentDraft.preview_version !== previewVersion") < api.indexOf('from("ia_send_attempts").insert'));
+  const action = api.match(/case "send_draft": \{([\s\S]*?)\n      case "draft_get"/)?.[1] ?? "";
+  assert.ok(action.indexOf("currentDraft.preview_version !== previewVersion") < action.indexOf('from("ia_send_attempts").insert'));
   assert.match(api, /code: "draft_changed"/);
   assert.match(api, /draftSafetyViolations\(currentDraft\.body\)/);
-  assert.ok(api.indexOf("draftSafetyViolations(currentDraft.body)") < api.indexOf('from("ia_send_attempts").insert'));
+  assert.ok(action.indexOf("draftSafetyViolations(currentDraft.body)") < action.indexOf('from("ia_send_attempts").insert'));
 });
 
 test("draft edits replace only a verified owned draft and one owned media kit", async () => {

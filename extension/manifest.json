@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "CaughtUp — AI Inbox Agent",
-  "version": "0.5.13",
-  "description": "Handle Gmail replies, manage media kits, and keep creator communications organized.",
+  "version": "0.6.0",
+  "description": "Automatically process forwarded Gmail, review safe replies, and send through your Gmail account.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "CaughtUp"

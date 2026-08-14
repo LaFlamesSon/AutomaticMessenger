@@ -37,6 +37,14 @@ let opportunitiesLoaded = false;
 let opportunitiesLoading = false;
 let currentOpportunityState = null;
 let pendingOpportunityDraft = null;
+let forwardingState = null;
+let forwardingConfirmationUrl = null;
+let forwardingGmailSettingsUrl = "https://mail.google.com/mail/#settings/fwdandpop";
+let forwardingPollTimer = null;
+
+function isForwardedDraft(email) {
+  return email?.ingestion_source === "forwarded";
+}
 
 function setOpportunityView(name) {
   const products = name !== "connections";
@@ -94,6 +102,9 @@ function safeApiMessage(data, status) {
   if (code === "outside_availability") return { code, message: "Choose a time inside your saved weekly availability." };
   if (code === "inbound_forwarding_required") {
     return { code, message: "Connect inbound email forwarding before processing inbox replies." };
+  }
+  if (code === "verification_pending") {
+    return { code, message: "Google's forwarding confirmation has not reached CaughtUp yet." };
   }
   if (code === "gmail_already_connected") {
     return { code, message: "That Gmail inbox is already connected to another CaughtUp account." };
@@ -732,7 +743,7 @@ function markCardReplySent(emailId, card) {
   footer.querySelectorAll(".badge, .sendbtn").forEach((node) => node.remove());
   footer.prepend(create("span", "badge sent", "Reply sent"));
   const status = footer.querySelector(".card-status");
-  status.textContent = "Sent manually. CaughtUp can learn from edits after the next sweep.";
+  status.textContent = "Sent manually. CaughtUp will use your saved edits for future replies.";
   status.classList.remove("error");
   return forgetManualSendKey(emailId);
 }
@@ -743,15 +754,16 @@ async function sendDraftFromCard(email, card, button) {
   status.classList.remove("error");
   try {
     setBusy(button, true, "Checking…");
-    const previewResult = await api("draft_get", { id: email.id });
+    const forwarded = isForwardedDraft(email);
+    const previewResult = await api(forwarded ? "forwarded_draft_get" : "draft_get", { id: email.id });
     const draft = previewResult.draft || previewResult;
     if (!draft?.preview_version || !Array.isArray(draft.to) || !draft.to.length) {
-      throw new Core.ApiError("The current Gmail draft could not be verified.", 422, "preview_incomplete");
+      throw new Core.ApiError("The current reply draft could not be verified.", 422, "preview_incomplete");
     }
-    if (!confirm(`Send the current Gmail draft to ${draft.to.join(", ")}?`)) return;
+    if (!confirm(`Send this reply through Gmail to ${draft.to.join(", ")}?`)) return;
     const idempotencyKey = await getManualSendKey(email.id);
     setBusy(button, true, "Sending…");
-    const result = await api("send_draft", {
+    const result = await api(forwarded ? "forwarded_send" : "send_draft", {
       id: email.id,
       idempotency_key: idempotencyKey,
       preview_version: draft.preview_version,
@@ -761,7 +773,7 @@ async function sendDraftFromCard(email, card, button) {
   } catch (error) {
     if (error.code === "draft_changed") await forgetManualSendKey(email.id);
     status.textContent = error.code === "draft_changed"
-      ? "The Gmail draft changed. Tap Send again to verify the latest version."
+      ? "The reply draft changed. Tap Send again to verify the latest version."
       : `${Core.safeErrorMessage(error)}${["send_in_progress", "reconcile_required"].includes(error.code) ? " Do not send it elsewhere; tap Send again to check." : ""}`;
     status.classList.add("error");
   } finally {
@@ -813,7 +825,7 @@ function renderNegotiationCard(deal) {
   appendReplyDetails(card, deal.proposed_reply, "Preview proposed reply");
 
   const footer = create("div", "cardfoot");
-  if (deal.draft_email?.gmail_draft_id) {
+  if (deal.draft_email?.gmail_draft_id || isForwardedDraft(deal.draft_email)) {
     const review = create("button", "sendbtn", "Review");
     review.type = "button";
     review.addEventListener("click", () => openDraftPreview(deal.draft_email, card, review));
@@ -901,7 +913,7 @@ function renderEmailCard(email) {
   const delivery = Core.deliveryState(email);
   if (delivery === "sent") forgetManualSendKey(email.id);
   if (delivery !== "none") footer.appendChild(create("span", `badge ${delivery}`, delivery === "sent" ? "Reply sent" : delivery === "failed" ? "Send failed" : "Draft ready"));
-  if (delivery === "draft" && email.gmail_draft_id) {
+  if (delivery === "draft" && (email.gmail_draft_id || isForwardedDraft(email))) {
     const button = create("button", "sendbtn", "Review");
     button.type = "button";
     button.addEventListener("click", () => openDraftPreview(email, card, button));
@@ -968,7 +980,7 @@ function syncDraftEditorState() {
     ? "A prior send may be in progress. Check its status before making changes."
     : pendingDraft.editing_supported
     ? dirty ? "Save these changes before sending." : "Edit the reply or swap one owned media kit, then save before sending."
-    : "This draft has attachments CaughtUp cannot safely replace. You can still review or send it, or edit it in Gmail.";
+    : "This draft has attachments CaughtUp cannot safely replace. You can still review or send it.";
 }
 
 async function openDraftPreview(email, card, button) {
@@ -977,16 +989,17 @@ async function openDraftPreview(email, card, button) {
   status.textContent = "";
   status.classList.remove("error");
   try {
-    const result = await api("draft_get", { id: email.id });
+    const forwarded = isForwardedDraft(email);
+    const result = await api(forwarded ? "forwarded_draft_get" : "draft_get", { id: email.id });
     const draft = result.draft || result;
     const body = draft.draft_text || draft.body;
     const hasFullEnvelope = Array.isArray(draft.to) && Array.isArray(draft.cc) &&
       Array.isArray(draft.bcc) && Array.isArray(draft.attachments) &&
       typeof draft.subject === "string" && typeof body === "string";
     if (!hasFullEnvelope || !draft.to.length || !body.trim()) {
-      throw new Core.ApiError("A complete Gmail preview isn't available yet. Try again.", 0, "preview_incomplete");
+      throw new Core.ApiError("A complete reply preview isn't available yet. Try again.", 0, "preview_incomplete");
     }
-    if (!draft.preview_version) throw new Core.ApiError("A verified Gmail preview isn't available yet. Try again.", 0, "preview_version_missing");
+    if (!draft.preview_version) throw new Core.ApiError("A verified reply preview isn't available yet. Try again.", 0, "preview_version_missing");
     const existingSendKey = Core.findManualSendKey(manualSendKeys, email.id);
     pendingDraft = {
       id: email.id,
@@ -1002,6 +1015,7 @@ async function openDraftPreview(email, card, button) {
       original_body: body,
       original_media_kit_id: result.selected_media_kit_id || null,
       editing_supported: result.editing_supported === true,
+      forwarded,
     };
     pendingSendCard = card;
     $("previewRecipient").textContent = pendingDraft.to.join(", ");
@@ -1037,8 +1051,8 @@ $("saveDraftChanges").addEventListener("click", async () => {
   const button = $("saveDraftChanges");
   try {
     setBusy(button, true, "Saving…");
-    setStatus("sendDialogStatus", "Updating the existing Gmail draft…");
-    const result = await api("draft_update", {
+    setStatus("sendDialogStatus", pendingDraft.forwarded ? "Updating the saved CaughtUp draft…" : "Updating the existing Gmail draft…");
+    const result = await api(pendingDraft.forwarded ? "forwarded_draft_update" : "draft_update", {
       id: pendingDraft.id,
       preview_version: pendingDraft.preview_version,
       draft_text: $("previewBody").value,
@@ -1056,13 +1070,13 @@ $("saveDraftChanges").addEventListener("click", async () => {
     $("previewBody").value = draft.body;
     $("previewKit").value = result.selected_media_kit_id || "";
     renderDraftAttachments(draft.attachments);
-    setStatus("sendDialogStatus", "Changes saved to the existing Gmail draft.", "success");
+    setStatus("sendDialogStatus", pendingDraft.forwarded ? "Changes saved to CaughtUp." : "Changes saved to the existing Gmail draft.", "success");
   } catch (error) {
     setStatus("sendDialogStatus", Core.safeErrorMessage(error), "error");
     if (["draft_changed", "draft_update_reconcile"].includes(error.code)) {
       const cardStatus = pendingSendCard?.querySelector(".card-status");
       if (cardStatus) {
-        cardStatus.textContent = "The Gmail draft changed. Reopen Review to load the latest version.";
+        cardStatus.textContent = "The reply draft changed. Reopen Review to load the latest version.";
         cardStatus.classList.add("error");
       }
       pendingDraft = null;
@@ -1089,8 +1103,8 @@ $("confirmSend").addEventListener("click", async () => {
       pendingDraft.idempotency_key = await getManualSendKey(pendingDraft.id);
     }
     setBusy(button, true, pendingDraft.uncertain ? "Checking…" : "Sending…");
-    setStatus("sendDialogStatus", pendingDraft.uncertain ? "Checking the existing send request…" : "Sending the existing Gmail draft…");
-    const result = await api("send_draft", {
+    setStatus("sendDialogStatus", pendingDraft.uncertain ? "Checking the existing send request…" : "Sending this reply through Gmail…");
+    const result = await api(pendingDraft.forwarded ? "forwarded_send" : "send_draft", {
       id: pendingDraft.id,
       idempotency_key: pendingDraft.idempotency_key,
       preview_version: pendingDraft.preview_version,
@@ -1107,7 +1121,7 @@ $("confirmSend").addEventListener("click", async () => {
       const draftId = pendingDraft.id;
       await forgetManualSendKey(draftId);
       const cardStatus = pendingSendCard.querySelector(".card-status");
-      cardStatus.textContent = "Draft changed in Gmail. Open Review to preview the latest version.";
+      cardStatus.textContent = "The reply draft changed. Open Review to preview the latest version.";
       cardStatus.classList.add("error");
       pendingDraft = null;
       pendingSendCard = null;
@@ -1191,43 +1205,19 @@ async function pollPendingSweep() {
 }
 
 $("sweepBtn").addEventListener("click", async () => {
-  if (sweepPolling) return;
   const button = $("sweepBtn");
-  setBusy(button, true, "Sweeping…");
-  setGlobalStatus("Sweeping your inbox…", "progress");
+  setBusy(button, true, "Refreshing…");
+  setGlobalStatus("Refreshing processed email…", "progress");
   try {
-    const requestId = await getManualSweepRequestId();
-    const result = await api("sweep", { request_id: requestId }, { timeout: 30000 });
-    const alreadyInProgress = result?.code === "already_in_progress" || result?.already_in_progress === true ||
-      (Array.isArray(result?.results) && result.results.some((item) => item?.reason === "already_in_progress" || item?.reason === "already claimed"));
-    if (alreadyInProgress) {
-      setBusy(button, false);
-      await pollPendingSweep();
-      return;
-    }
+    await api("sweep", {}, { timeout: 15000 });
     await forgetManualSweepRequestId();
-    button.dataset.label = "Sweep now";
     await loadDigest();
-    showSweepOutcome(result);
+    setGlobalStatus("Today is refreshed. New forwarded email is processed automatically.", "success");
   } catch (error) {
-    if (error.code === "gmail_reconnect_required") {
-      await forgetManualSweepRequestId();
-      await rememberGmailReconnectRequired(true);
-      button.dataset.label = "Sweep now";
-      setGlobalStatus();
-      showSetup(true, "Gmail access expired. Reconnect Gmail, then run Sweep now again.", "gmail");
-      return;
-    }
-    if (["already_in_progress", "timeout", "network", "sweep_failed"].includes(error.code)) {
-      setBusy(button, false);
-      await pollPendingSweep();
-      return;
-    }
-    await forgetManualSweepRequestId();
-    button.dataset.label = "Sweep now";
     setGlobalStatus(Core.safeErrorMessage(error));
   } finally {
-    if (!sweepPolling) setBusy(button, false);
+    button.dataset.label = "Refresh";
+    setBusy(button, false);
   }
 });
 
@@ -1830,9 +1820,103 @@ function fillProfile(raw) {
   $("learningSummary").textContent = `${examples} writing example${examples === 1 ? "" : "s"} and ${rules} standing rule${rules === 1 ? "" : "s"}.`;
   updateModeBadge(currentProfile.reply_mode);
   setStatus("modeSetupStatus", currentProfile.reply_mode === "auto_send"
-    ? "Auto-send is active. Sweep now sends every reply that passes safety and your kit Auto-attach choices."
+    ? "Auto-send is active. Qualifying replies send automatically as forwarded email arrives and follow your kit Auto-attach choices."
     : "Review mode is active. Replies will be saved as drafts.", "success");
 }
+
+function forwardingButtons(state) {
+  $("startForwarding").classList.toggle("hidden", state !== "not_started" && state !== "disabled");
+  $("openGmailForwarding").classList.toggle("hidden", !["pending", "verification_received", "active"].includes(state));
+  $("openForwardingConfirmation").classList.toggle("hidden", state !== "verification_received" || !forwardingConfirmationUrl);
+  $("activateForwarding").classList.toggle("hidden", state !== "verification_received");
+}
+
+function allowlistedHttpsUrl(value, hostname, pathPrefix) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && url.hostname === hostname && url.pathname.startsWith(pathPrefix)
+      ? url.toString() : null;
+  } catch { return null; }
+}
+
+function renderForwarding(result = {}) {
+  const forwarding = result.forwarding || { status: "not_started" };
+  forwardingState = forwarding;
+  forwardingConfirmationUrl = allowlistedHttpsUrl(forwarding.confirmation_url, "mail-settings.google.com", "/");
+  forwardingGmailSettingsUrl = allowlistedHttpsUrl(result.gmail_settings_url, "mail.google.com", "/mail/")
+    || "https://mail.google.com/mail/#settings/fwdandpop";
+  const state = forwarding.status || "not_started";
+  const active = state === "active";
+  $("forwardingCard").classList.remove("hidden");
+  $("forwardingBadge").textContent = active ? "Automatic" : state === "verification_received" ? "Confirm" : state === "pending" ? "Waiting" : "Not connected";
+  $("forwardingBadge").className = `badge${active ? " sent" : state === "verification_received" ? " draft" : ""}`;
+  $("forwardingAddressRow").classList.toggle("hidden", !forwarding.alias_address);
+  $("forwardingAddress").textContent = forwarding.alias_address || "";
+  $("forwardingCode").classList.toggle("hidden", !forwarding.verification_code);
+  $("forwardingCode").textContent = forwarding.verification_code ? `Google confirmation code: ${forwarding.verification_code}` : "";
+  $("forwardingSummary").textContent = active
+    ? "New Gmail messages are forwarded to CaughtUp, filtered, and prepared automatically. Review replies still wait for you."
+    : state === "verification_received"
+    ? "Google reached CaughtUp. Confirm the address, enable forwarding in Gmail, then finish here."
+    : state === "pending"
+    ? "Add this address in Gmail's Forwarding settings. CaughtUp will detect Google's confirmation email automatically."
+    : "Connect one forwarding address so new Gmail can be processed automatically.";
+  forwardingButtons(state);
+  if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
+  if (state === "pending") forwardingPollTimer = setTimeout(() => { void loadForwarding({ quiet: true }); }, 5000);
+}
+
+async function loadForwarding({ quiet = false } = {}) {
+  try {
+    renderForwarding(await api("forwarding_setup_get"));
+  } catch (error) {
+    if (!quiet) setStatus("forwardingStatus", Core.safeErrorMessage(error), "error");
+  }
+}
+
+async function copyForwardingAddress() {
+  const address = forwardingState?.alias_address || "";
+  if (!address) return;
+  await navigator.clipboard.writeText(address);
+  setStatus("forwardingStatus", "Forwarding address copied.", "success");
+}
+
+$("startForwarding").addEventListener("click", async () => {
+  const button = $("startForwarding");
+  setBusy(button, true, "Preparing…");
+  try {
+    const result = await api("forwarding_setup_start");
+    renderForwarding(result);
+    await copyForwardingAddress();
+    setStatus("forwardingStatus", "Address copied. Open Gmail settings, choose Add a forwarding address, and paste it.", "success");
+  } catch (error) {
+    setStatus("forwardingStatus", Core.safeErrorMessage(error), "error");
+  } finally { setBusy(button, false); }
+});
+
+$("copyForwardingAddress").addEventListener("click", () => {
+  void copyForwardingAddress().catch(() => setStatus("forwardingStatus", "Copy the address shown above.", "error"));
+});
+
+$("openGmailForwarding").addEventListener("click", () => {
+  void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
+});
+
+$("openForwardingConfirmation").addEventListener("click", () => {
+  if (forwardingConfirmationUrl) void chrome.tabs.create({ url: forwardingConfirmationUrl });
+});
+
+$("activateForwarding").addEventListener("click", async () => {
+  const button = $("activateForwarding");
+  setBusy(button, true, "Finishing…");
+  try {
+    const result = await api("forwarding_setup_activate", { confirm: true });
+    renderForwarding(result);
+    setStatus("forwardingStatus", "Automatic intake is active. New forwarded Gmail is processed as it arrives.", "success");
+  } catch (error) {
+    setStatus("forwardingStatus", Core.safeErrorMessage(error), "error");
+  } finally { setBusy(button, false); }
+});
 
 async function loadProfile() {
   stateCard("settingsStatus", "Loading settings…");
@@ -1848,6 +1932,7 @@ async function loadProfile() {
     $("settingsStatus").classList.add("hidden");
     $("settingsForm").classList.remove("hidden");
     settingsLoaded = true;
+    await loadForwarding();
   } catch (error) {
     stateCard("settingsStatus", Core.safeErrorMessage(error), "error", loadProfile);
   }
@@ -1872,7 +1957,7 @@ async function prepareAutoSend() {
   const result = await api("auto_send_prepare");
   autoSendChallenge = result.challenge;
   if (!autoSendChallenge) throw new Core.ApiError("Auto-send confirmation is not available.", 0, "missing_challenge");
-  $("autoSendCopy").textContent = result.confirmation_text || "Sweep now sends every reply that passes safety. Uncertain inquiries use a conservative information request instead of uncertain wording.";
+  $("autoSendCopy").textContent = result.confirmation_text || "Qualifying replies send automatically as forwarded email arrives. Uncertain inquiries use a conservative information request instead of uncertain wording.";
   const list = $("autoSendSafeguards");
   list.replaceChildren();
   (result.safeguards || ["Only selected categories", "Auto-attach follows each kit's setting", "Safety rules cannot be overridden"]).forEach((item) => list.appendChild(create("li", "", item)));
@@ -1952,7 +2037,7 @@ $("confirmAutoSend").addEventListener("click", async () => {
     currentProfile = Core.normalizeProfile(result.profile || { ...currentProfile, reply_mode: "auto_send" });
     fillProfile(currentProfile);
     $("autoSendDialog").close();
-    setStatus("saveMsg", "Settings saved. Sweep now will send every reply that passes safety.", "success");
+    setStatus("saveMsg", "Settings saved. Qualifying replies will send automatically as forwarded email arrives.", "success");
     setStatus("modeSetupStatus", "Auto-send is active. Media kits follow each kit's Auto-attach setting.", "success");
   } catch (error) {
     setStatus("autoSendStatus", Core.safeErrorMessage(error), "error");
@@ -2053,10 +2138,8 @@ function hydrateViewCache() {
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
       : {};
-    manualSweepState = Core.normalizeSweepState(local[MANUAL_SWEEP_ID_STORAGE]);
-    if (local[MANUAL_SWEEP_ID_STORAGE] && !manualSweepState) {
-      await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE);
-    }
+    manualSweepState = null;
+    if (local[MANUAL_SWEEP_ID_STORAGE]) await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE);
     gmailReconnectRequired = local[GMAIL_RECONNECT_STORAGE] === true;
     pendingBookingRequest = local[BOOKING_REQUEST_STORAGE] && typeof local[BOOKING_REQUEST_STORAGE] === "object"
       ? local[BOOKING_REQUEST_STORAGE]
@@ -2081,6 +2164,7 @@ function hydrateViewCache() {
     $("settingsStatus").classList.add("hidden");
     $("settingsForm").classList.remove("hidden");
     settingsLoaded = true;
+    void loadForwarding();
     showSetup(false);
     const hydrated = hydrateViewCache();
     const digestRefresh = loadDigest({ quiet: hydrated.digest });

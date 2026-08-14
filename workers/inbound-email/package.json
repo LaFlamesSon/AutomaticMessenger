@@ -1,0 +1,20 @@
+{
+  "name": "caughtup-inbound-email",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy:check": "wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "postal-mime": "3.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260814.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  }
+}

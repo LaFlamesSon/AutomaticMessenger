@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+import type { Email } from "postal-mime";
+import { aliasToken, inboundPayload, signPayload } from "../src/index";
+
+function message(overrides: Partial<ForwardableEmailMessage> = {}): ForwardableEmailMessage {
+  return {
+    from: "brand@example.com",
+    to: "inbox+abcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io",
+    raw: new ReadableStream<Uint8Array>(),
+    rawSize: 321,
+    headers: new Headers(),
+    setReject() {},
+    async forward() { return { messageId: "x" }; },
+    async reply() { return { messageId: "x" }; },
+    ...overrides,
+  };
+}
+
+describe("inbound email envelope", () => {
+  it("accepts only tokenized CaughtUp subaddresses", () => {
+    expect(aliasToken("inbox+abcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io"))
+      .toBe("abcdefghijklmnopqrstuvwxyz123456");
+    expect(aliasToken("inbox@inbound.getcaughtup.io")).toBeNull();
+    expect(aliasToken("inbox+abc@example.com")).toBeNull();
+  });
+
+  it("minimizes parsed email data and keeps RFC thread headers", () => {
+    const email: Email = {
+      headers: [
+        { key: "from", originalKey: "From", value: "Brand Team <brand@example.com>" },
+        { key: "to", originalKey: "To", value: "creator@gmail.com" },
+      ],
+      headerLines: [],
+      subject: "Campaign brief",
+      text: "Hello creator",
+      messageId: "<one@example.com>",
+      inReplyTo: "<prior@example.com>",
+      references: "<root@example.com> <prior@example.com>",
+      attachments: [],
+    };
+    const payload = inboundPayload(message(), email, "abcdefghijklmnopqrstuvwxyz123456");
+    expect(payload).toMatchObject({
+      envelope_from: "brand@example.com",
+      from: "Brand Team <brand@example.com>",
+      original_to: "creator@gmail.com",
+      message_id: "<one@example.com>",
+      in_reply_to: "<prior@example.com>",
+      references: "<root@example.com> <prior@example.com>",
+      text: "Hello creator",
+    });
+    expect(payload).not.toHaveProperty("html");
+  });
+
+  it("produces P-256 signatures without exposing the private key", async () => {
+    const pair = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"],
+    );
+    const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString("base64");
+    const label = "PRIVATE KEY";
+    const privateKeyPem = `-----BEGIN ${label}-----\n${pkcs8.match(/.{1,64}/g)?.join("\n")}\n-----END ${label}-----`;
+    const signature = await signPayload(privateKeyPem, "123", '{"ok":true}');
+    expect(signature).toMatch(/^[0-9a-f]{128}$/);
+  });
+});

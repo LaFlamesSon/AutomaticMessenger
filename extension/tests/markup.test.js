@@ -56,21 +56,12 @@ test("manual send retries persist and reuse one idempotency key", () => {
   assert.doesNotMatch(script, /const idempotencyKey = globalThis\.crypto/);
 });
 
-test("manual sweep follows completion automatically without exposing status mechanics", () => {
-  assert.match(script, /MANUAL_SWEEP_ID_STORAGE/);
-  assert.match(script, /request_id: requestId/);
-  assert.match(script, /await forgetManualSweepRequestId\(\)/);
-  assert.doesNotMatch(script, /Check sweep status/);
-  assert.match(script, /already_in_progress/);
-  assert.match(script, /setBusy\(button, true, "Sweeping…"\)/);
-  assert.match(script, /baseline_finished_at: lastSweepRun\?\.finished_at \|\| null/);
-  assert.match(script, /Core\.sweepRunChanged/);
-  assert.match(script, /if \(manualSweepState\) void pollPendingSweep\(\)/);
-  assert.match(script, /button\.dataset\.label = "Sweep now"/);
-  assert.doesNotMatch(script, /api\("sweep", \{ request_id: globalThis\.crypto/);
-  assert.match(script, /Core\.summarizeSweepResults\(result\)/);
-  assert.match(script, /You're all caught up! \$\{sent\}; \$\{review\}/);
-  assert.match(script, /setGlobalStatus\([^\n]+"success"\)/);
+test("automatic forwarding replaces manual inbox reads while Refresh reloads processed state", () => {
+  assert.match(html, /id="sweepBtn"[^>]*>Refresh<\/button>/);
+  assert.match(script, /api\("sweep", \{\}, \{ timeout: 15000 \}\)/);
+  assert.match(script, /New forwarded email is processed automatically/);
+  assert.match(script, /manualSweepState = null/);
+  assert.doesNotMatch(script, /request_id: requestId/);
 });
 
 test("empty Today and successful sweeps use the requested caught-up states", () => {
@@ -155,23 +146,23 @@ test("expired Gmail authorization opens a real reconnect flow", () => {
   assert.match(script, /rememberGmailReconnectRequired/);
   assert.doesNotMatch(connectScript, /providerTokens|providerHandoff/);
   assert.match(connectScript, /profile\?\.gmail_connected !== true \|\| reconnectState\[GMAIL_RECONNECT_STORAGE\] === true/);
-  assert.match(script, /error\.code === "gmail_reconnect_required"/);
-  assert.match(script, /showSetup\(true, "Gmail access expired\.[^\n]+", "gmail"\)/);
+  assert.match(script, /code === "gmail_reconnect_required"/);
+  assert.match(script, /showSetup\(true, gmailReconnectRequired \? "Gmail access expired\. Reconnect Gmail to continue\." : "", "gmail"\)/);
   assert.match(connectScript, /api\("gmail_connect_start"/);
 });
 
-test("manual send requires an authoritative versioned preview", () => {
-  assert.match(script, /api\("draft_get", \{ id: email\.id \}\)/);
+test("manual send requires an authoritative versioned preview for Gmail and CaughtUp drafts", () => {
+  assert.match(script, /forwarded \? "forwarded_draft_get" : "draft_get"/);
   assert.match(script, /preview_version: pendingDraft\.preview_version/);
   assert.match(script, /Array\.isArray\(draft\.to\)/);
   assert.match(script, /Array\.isArray\(draft\.attachments\)/);
   assert.match(script, /previewAttachments/);
   assert.match(script, /code === "draft_changed"/);
-  assert.match(script, /Draft changed in Gmail/);
+  assert.match(script, /The reply draft changed/);
   assert.match(html, /id="previewBody"[^>]+textarea|<textarea id="previewBody"/);
   assert.match(html, /id="previewKit"/);
   assert.match(html, /id="saveDraftChanges"/);
-  assert.match(script, /api\("draft_update"/);
+  assert.match(script, /forwarded_draft_update/);
   assert.match(script, /if \(draftEditorDirty\(\)\)/);
 });
 
@@ -203,6 +194,8 @@ test("client targets the audited API actions", () => {
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
     "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss", "negotiation_test_draft_create",
+    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate",
+    "forwarded_draft_get", "forwarded_draft_update", "forwarded_send",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
 });
 
@@ -230,9 +223,9 @@ test("ordinary cards hide reply text and offer compact verified card-level send"
   assert.doesNotMatch(html, /seedNormalTestEmails|Add 10 normal test emails/);
   const renderer = script.match(/function renderEmailCard\(email\) \{([\s\S]*?)\n\}\n\nfunction renderDraftAttachments/)?.[1] || "";
   assert.doesNotMatch(renderer, /appendReplyDetails|Proposed reply/);
-  assert.match(script, /api\("draft_get", \{ id: email\.id \}\)/);
-  assert.match(script, /Send the current Gmail draft to/);
-  assert.match(script, /api\("send_draft"/);
+  assert.match(script, /forwarded \? "forwarded_draft_get" : "draft_get"/);
+  assert.match(script, /Send this reply through Gmail to/);
+  assert.match(script, /forwarded \? "forwarded_send" : "send_draft"/);
   assert.match(script, /preview_version: draft\.preview_version/);
   assert.match(css, /\.cardfoot \.compact \{ min-height: 24px/);
   assert.match(css, /\.sendbtn\.direct-send \{ color: #fff; background: #007aff/);
@@ -349,11 +342,24 @@ test("standing rules visibly force Review mode", () => {
 
 test("selecting Auto-send immediately enters the save and confirmation flow", () => {
   assert.match(html, /id="modeSetupStatus"/);
-  assert.match(html, /Sweep now sends every reply that passes safety/);
+  assert.match(html, /Qualifying replies send automatically as forwarded email arrives/);
   assert.match(script, /modeAuto"\)\.addEventListener\("change"/);
   assert.match(script, /selectDefaultAutoSendCategories\(\)/);
   assert.match(script, /settingsForm"\)\.requestSubmit\(\)/);
-  assert.match(script, /Auto-send is active\. Sweep now sends every reply that passes safety/);
+  assert.match(script, /Auto-send is active\. Qualifying replies send automatically as forwarded email arrives/);
+});
+
+test("forwarding setup is a one-time guided Gmail flow", () => {
+  for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /api\("forwarding_setup_start"\)/);
+  assert.match(script, /navigator\.clipboard\.writeText/);
+  assert.match(script, /allowlistedHttpsUrl\(result\.gmail_settings_url, "mail\.google\.com", "\/mail\/"\)/);
+  assert.match(script, /allowlistedHttpsUrl\(forwarding\.confirmation_url, "mail-settings\.google\.com", "\/"\)/);
+  assert.match(script, /api\("forwarding_setup_activate", \{ confirm: true \}\)/);
+  assert.match(script, /verification_received/);
+  assert.match(script, /setTimeout\(\(\) => \{ void loadForwarding/);
 });
 
 test("Chat writing-style updates are reflected in extension state", () => {
@@ -367,7 +373,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.13");
+  assert.equal(manifest.version, "0.6.0");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

@@ -12,7 +12,7 @@
       <span class="mark" aria-hidden="true">&#9993;</span>
       <span class="name">CaughtUp</span>
     </div>
-    <button id="sweepBtn" class="ghost compact" type="button" title="Check inbox now">Sweep now</button>
+    <button id="sweepBtn" class="ghost compact" type="button" title="Refresh processed email">Refresh</button>
   </header>
 
   <div id="globalStatus" class="global-status hidden" role="status" aria-live="polite"></div>
@@ -315,6 +315,27 @@
           <p id="connectedEmail" class="meta">Your agent preferences</p>
         </div>
       </div>
+      <section id="forwardingCard" class="form-card forwarding-card hidden" aria-labelledby="forwardingTitle">
+        <div class="forwarding-head">
+          <div>
+            <h2 id="forwardingTitle">Automatic Gmail intake</h2>
+            <p id="forwardingSummary" class="hint">Connect one forwarding address so new email can be processed automatically.</p>
+          </div>
+          <span id="forwardingBadge" class="badge">Not connected</span>
+        </div>
+        <div id="forwardingAddressRow" class="forwarding-address hidden">
+          <code id="forwardingAddress"></code>
+          <button id="copyForwardingAddress" type="button" class="ghost compact">Copy</button>
+        </div>
+        <p id="forwardingCode" class="forwarding-code hidden"></p>
+        <div class="button-row forwarding-actions">
+          <button id="startForwarding" type="button" class="primary compact">Set up forwarding</button>
+          <button id="openForwardingConfirmation" type="button" class="ghost compact hidden">Confirm with Google</button>
+          <button id="openGmailForwarding" type="button" class="ghost compact hidden">Open Gmail settings</button>
+          <button id="activateForwarding" type="button" class="primary compact hidden">I enabled forwarding</button>
+        </div>
+        <p id="forwardingStatus" class="status-text" role="status" aria-live="polite"></p>
+      </section>
       <div id="settingsStatus" class="state-card" role="status" aria-live="polite">Loading settings&hellip;</div>
 
       <form id="settingsForm" class="hidden">
@@ -326,7 +347,7 @@
           </label>
           <label class="choice-card warning-choice" for="modeAuto">
             <input id="modeAuto" name="replyMode" type="radio" value="auto_send">
-            <span><strong>Auto-send safe replies</strong><small>Sweep now sends every reply that passes safety. Media kits follow their Auto-attach setting.</small></span>
+            <span><strong>Auto-send safe replies</strong><small>Qualifying replies send automatically as forwarded email arrives. Media kits follow their Auto-attach setting.</small></span>
           </label>
           <p id="modeSetupStatus" class="status-text" role="status" aria-live="polite"></p>
         </fieldset>
@@ -369,7 +390,7 @@
         <details>
           <summary>Schedule and daily summary</summary>
           <div class="details-body">
-            <p class="setting-line"><strong>Inbox checks</strong><span>Every 3 hours + Sweep now</span></p>
+            <p class="setting-line"><strong>Inbox intake</strong><span>Automatically as forwarded email arrives</span></p>
             <label class="check-row" for="f_digest_enabled"><input id="f_digest_enabled" type="checkbox"><span>Email me a daily summary</span></label>
             <label for="f_digest_local_time">Summary time</label><input id="f_digest_local_time" type="time">
             <label for="f_timezone">Time zone</label><input id="f_timezone" maxlength="80" list="timezoneOptions" autocomplete="off">
@@ -420,7 +441,7 @@
         <h3>Attachments</h3>
         <ul id="previewAttachments"></ul>
       </div>
-      <p id="draftEditHint" class="hint">Changes update the existing Gmail draft. Sending still requires a separate click.</p>
+      <p id="draftEditHint" class="hint">Changes update the saved CaughtUp draft. Sending still requires a separate click.</p>
       <p id="sendDialogStatus" class="status-text" role="status" aria-live="assertive"></p>
       <div class="button-row">
         <button id="cancelSend" type="submit" value="cancel" class="ghost">Keep draft</button>
@@ -449,7 +470,7 @@
   <dialog id="autoSendDialog" aria-labelledby="autoSendTitle">
     <form method="dialog" class="dialog-card">
       <h2 id="autoSendTitle">Turn on Auto-send?</h2>
-      <p id="autoSendCopy">Sweep now sends every reply that passes safety. Kits send only when their Auto-attach setting is enabled.</p>
+      <p id="autoSendCopy">Qualifying replies send automatically as forwarded email arrives. Kits send only when their Auto-attach setting is enabled.</p>
       <ul id="autoSendSafeguards" class="safeguards"></ul>
       <p id="autoSendStatus" class="status-text" role="status" aria-live="assertive"></p>
       <div class="button-row">
