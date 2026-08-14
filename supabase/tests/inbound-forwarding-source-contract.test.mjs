@@ -7,9 +7,9 @@ const ingest = read("../functions/inbound-email/index.ts");
 const api = read("../functions/agent-api/index.ts");
 const migration = read("../migrations/20260814032552_inbound_forwarding_pipeline.sql");
 const hardening = read("../migrations/20260814041500_inbound_forwarding_post_deploy_hardening.sql");
-const acceptanceTest = read("../migrations/20260814042435_forwarding_acceptance_test.sql");
-const acceptanceThread = read("../migrations/20260814043647_allow_forwarding_acceptance_test_threads.sql");
-const autoSendAcceptance = read("../migrations/20260814045104_forwarding_auto_send_acceptance.sql");
+const acceptanceTest = read("../migrations/20260814042820_forwarding_acceptance_test.sql");
+const acceptanceThread = read("../migrations/20260814043733_allow_forwarding_acceptance_test_threads.sql");
+const autoSendAcceptance = read("../migrations/20260814045411_forwarding_auto_send_acceptance.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
 
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
@@ -58,7 +58,7 @@ test("forwarded drafts preserve safety, Review negotiations, and explicit send c
   assert.match(api, /case "forwarded_draft_get"/);
   assert.match(api, /case "forwarded_draft_update"/);
   assert.match(api, /case "forwarded_send"/);
-  const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "send_draft"/)?.[1] ?? "";
+  const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "gmail_connect_start"/)?.[1] ?? "";
   assert.ok(send.indexOf("preview_version") < send.indexOf('from("ia_send_attempts").insert'));
   assert.ok(send.indexOf('status: "sending"') < send.indexOf('users/me/messages/send'));
   assert.match(send, /draftSafetyViolations\(replyBody\)/);
@@ -74,13 +74,13 @@ test("forwarded negotiations require a creator reply and remain linked across re
   assert.match(ingest, /\|\| Boolean\(activeNegotiation\)/);
   assert.match(ingest, /human_review_required: negotiationRequired \|\| \(isForwardingTest && !forwardingTestAutoSend\)/);
 
-  const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "send_draft"/)?.[1] ?? "";
+  const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "gmail_connect_start"/)?.[1] ?? "";
   assert.match(send, /sent_via: "manual_extension"/);
   assert.match(send, /inReplyTo: row\.rfc_message_id/);
   assert.match(send, /references: row\.rfc_references/);
   assert.match(send, /messageId: row\.outbound_message_id/);
 
-  assert.match(api, /row\.gmail_draft_id \|\| row\.ingestion_source === "forwarded"/);
+  assert.match(api, /row\.ingestion_source === "forwarded" && row\.negotiation_id/);
   assert.match(api, /draft_email: linkedNegotiationDrafts\.get\(row\.id\) \?\? null/);
 });
 

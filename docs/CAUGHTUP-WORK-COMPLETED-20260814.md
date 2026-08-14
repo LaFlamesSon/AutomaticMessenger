@@ -12,6 +12,42 @@ This handoff records the work completed during the August 13-14 transition from 
 
 The continuation plan is in [CAUGHTUP-NEXT-STEPS-20260814.md](./CAUGHTUP-NEXT-STEPS-20260814.md).
 
+## Continuation update: local send-only cleanup candidate
+
+The next work session completed the local source package described in Phases 0,
+1, 2, and 3 of the continuation plan. This is a local release candidate until
+the retirement migration and Edge Functions are explicitly authorized for
+production deployment.
+
+- Aligned the three forwarding-acceptance migration filenames with their
+  already-applied remote timestamps; the CLI now reports each pair aligned and
+  does not propose re-executing their SQL.
+- Added `20260814051952_retire_inbox_sweep.sql`, guarded by a zero-`inbox_read`
+  check, to unschedule `inbox-agent-sweep` and remove `inbox_read` from the
+  runtime capability constraint.
+- Converted `agent-sweep` to an inert HTTP 410 boundary.
+- Removed Gmail Draft/read/fixture actions from `agent-api`. Active functions now
+  use Gmail data APIs only through `users.messages.send`.
+- Disabled dormant Opportunities draft/send actions pending a send-only relaunch.
+- Added forwarding onboarding, controlled Review/Auto-send test status, and
+  intake-disconnect guidance to the extension; bumped the local manifest to
+  `0.6.1`.
+- Updated the homepage, privacy policy, support page, OAuth submission notes,
+  canonical snapshot, and historical-doc warnings to describe forwarding plus
+  CaughtUp-stored drafts.
+- Audited all nine downloadable policy PDFs by extracted text. None described
+  Gmail read, label, settings, or Gmail Draft API access, so regeneration was
+  not required.
+- Local verification passed: 56 backend contract tests, 51 extension tests,
+  JavaScript syntax checks, and Deno type checks for the four touched Edge
+  Functions.
+
+Not completed by this local candidate: production deployment/migration, OAuth
+secret rotation, real external forwarding and send acceptance, Google Cloud
+console alignment, clean-grant recording, demo video, or verification
+resubmission. Those actions require explicit authorization and/or user-controlled
+accounts.
+
 ## Executive summary
 
 CaughtUp now has a working production path that does not request `gmail.modify`, `gmail.readonly`, or `gmail.compose`:

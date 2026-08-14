@@ -14,19 +14,18 @@ test("opportunity tables are RLS-protected and service-role only", () => {
   assert.match(migration, /grant all[\s\S]*to service_role/);
 });
 
-test("API exposes complete opt-in, matching, draft, preview, and explicit send contract", () => {
-  for (const action of ["opportunities_get", "opportunity_preferences_set", "brand_relationship_set", "opportunity_create", "opportunity_refresh", "opportunity_update", "opportunity_prepare_draft", "opportunity_draft_get", "opportunity_send"]) {
+test("opportunity metadata remains available while Gmail draft and send actions are retired", () => {
+  for (const action of ["opportunities_get", "opportunity_preferences_set", "brand_relationship_set", "opportunity_create", "opportunity_refresh", "opportunity_update"]) {
     assert.match(api, new RegExp(`case "${action}"`));
   }
-  assert.match(api, /auto_sent: false/);
-  assert.match(api, /preview_version/);
-  assert.match(api, /ia_opportunity_send_attempts/);
+  for (const retired of ["opportunity_prepare_draft", "opportunity_draft_get", "opportunity_send"]) {
+    assert.doesNotMatch(api, new RegExp(`case "${retired}"`));
+  }
+  assert.doesNotMatch(api, /users\/me\/drafts|drafts\/send/);
 });
 
-test("routine sweeps add confirmation-required business relationship suggestions only when opted in", () => {
-  assert.match(sweep, /ia_opportunity_preferences/);
-  assert.match(sweep, /senderBusinessDomain/);
-  assert.match(sweep, /relationship_status: "suggested"/);
-  assert.match(sweep, /confirmed: false/);
-  assert.doesNotMatch(sweep, /opportunity_prepare_draft/);
+test("retired inbox sweep cannot infer brand relationships from Gmail", () => {
+  assert.match(sweep, /status: 410/);
+  assert.match(sweep, /inbox_sweep_retired/);
+  assert.doesNotMatch(sweep, /ia_opportunity_preferences|senderBusinessDomain|gmail\.googleapis\.com/);
 });

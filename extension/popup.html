@@ -333,7 +333,10 @@
           <button id="openForwardingConfirmation" type="button" class="ghost compact hidden">Confirm with Google</button>
           <button id="openGmailForwarding" type="button" class="ghost compact hidden">Open Gmail settings</button>
           <button id="activateForwarding" type="button" class="primary compact hidden">I enabled forwarding</button>
+          <button id="runForwardingTest" type="button" class="primary compact hidden">Test CaughtUp</button>
+          <button id="disableForwarding" type="button" class="ghost compact hidden">Disconnect intake</button>
         </div>
+        <p id="forwardingTestSummary" class="hint hidden"></p>
         <p id="forwardingStatus" class="status-text" role="status" aria-live="polite"></p>
       </section>
       <div id="settingsStatus" class="state-card" role="status" aria-live="polite">Loading settings&hellip;</div>
@@ -447,22 +450,6 @@
         <button id="cancelSend" type="submit" value="cancel" class="ghost">Keep draft</button>
         <button id="saveDraftChanges" type="button" class="ghost compact">Save changes</button>
         <button id="confirmSend" type="button" class="primary compact">Send reply</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="opportunityDraftDialog" aria-labelledby="opportunityDraftTitle">
-    <form method="dialog" class="dialog-card">
-      <h2 id="opportunityDraftTitle">Review brand outreach</h2>
-      <p id="opportunityDraftTo" class="meta"></p>
-      <h3 id="opportunityDraftSubject"></h3>
-      <pre id="opportunityDraftBody" class="draft-preview"></pre>
-      <p id="opportunityDraftAttachment" class="attachment-note hidden"></p>
-      <p class="warning-copy">Nothing sends until you choose Send outreach below.</p>
-      <p id="opportunityDraftStatus" class="status-text" role="status" aria-live="assertive"></p>
-      <div class="dialog-actions">
-        <button id="cancelOpportunitySend" type="button" class="ghost">Cancel</button>
-        <button id="confirmOpportunitySend" type="button" class="danger">Send outreach</button>
       </div>
     </form>
   </dialog>

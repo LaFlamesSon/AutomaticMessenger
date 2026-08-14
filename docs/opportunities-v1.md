@@ -1,10 +1,16 @@
 # CaughtUp Opportunities v1
 
+> **Historical design — outbound actions disabled.** The Gmail Draft workflow in
+> this document was superseded by the August 2026 send-only architecture.
+> Opportunity metadata actions remain available internally, but CaughtUp does
+> not expose Prepare draft, Gmail Draft preview, or opportunity send actions.
+> Relaunch requires a CaughtUp-stored draft with explicit `users.messages.send`.
+
 ## Product promise
 
-Help a creator identify brands that plausibly fit their work, understand why
-each match exists, and prepare a personalized Gmail outreach draft for explicit
-review. Version 1 does not automatically contact a brand.
+This document originally proposed helping a creator identify brands that fit
+their work and prepare outreach. Its Gmail Draft portions are retained only as
+historical design context and are not current product behavior.
 
 ## First user journey
 

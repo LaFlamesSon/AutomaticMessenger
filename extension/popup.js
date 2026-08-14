@@ -6,7 +6,6 @@ const $ = (id) => document.getElementById(id);
 const PANELS = ["today", "opportunities", "kits", "calendar", "settings"];
 const PROFILE_FIELDS = ["display_name", "occupation", "services", "tone", "signoff", "custom_rules"];
 const MANUAL_SEND_KEYS_STORAGE = "caughtup_manual_send_keys";
-const MANUAL_SWEEP_ID_STORAGE = "caughtup_manual_sweep_request_id";
 const BOOKING_REQUEST_STORAGE = "caughtup_booking_request";
 const GMAIL_RECONNECT_STORAGE = "caughtup_gmail_reconnect_required";
 const VIEW_CACHE_STORAGE = "caughtup_view_cache_v1";
@@ -16,9 +15,6 @@ let currentProfile = null;
 let pendingDraft = null;
 let pendingSendCard = null;
 let manualSendKeys = {};
-let manualSweepState = null;
-let lastSweepRun = null;
-let sweepPolling = false;
 let autoSendChallenge = null;
 let kitsLoaded = false;
 let kitsLoading = false;
@@ -36,7 +32,6 @@ let viewCache = {};
 let opportunitiesLoaded = false;
 let opportunitiesLoading = false;
 let currentOpportunityState = null;
-let pendingOpportunityDraft = null;
 let forwardingState = null;
 let forwardingConfirmationUrl = null;
 let forwardingGmailSettingsUrl = "https://mail.google.com/mail/#settings/fwdandpop";
@@ -81,7 +76,7 @@ function safeApiMessage(data, status) {
   const code = String(data?.code || data?.error || "request_failed").toLowerCase();
   if (status === 401 || code === "unauthorized") return { code: "unauthorized", message: "Your session expired. Connect again." };
   if (code === "confirmation_required") return { code, message: "Auto-send is off. Review the updated policy and confirm it again." };
-  if (code === "draft_changed") return { code, message: "This Gmail draft changed after the preview. Review the latest version before sending." };
+  if (code === "draft_changed") return { code, message: "This CaughtUp draft changed after the preview. Review the latest version before sending." };
   if (code === "unsafe_draft") return { code, message: "Remove pricing, acceptance, rejection, availability, or commitment language before saving." };
   if (code === "unmanaged_attachments") return { code, message: "This draft has attachments CaughtUp cannot safely replace. Edit it in Gmail instead." };
   if (code === "draft_update_reconcile") return { code, message: "The draft may have saved. Close this preview and reopen it before making another change." };
@@ -89,7 +84,7 @@ function safeApiMessage(data, status) {
     return { code: "send_in_progress", message: "CaughtUp is checking this send. Do not send it again yet." };
   }
   if (code === "already_in_progress") {
-    return { code, message: "CaughtUp is finishing your inbox sweep." };
+    return { code, message: "CaughtUp is finishing the current processing run." };
   }
   if (code === "gmail_reconnect_required") {
     return { code, message: "Gmail access expired. Reconnect Gmail to continue." };
@@ -215,15 +210,15 @@ function renderOpportunities() {
   (state.category_metrics || []).forEach((metric) => {
     const row = create("div", "metric-row");
     const summary = create("div");
-    summary.append(create("strong", "", `${metric.category} · ${metric.platform}`));
+    summary.append(create("strong", "", `${metric.category} Â· ${metric.platform}`));
     const facts = [];
     if (metric.median_views !== null) facts.push(`${Number(metric.median_views).toLocaleString()} median views`);
     if (metric.engagement_rate !== null) facts.push(`${(Number(metric.engagement_rate) * 100).toFixed(2)}% engagement`);
-    summary.append(create("p", "meta", facts.join(" · ") || "No performance values yet"));
+    summary.append(create("p", "meta", facts.join(" Â· ") || "No performance values yet"));
     const remove = create("button", "ghost compact", "Remove");
     remove.type = "button";
     remove.addEventListener("click", async () => {
-      setBusy(remove, true, "Removing…");
+      setBusy(remove, true, "Removing...");
       try { await api("affiliate_metric_delete", { id: metric.id }); await loadOpportunities(true); }
       catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
       finally { setBusy(remove, false); }
@@ -244,7 +239,7 @@ function renderOpportunities() {
       const button = create("button", "ghost compact", label);
       button.type = "button";
       button.addEventListener("click", async () => {
-        setBusy(button, true, "Saving…");
+        setBusy(button, true, "Saving...");
         try {
           await api("brand_relationship_set", { brand_name: relationship.brand_name, brand_domain: relationship.brand_domain,
             relationship_status: status, confirmed: true });
@@ -271,7 +266,7 @@ function renderOpportunities() {
     const economics = [];
     if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
     if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
-    card.append(create("p", "product-economics", economics.join(" · ")));
+    card.append(create("p", "product-economics", economics.join(" Â· ")));
     card.append(create("p", "product-description", opportunity.description || "View the product listing for full details."));
     const listingPlatforms = opportunity.required_platform ? [opportunity.required_platform] : (opportunity.allowed_platforms || []);
     if (listingPlatforms.length) {
@@ -308,33 +303,16 @@ async function loadOpportunities(force = false, sync = false) {
 }
 
 async function updateOpportunityStatus(id, status, button) {
-  setBusy(button, true, "Saving…");
+  setBusy(button, true, "Saving...");
   try { await api("opportunity_update", { id, status }); await loadOpportunities(true); }
   catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
-  finally { setBusy(button, false); }
-}
-
-async function reviewOpportunityDraft(opportunity, button) {
-  setBusy(button, true, "Loading…");
-  try {
-    const result = await api("opportunity_draft_get", { id: opportunity.id });
-    pendingOpportunityDraft = { opportunity, draft: result.draft };
-    $("opportunityDraftTo").textContent = `To: ${result.draft.recipient}`;
-    $("opportunityDraftSubject").textContent = result.draft.subject;
-    $("opportunityDraftBody").textContent = result.draft.body;
-    const attachmentCount = result.draft.attachments?.length || 0;
-    $("opportunityDraftAttachment").textContent = attachmentCount ? `${attachmentCount} verified media-kit attachment${attachmentCount === 1 ? "" : "s"}` : "";
-    $("opportunityDraftAttachment").classList.toggle("hidden", !attachmentCount);
-    setStatus("opportunityDraftStatus", "Review the live Gmail draft. You can also edit it in Gmail, then reopen this preview.");
-    $("opportunityDraftDialog").showModal();
-  } catch (error) { setStatus("opportunityStatus", Core.safeErrorMessage(error), "error"); }
   finally { setBusy(button, false); }
 }
 
 $("opportunityProfileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("saveOpportunityProfile");
-  setBusy(button, true, "Saving…");
+  setBusy(button, true, "Saving...");
   try {
     const fields = {
       enabled: $("opportunityEnabled").checked,
@@ -352,7 +330,7 @@ $("opportunityProfileForm").addEventListener("submit", async (event) => {
 $("opportunityAddForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("addOpportunity");
-  setBusy(button, true, "Matching…");
+  setBusy(button, true, "Matching...");
   try {
     await api("opportunity_create", {
       brand_name: $("opportunityBrandName").value, brand_domain: $("opportunityBrandDomain").value,
@@ -368,7 +346,7 @@ $("opportunityAddForm").addEventListener("submit", async (event) => {
 $("affiliateMetricForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("saveAffiliateMetric");
-  setBusy(button, true, "Saving…");
+  setBusy(button, true, "Saving...");
   try {
     await api("affiliate_metric_upsert", {
       platform: $("affiliateMetricPlatform").value, category: $("affiliateMetricCategory").value,
@@ -387,7 +365,7 @@ $("affiliateMetricForm").addEventListener("submit", async (event) => {
 $("affiliateOpportunityForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("addAffiliateOpportunity");
-  setBusy(button, true, "Ranking…");
+  setBusy(button, true, "Ranking...");
   try {
     await api("affiliate_opportunity_create", {
       brand_name: $("affiliateBrandName").value, brand_domain: $("affiliateBrandDomain").value,
@@ -407,7 +385,7 @@ $("affiliateOpportunityForm").addEventListener("submit", async (event) => {
 
 $("refreshOpportunities").addEventListener("click", async () => {
   const button = $("refreshOpportunities");
-  setBusy(button, true, "Refreshing…");
+  setBusy(button, true, "Refreshing...");
   await loadOpportunities(true, true);
   setBusy(button, false);
 });
@@ -419,34 +397,11 @@ $("connectTikTok").addEventListener("click", () => {
 });
 $("disconnectTikTok").addEventListener("click", async () => {
   const button = $("disconnectTikTok");
-  setBusy(button, true, "Disconnectingâ€¦");
+  setBusy(button, true, "Disconnecting...");
   try {
     currentOpportunityState = await api("tiktok_disconnect");
     renderOpportunities();
   } catch (error) { setStatus("tiktokConnectionStatus", Core.safeErrorMessage(error), "error"); }
-  finally { setBusy(button, false); }
-});
-
-$("cancelOpportunitySend").addEventListener("click", () => {
-  pendingOpportunityDraft = null;
-  $("opportunityDraftDialog").close("cancel");
-});
-
-$("confirmOpportunitySend").addEventListener("click", async () => {
-  if (!pendingOpportunityDraft) return;
-  const button = $("confirmOpportunitySend");
-  setBusy(button, true, "Sending…");
-  setStatus("opportunityDraftStatus", "Sending the reviewed Gmail draft…");
-  try {
-    const keyName = `opportunity:${pendingOpportunityDraft.opportunity.id}`;
-    const idempotencyKey = await getManualSendKey(keyName);
-    await api("opportunity_send", { id: pendingOpportunityDraft.opportunity.id,
-      preview_version: pendingOpportunityDraft.draft.preview_version, idempotency_key: idempotencyKey }, { timeout: 30000 });
-    await forgetManualSendKey(keyName);
-    $("opportunityDraftDialog").close("sent");
-    pendingOpportunityDraft = null;
-    await loadOpportunities(true);
-  } catch (error) { setStatus("opportunityDraftStatus", Core.safeErrorMessage(error), "error"); }
   finally { setBusy(button, false); }
 });
 
@@ -493,29 +448,6 @@ async function forgetManualSendKey(draftId) {
   try { await chrome.storage.local.set({ [MANUAL_SEND_KEYS_STORAGE]: manualSendKeys }); } catch { /* server remains authoritative */ }
 }
 
-async function getManualSweepRequestId() {
-  const result = Core.ensureSweepRequestId(
-    manualSweepState?.request_id,
-    () => globalThis.crypto?.randomUUID?.() || `fallback-${Date.now()}`,
-  );
-  if (!manualSweepState || result.created) {
-    manualSweepState = {
-      request_id: result.requestId,
-      started_at: new Date().toISOString(),
-      baseline_finished_at: lastSweepRun?.finished_at || null,
-    };
-  }
-  if (result.created) {
-    try { await chrome.storage.local.set({ [MANUAL_SWEEP_ID_STORAGE]: manualSweepState }); } catch { /* stable for this popup session */ }
-  }
-  return result.requestId;
-}
-
-async function forgetManualSweepRequestId() {
-  manualSweepState = null;
-  try { await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE); } catch { /* server remains authoritative */ }
-}
-
 async function rememberGmailReconnectRequired(required) {
   gmailReconnectRequired = required === true;
   try {
@@ -559,7 +491,7 @@ function applyIdentity(result = {}) {
 
 function connectedIdentityLabel() {
   if (gmailAddress && appEmail && gmailAddress.toLowerCase() !== appEmail.toLowerCase()) {
-    return `Gmail: ${gmailAddress} · Signed in: ${appEmail}`;
+    return `Gmail: ${gmailAddress} Â· Signed in: ${appEmail}`;
   }
   if (gmailAddress) return `Connected Gmail: ${gmailAddress}`;
   if (appEmail) return `Signed in: ${appEmail}`;
@@ -598,7 +530,7 @@ enabledPrimaryTabs.forEach((tab, index, tabs) => {
 
 $("connectGoogle").addEventListener("click", async () => {
   const button = $("connectGoogle");
-  setBusy(button, true, "Opening secure setup…");
+  setBusy(button, true, "Opening secure setup...");
   setStatus("setupStatus", "");
   try {
     if (button.dataset.action === "retry") {
@@ -621,7 +553,6 @@ $("signOut").addEventListener("click", async () => {
   session = null;
   currentProfile = null;
   manualSendKeys = {};
-  manualSweepState = null;
   gmailReconnectRequired = false;
   viewCache = {};
   pendingBookingRequest = null;
@@ -633,13 +564,11 @@ $("signOut").addEventListener("click", async () => {
   opportunitiesLoaded = false;
   opportunitiesLoading = false;
   currentOpportunityState = null;
-  pendingOpportunityDraft = null;
   appEmail = "";
   gmailAddress = "";
   await Promise.all([
     chrome.storage.local.remove("caughtup_session"),
     chrome.storage.local.remove(MANUAL_SEND_KEYS_STORAGE),
-    chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE),
     chrome.storage.local.remove(BOOKING_REQUEST_STORAGE),
     chrome.storage.local.remove(GMAIL_RECONNECT_STORAGE),
     chrome.storage.local.remove(VIEW_CACHE_STORAGE),
@@ -668,10 +597,10 @@ function updateModeBadge(mode) {
 }
 
 function formatLastRun(lastRun) {
-  if (!lastRun?.finished_at) return "No completed sweep yet";
+  if (!lastRun?.finished_at) return "No completed processing run yet";
   const date = new Date(lastRun.finished_at);
-  if (Number.isNaN(date.getTime())) return "Last sweep time unavailable";
-  return `Last sweep ${date.toLocaleString()}`;
+  if (Number.isNaN(date.getTime())) return "Last processing time unavailable";
+  return `Last processed ${date.toLocaleString()}`;
 }
 
 async function cacheView(name, value) {
@@ -681,7 +610,6 @@ async function cacheView(name, value) {
 }
 
 function applyDigestResult(result = {}) {
-  lastSweepRun = result.last_run || null;
   $("lastRun").textContent = formatLastRun(result.last_run);
   updateModeBadge(result.reply_mode || currentProfile?.reply_mode || "draft_only");
   renderTodayFeed(result.emails || [], result.negotiations || []);
@@ -696,7 +624,7 @@ function negotiationTerms(terms = {}, currency = "USD") {
   if (Array.isArray(terms.deliverables) && terms.deliverables.length) parts.push(terms.deliverables.join(", "));
   if (terms.usage_rights) parts.push("usage rights");
   if (terms.exclusivity) parts.push("exclusivity");
-  return parts.join(" · ") || "Payment details are still missing";
+  return parts.join(" Â· ") || "Payment details are still missing";
 }
 
 function negotiationThresholdLabel(status) {
@@ -725,7 +653,7 @@ function appendReplyDetails(card, reply, summary = "Proposed reply") {
 
 async function dismissNegotiation(deal, card, button) {
   if (!confirm(`Dismiss the ${deal.brand_name || "brand"} negotiation from Today? A new inbound message will surface it again.`)) return;
-  setBusy(button, true, "Dismissing…");
+  setBusy(button, true, "Dismissing...");
   const status = card.querySelector(".card-status");
   try {
     await api("negotiation_dismiss", { negotiation_id: deal.id });
@@ -753,17 +681,17 @@ async function sendDraftFromCard(email, card, button) {
   status.textContent = "";
   status.classList.remove("error");
   try {
-    setBusy(button, true, "Checking…");
-    const forwarded = isForwardedDraft(email);
-    const previewResult = await api(forwarded ? "forwarded_draft_get" : "draft_get", { id: email.id });
+    setBusy(button, true, "Checking...");
+    if (!isForwardedDraft(email)) throw new Core.ApiError("This legacy reply is no longer available in CaughtUp.", 410, "legacy_draft_retired");
+    const previewResult = await api("forwarded_draft_get", { id: email.id });
     const draft = previewResult.draft || previewResult;
     if (!draft?.preview_version || !Array.isArray(draft.to) || !draft.to.length) {
       throw new Core.ApiError("The current reply draft could not be verified.", 422, "preview_incomplete");
     }
     if (!confirm(`Send this reply through Gmail to ${draft.to.join(", ")}?`)) return;
     const idempotencyKey = await getManualSendKey(email.id);
-    setBusy(button, true, "Sending…");
-    const result = await api(forwarded ? "forwarded_send" : "send_draft", {
+    setBusy(button, true, "Sending...");
+    const result = await api("forwarded_send", {
       id: email.id,
       idempotency_key: idempotencyKey,
       preview_version: draft.preview_version,
@@ -781,28 +709,10 @@ async function sendDraftFromCard(email, card, button) {
   }
 }
 
-async function createNegotiationTestDraft(deal, card, button) {
-  setBusy(button, true, "Creating draft…");
-  const status = card.querySelector(".card-status");
-  status.textContent = "";
-  status.classList.remove("error");
-  try {
-    const result = await api("negotiation_test_draft_create", { negotiation_id: deal.id }, { timeout: 25000 });
-    status.textContent = result.already_created
-      ? "Your existing unsent Gmail test draft is ready."
-      : "Unsent self-addressed Gmail test draft created.";
-    await loadDigest({ quiet: true });
-  } catch (error) {
-    status.textContent = Core.safeErrorMessage(error);
-    status.classList.add("error");
-    setBusy(button, false);
-  }
-}
-
 function renderNegotiationCard(deal) {
   const tier = negotiationTier(deal.threshold_status);
   const card = create("article", `card negotiation-card deal-${tier}`);
-  card.appendChild(create("div", "timeline-kicker", "Negotiation • Creator decision required"));
+  card.appendChild(create("div", "timeline-kicker", "Negotiation - Creator decision required"));
   card.appendChild(create("div", "card-sender", deal.brand_name || "Brand negotiation"));
   card.appendChild(create("div", "card-subject", deal.latest_subject || "Commercial terms under review"));
   card.appendChild(create("div", "negotiation-terms", negotiationTerms(deal.current_terms, deal.rate_profile?.currency)));
@@ -825,7 +735,7 @@ function renderNegotiationCard(deal) {
   appendReplyDetails(card, deal.proposed_reply, "Preview proposed reply");
 
   const footer = create("div", "cardfoot");
-  if (deal.draft_email?.gmail_draft_id || isForwardedDraft(deal.draft_email)) {
+  if (isForwardedDraft(deal.draft_email)) {
     const review = create("button", "sendbtn", "Review");
     review.type = "button";
     review.addEventListener("click", () => openDraftPreview(deal.draft_email, card, review));
@@ -834,12 +744,6 @@ function renderNegotiationCard(deal) {
     send.type = "button";
     send.addEventListener("click", () => sendDraftFromCard(deal.draft_email, card, send));
     footer.appendChild(send);
-  } else if (deal.is_test) {
-    const createDraft = create("button", "sendbtn", "Create draft");
-    createDraft.type = "button";
-    createDraft.title = "Creates one unsent Gmail draft addressed to your own connected account.";
-    createDraft.addEventListener("click", () => createNegotiationTestDraft(deal, card, createDraft));
-    footer.appendChild(createDraft);
   }
   if (!deal.is_test && deal.thread_id) {
     const link = create("a", "timeline-link", "Open Gmail");
@@ -863,7 +767,7 @@ function renderNegotiationCard(deal) {
 async function loadDigest(options = {}) {
   const quiet = options.quiet === true;
   if (!quiet) {
-    stateCard("todayStatus", "Loading your inbox…");
+    stateCard("todayStatus", "Loading your inbox...");
     $("digest").classList.add("hidden");
   }
   try {
@@ -896,13 +800,13 @@ function renderTodayFeed(emails, negotiations = []) {
     ? renderNegotiationCard(item.value) : renderEmailCard(item.value)));
 
   $("todayStatus").classList.toggle("hidden", Boolean(timeline.length));
-  if (!timeline.length) stateCard("todayStatus", "You're all caught up — nothing pending!");
+  if (!timeline.length) stateCard("todayStatus", "You're all caught up - nothing pending!");
   digest.classList.toggle("hidden", !timeline.length);
 }
 
 function renderEmailCard(email) {
   const card = create("article", "card");
-  card.appendChild(create("div", "timeline-kicker", `Inbox • ${Core.CATEGORY_LABELS[email.category] || "Message"}`));
+  card.appendChild(create("div", "timeline-kicker", `Inbox - ${Core.CATEGORY_LABELS[email.category] || "Message"}`));
   const sender = create("div", "card-sender", email.sender || "Unknown sender");
   const subject = create("div", "card-subject", email.subject || "(No subject)");
   const summary = create("div", "card-summary", email.summary || "No summary available.");
@@ -913,7 +817,7 @@ function renderEmailCard(email) {
   const delivery = Core.deliveryState(email);
   if (delivery === "sent") forgetManualSendKey(email.id);
   if (delivery !== "none") footer.appendChild(create("span", `badge ${delivery}`, delivery === "sent" ? "Reply sent" : delivery === "failed" ? "Send failed" : "Draft ready"));
-  if (delivery === "draft" && (email.gmail_draft_id || isForwardedDraft(email))) {
+  if (delivery === "draft" && isForwardedDraft(email)) {
     const button = create("button", "sendbtn", "Review");
     button.type = "button";
     button.addEventListener("click", () => openDraftPreview(email, card, button));
@@ -984,13 +888,13 @@ function syncDraftEditorState() {
 }
 
 async function openDraftPreview(email, card, button) {
-  setBusy(button, true, "Loading draft…");
+  setBusy(button, true, "Loading draft...");
   const status = card.querySelector(".card-status");
   status.textContent = "";
   status.classList.remove("error");
   try {
-    const forwarded = isForwardedDraft(email);
-    const result = await api(forwarded ? "forwarded_draft_get" : "draft_get", { id: email.id });
+    if (!isForwardedDraft(email)) throw new Core.ApiError("This legacy reply is no longer available in CaughtUp.", 410, "legacy_draft_retired");
+    const result = await api("forwarded_draft_get", { id: email.id });
     const draft = result.draft || result;
     const body = draft.draft_text || draft.body;
     const hasFullEnvelope = Array.isArray(draft.to) && Array.isArray(draft.cc) &&
@@ -1015,7 +919,7 @@ async function openDraftPreview(email, card, button) {
       original_body: body,
       original_media_kit_id: result.selected_media_kit_id || null,
       editing_supported: result.editing_supported === true,
-      forwarded,
+      forwarded: true,
     };
     pendingSendCard = card;
     $("previewRecipient").textContent = pendingDraft.to.join(", ");
@@ -1050,9 +954,9 @@ $("saveDraftChanges").addEventListener("click", async () => {
   if (!pendingDraft || !draftEditorDirty()) return;
   const button = $("saveDraftChanges");
   try {
-    setBusy(button, true, "Saving…");
-    setStatus("sendDialogStatus", pendingDraft.forwarded ? "Updating the saved CaughtUp draft…" : "Updating the existing Gmail draft…");
-    const result = await api(pendingDraft.forwarded ? "forwarded_draft_update" : "draft_update", {
+    setBusy(button, true, "Saving...");
+    setStatus("sendDialogStatus", pendingDraft.forwarded ? "Updating the saved CaughtUp draft..." : "Updating the existing CaughtUp draft...");
+    const result = await api("forwarded_draft_update", {
       id: pendingDraft.id,
       preview_version: pendingDraft.preview_version,
       draft_text: $("previewBody").value,
@@ -1070,7 +974,7 @@ $("saveDraftChanges").addEventListener("click", async () => {
     $("previewBody").value = draft.body;
     $("previewKit").value = result.selected_media_kit_id || "";
     renderDraftAttachments(draft.attachments);
-    setStatus("sendDialogStatus", pendingDraft.forwarded ? "Changes saved to CaughtUp." : "Changes saved to the existing Gmail draft.", "success");
+    setStatus("sendDialogStatus", "Changes saved to CaughtUp.", "success");
   } catch (error) {
     setStatus("sendDialogStatus", Core.safeErrorMessage(error), "error");
     if (["draft_changed", "draft_update_reconcile"].includes(error.code)) {
@@ -1099,12 +1003,12 @@ $("confirmSend").addEventListener("click", async () => {
   const button = $("confirmSend");
   try {
     if (!pendingDraft.idempotency_key) {
-      setBusy(button, true, "Preparing…");
+      setBusy(button, true, "Preparing...");
       pendingDraft.idempotency_key = await getManualSendKey(pendingDraft.id);
     }
-    setBusy(button, true, pendingDraft.uncertain ? "Checking…" : "Sending…");
-    setStatus("sendDialogStatus", pendingDraft.uncertain ? "Checking the existing send request…" : "Sending this reply through Gmail…");
-    const result = await api(pendingDraft.forwarded ? "forwarded_send" : "send_draft", {
+    setBusy(button, true, pendingDraft.uncertain ? "Checking..." : "Sending...");
+    setStatus("sendDialogStatus", pendingDraft.uncertain ? "Checking the existing send request..." : "Sending this reply through Gmail...");
+    const result = await api("forwarded_send", {
       id: pendingDraft.id,
       idempotency_key: pendingDraft.idempotency_key,
       preview_version: pendingDraft.preview_version,
@@ -1153,64 +1057,11 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function showSweepOutcome(result) {
-  const summary = Core.summarizeSweepResults(result);
-  if (!summary.scanned) {
-    setGlobalStatus("You're all caught up! Nothing pending.", "success");
-    return;
-  }
-  const sent = `${summary.sent} ${summary.sent === 1 ? "reply" : "replies"} sent`;
-  const review = `${summary.review} ${summary.review === 1 ? "reply needs" : "replies need"} review`;
-  setGlobalStatus(`You're all caught up! ${sent}; ${review}.`, "success");
-}
-
-async function pollPendingSweep() {
-  if (!manualSweepState || sweepPolling) return false;
-  const state = manualSweepState;
-  const button = $("sweepBtn");
-  sweepPolling = true;
-  setBusy(button, true, "Sweeping…");
-  setGlobalStatus("Sweeping your inbox…", "progress");
-  try {
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      if (attempt > 0) await wait(attempt < 10 ? 2000 : 5000);
-      let digestResult;
-      try {
-        digestResult = await api("digest", {}, { timeout: 8000 });
-      } catch (error) {
-        if (error?.code === "unauthorized" || error?.status === 401) throw error;
-        continue;
-      }
-      lastSweepRun = digestResult.last_run || null;
-      if (!Core.sweepRunChanged(lastSweepRun, state)) continue;
-      const succeeded = lastSweepRun?.status === "ok";
-      await forgetManualSweepRequestId();
-      await loadDigest();
-      if (succeeded) setGlobalStatus("You're all caught up! Today is updated with anything that still needs review.", "success");
-      else setGlobalStatus("CaughtUp could not finish that sweep. Tap Sweep now to try again.");
-      return succeeded;
-    }
-    await forgetManualSweepRequestId();
-    setGlobalStatus("The sweep is taking longer than expected. Tap Sweep now to try again.");
-    return false;
-  } catch (error) {
-    await forgetManualSweepRequestId();
-    setGlobalStatus(Core.safeErrorMessage(error));
-    return false;
-  } finally {
-    button.dataset.label = "Sweep now";
-    setBusy(button, false);
-    sweepPolling = false;
-  }
-}
-
 $("sweepBtn").addEventListener("click", async () => {
   const button = $("sweepBtn");
-  setBusy(button, true, "Refreshing…");
-  setGlobalStatus("Refreshing processed email…", "progress");
+  setBusy(button, true, "Refreshing...");
+  setGlobalStatus("Refreshing processed email...", "progress");
   try {
-    await api("sweep", {}, { timeout: 15000 });
-    await forgetManualSweepRequestId();
     await loadDigest();
     setGlobalStatus("Today is refreshed. New forwarded email is processed automatically.", "success");
   } catch (error) {
@@ -1246,7 +1097,7 @@ $("chatForm").addEventListener("submit", async (event) => {
   $("chatInput").value = "";
   addMessage("user", text);
   showTyping();
-  setBusy(button, true, "Sending…");
+  setBusy(button, true, "Sending...");
   setStatus("chatStatus", "");
   try {
     const result = await api("chat", { message: text }, { timeout: 30000 });
@@ -1551,7 +1402,7 @@ async function loadKits(options = {}) {
   kitsLoading = true;
   const quiet = options.quiet === true;
   if (!quiet) {
-    stateCard("kitsStatus", "Loading kits…");
+    stateCard("kitsStatus", "Loading kits...");
     $("kitList").classList.add("hidden");
   }
   try {
@@ -1585,7 +1436,7 @@ function renderKitCard(kit) {
   const identity = create("div");
   identity.append(
     create("div", "kit-label", kit.label || "Untitled kit"),
-    create("div", "kit-file", `${kit.original_filename || "File"}${kit.byte_size ? ` · ${Core.formatBytes(kit.byte_size)}` : ""}`),
+    create("div", "kit-file", `${kit.original_filename || "File"}${kit.byte_size ? ` Â· ${Core.formatBytes(kit.byte_size)}` : ""}`),
   );
   head.appendChild(identity);
   if (kit.is_default) head.appendChild(create("span", "badge draft", "Fallback"));
@@ -1614,7 +1465,7 @@ function renderKitCard(kit) {
   const autoAttachButton = create("button", "ghost", kit.allow_auto_send ? "Disable auto-attach" : "Allow auto-attach");
   autoAttachButton.type = "button";
   autoAttachButton.addEventListener("click", () => {
-    if (!kit.allow_auto_send && !confirm(`Allow “${kit.label || "this kit"}” to be attached to otherwise eligible Auto-send replies?`)) return;
+    if (!kit.allow_auto_send && !confirm(`Allow "${kit.label || "this kit"}" to be attached to otherwise eligible Auto-send replies?`)) return;
     updateKit(kit.id, { allow_auto_send: !kit.allow_auto_send }, autoAttachButton);
   });
   actions.appendChild(autoAttachButton);
@@ -1664,7 +1515,7 @@ $("kitEditForm").addEventListener("submit", async (event) => {
     setStatus("kitEditStatus", "Add a label for this kit.", "error");
     return;
   }
-  setBusy(button, true, "Saving…");
+  setBusy(button, true, "Saving...");
   try {
     await api("media_kit_update", {
       id: pendingKitEdit.id,
@@ -1699,7 +1550,7 @@ $("kitEditForm").addEventListener("submit", async (event) => {
 });
 
 async function updateKit(id, fields, button) {
-  setBusy(button, true, "Saving…");
+  setBusy(button, true, "Saving...");
   try {
     await api("media_kit_update", { id, fields });
     await loadKits();
@@ -1713,8 +1564,8 @@ async function updateKit(id, fields, button) {
 }
 
 async function deleteKit(kit, button) {
-  if (!confirm(`Delete “${kit.label || "this kit"}”? The file will no longer be attached.`)) return;
-  setBusy(button, true, "Deleting…");
+  if (!confirm(`Delete "${kit.label || "this kit"}"? The file will no longer be attached.`)) return;
+  setBusy(button, true, "Deleting...");
   try {
     await api("media_kit_delete", { id: kit.id });
     await loadKits();
@@ -1754,8 +1605,8 @@ $("kitForm").addEventListener("submit", async (event) => {
     return;
   }
   const button = $("uploadKit");
-  setBusy(button, true, "Preparing…");
-  setStatus("kitFormStatus", "Preparing a private upload…");
+  setBusy(button, true, "Preparing...");
+  setStatus("kitFormStatus", "Preparing a private upload...");
   $("kitProgress").value = 0;
   $("kitProgress").classList.remove("hidden");
   try {
@@ -1772,9 +1623,9 @@ $("kitForm").addEventListener("submit", async (event) => {
       allow_auto_send: $("kitAutoAttach").checked,
     });
     if (!prepared.upload_url || !prepared.kit_id) throw new Core.ApiError("The upload could not start. Try again.", 0, "upload_contract");
-    setBusy(button, true, "Uploading…");
+    setBusy(button, true, "Uploading...");
     await uploadFile(prepared.upload_url, file, prepared.upload_headers || {}, prepared.upload_method || "PUT");
-    setBusy(button, true, "Finishing…");
+    setBusy(button, true, "Finishing...");
     await api("media_kit_upload_complete", { id: prepared.kit_id });
     setStatus("kitFormStatus", "Kit uploaded.", "success");
     kitsLoaded = false;
@@ -1829,6 +1680,10 @@ function forwardingButtons(state) {
   $("openGmailForwarding").classList.toggle("hidden", !["pending", "verification_received", "active"].includes(state));
   $("openForwardingConfirmation").classList.toggle("hidden", state !== "verification_received" || !forwardingConfirmationUrl);
   $("activateForwarding").classList.toggle("hidden", state !== "verification_received");
+  $("runForwardingTest").classList.toggle("hidden", state !== "active");
+  $("disableForwarding").classList.toggle("hidden", !["pending", "verification_received", "active"].includes(state));
+  $("runForwardingTest").textContent = currentProfile?.reply_mode === "auto_send" && currentProfile?.auto_send === true
+    ? "Test Auto-send to me" : "Create Review test";
 }
 
 function allowlistedHttpsUrl(value, hostname, pathPrefix) {
@@ -1861,9 +1716,25 @@ function renderForwarding(result = {}) {
     : state === "pending"
     ? "Add this address in Gmail's Forwarding settings. CaughtUp will detect Google's confirmation email automatically."
     : "Connect one forwarding address so new Gmail can be processed automatically.";
+  const latestTest = result.latest_test || null;
+  const testSummary = $("forwardingTestSummary");
+  testSummary.classList.toggle("hidden", !latestTest);
+  if (latestTest?.processed?.delivery_status === "sent") {
+    testSummary.textContent = "Test passed: CaughtUp processed the message and sent one safe reply to your own Gmail account.";
+  } else if (latestTest?.status === "processed") {
+    testSummary.textContent = "Test passed: the Review card is available in Today. Test cards cannot be sent.";
+  } else if (["pending", "sent", "processing"].includes(latestTest?.status)) {
+    testSummary.textContent = "Test in progress. CaughtUp is waiting for the message to finish processing.";
+  } else if (latestTest?.status === "failed") {
+    testSummary.textContent = "The last test failed safely. No unconfirmed reply will be retried automatically.";
+  } else if (latestTest?.status === "expired") {
+    testSummary.textContent = "The last test expired before processing. You can run a new test.";
+  }
   forwardingButtons(state);
   if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
-  if (state === "pending") forwardingPollTimer = setTimeout(() => { void loadForwarding({ quiet: true }); }, 5000);
+  if (state === "pending" || ["pending", "sent", "processing"].includes(latestTest?.status)) {
+    forwardingPollTimer = setTimeout(() => { void loadForwarding({ quiet: true }); }, 5000);
+  }
 }
 
 async function loadForwarding({ quiet = false } = {}) {
@@ -1883,7 +1754,7 @@ async function copyForwardingAddress() {
 
 $("startForwarding").addEventListener("click", async () => {
   const button = $("startForwarding");
-  setBusy(button, true, "Preparing…");
+  setBusy(button, true, "Preparing...");
   try {
     const result = await api("forwarding_setup_start");
     renderForwarding(result);
@@ -1908,7 +1779,7 @@ $("openForwardingConfirmation").addEventListener("click", () => {
 
 $("activateForwarding").addEventListener("click", async () => {
   const button = $("activateForwarding");
-  setBusy(button, true, "Finishing…");
+  setBusy(button, true, "Finishing...");
   try {
     const result = await api("forwarding_setup_activate", { confirm: true });
     renderForwarding(result);
@@ -1918,8 +1789,41 @@ $("activateForwarding").addEventListener("click", async () => {
   } finally { setBusy(button, false); }
 });
 
+$("runForwardingTest").addEventListener("click", async () => {
+  const button = $("runForwardingTest");
+  const autoSendTest = currentProfile?.reply_mode === "auto_send" && currentProfile?.auto_send === true;
+  const explanation = autoSendTest
+    ? "This sends a test message into CaughtUp and permits one safe reply back to your own connected Gmail account. No third party will receive it. Continue?"
+    : "This sends a test message into CaughtUp and creates a non-sendable Review card in Today. Continue?";
+  if (!confirm(explanation)) return;
+  setBusy(button, true, "Starting…");
+  try {
+    await api("forwarding_test_send", {
+      confirm: true, mode: autoSendTest ? "auto_send" : "review", delivery_target: "inbound_alias",
+    }, { timeout: 30000 });
+    setStatus("forwardingStatus", "Test started. This card will update when processing finishes.", "success");
+    await loadForwarding({ quiet: true });
+  } catch (error) {
+    setStatus("forwardingStatus", Core.safeErrorMessage(error), "error");
+  } finally { setBusy(button, false); }
+});
+
+$("disableForwarding").addEventListener("click", async () => {
+  if (!confirm("Disconnect CaughtUp intake? CaughtUp will discard future deliveries, but you must also remove the forwarding rule in Gmail settings.")) return;
+  const button = $("disableForwarding");
+  setBusy(button, true, "Disconnecting…");
+  try {
+    const result = await api("forwarding_setup_disable", { confirm: true });
+    renderForwarding({ ...result, gmail_settings_url: forwardingGmailSettingsUrl });
+    setStatus("forwardingStatus", "CaughtUp intake is disabled. Remove or disable the forwarding destination in the Gmail settings page that opened.", "success");
+    await chrome.tabs.create({ url: forwardingGmailSettingsUrl });
+  } catch (error) {
+    setStatus("forwardingStatus", Core.safeErrorMessage(error), "error");
+  } finally { setBusy(button, false); }
+});
+
 async function loadProfile() {
-  stateCard("settingsStatus", "Loading settings…");
+  stateCard("settingsStatus", "Loading settings...");
   $("settingsForm").classList.add("hidden");
   try {
     const result = await api("profile_get");
@@ -1975,13 +1879,13 @@ function selectDefaultAutoSendCategories() {
 $("modeAuto").addEventListener("change", () => {
   if (!$("modeAuto").checked || !currentProfile) return;
   selectDefaultAutoSendCategories();
-  setStatus("modeSetupStatus", "Saving your Auto-send choices before confirmationâ€¦");
+  setStatus("modeSetupStatus", "Saving your Auto-send choices before confirmation...");
   $("settingsForm").requestSubmit();
 });
 
 $("modeReview").addEventListener("change", () => {
   if (!$("modeReview").checked || !currentProfile || currentProfile.reply_mode !== "auto_send") return;
-  setStatus("modeSetupStatus", "Turning Auto-send offâ€¦");
+  setStatus("modeSetupStatus", "Turning Auto-send off...");
   $("settingsForm").requestSubmit();
 });
 
@@ -1999,7 +1903,7 @@ $("settingsForm").addEventListener("submit", async (event) => {
   }
   const policyChanged = currentProfile.reply_mode === "auto_send" && Core.autoSendPolicyChanged(currentProfile, fields);
   const standingRulesRequireReview = Boolean(fields.custom_rules.trim());
-  setBusy(button, true, "Saving…");
+  setBusy(button, true, "Saving...");
   setStatus("saveMsg", "");
   try {
     if (currentProfile.reply_mode === "auto_send" && (desiredMode === "draft_only" || policyChanged || standingRulesRequireReview)) {
@@ -2031,7 +1935,7 @@ $("settingsForm").addEventListener("submit", async (event) => {
 
 $("confirmAutoSend").addEventListener("click", async () => {
   const button = $("confirmAutoSend");
-  setBusy(button, true, "Turning on…");
+  setBusy(button, true, "Turning on...");
   try {
     const result = await api("auto_send_confirm", { challenge: autoSendChallenge, confirmed: true });
     currentProfile = Core.normalizeProfile(result.profile || { ...currentProfile, reply_mode: "auto_send" });
@@ -2057,7 +1961,7 @@ $("cancelAutoSend").addEventListener("click", () => {
 $("resetLearning").addEventListener("click", async () => {
   if (!confirm("Reset the writing style CaughtUp learned from your edits? Standing rules will stay.")) return;
   const button = $("resetLearning");
-  setBusy(button, true, "Resetting…");
+  setBusy(button, true, "Resetting...");
   setStatus("learningStatus", "");
   try {
     const result = await api("learning_reset", { kind: "style_examples" });
@@ -2089,7 +1993,6 @@ function setupDialogSafety(dialog, cancelButtonId) {
 }
 
 setupDialogSafety($("sendDialog"), "cancelSend");
-setupDialogSafety($("opportunityDraftDialog"), "cancelOpportunitySend");
 setupDialogSafety($("autoSendDialog"), "cancelAutoSend");
 buildRequiredQuestionControls();
 buildAvailabilityRows();
@@ -2131,15 +2034,13 @@ function hydrateViewCache() {
       showSetup(true);
       return;
     }
-    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, MANUAL_SWEEP_ID_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE, VIEW_CACHE_STORAGE]);
+    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE, VIEW_CACHE_STORAGE]);
     const storedSession = local.caughtup_session || null;
     session = Core.normalizeAuthSession(local.caughtup_session);
     viewCache = local[VIEW_CACHE_STORAGE] && typeof local[VIEW_CACHE_STORAGE] === "object" ? local[VIEW_CACHE_STORAGE] : {};
     manualSendKeys = local[MANUAL_SEND_KEYS_STORAGE] && typeof local[MANUAL_SEND_KEYS_STORAGE] === "object"
       ? local[MANUAL_SEND_KEYS_STORAGE]
       : {};
-    manualSweepState = null;
-    if (local[MANUAL_SWEEP_ID_STORAGE]) await chrome.storage.local.remove(MANUAL_SWEEP_ID_STORAGE);
     gmailReconnectRequired = local[GMAIL_RECONNECT_STORAGE] === true;
     pendingBookingRequest = local[BOOKING_REQUEST_STORAGE] && typeof local[BOOKING_REQUEST_STORAGE] === "object"
       ? local[BOOKING_REQUEST_STORAGE]
@@ -2171,7 +2072,6 @@ function hydrateViewCache() {
     void loadKits({ quiet: hydrated.kits });
     void loadCalendar({ quiet: hydrated.calendar });
     await digestRefresh;
-    if (manualSweepState) void pollPendingSweep();
   } catch (error) {
     if (session && !Core.isTerminalSessionError(error)) showSetup(true, Core.safeErrorMessage(error), "retry");
     else showSetup(true, Core.safeErrorMessage(error));

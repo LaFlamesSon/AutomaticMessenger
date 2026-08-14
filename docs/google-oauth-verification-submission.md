@@ -24,10 +24,10 @@ explicitly enabled an eligible auto-send policy. CaughtUp does not use Google
 OAuth to read the inbox, create Gmail drafts, change labels, delete messages, or
 change Gmail settings.
 
-Inbound brand email will arrive through CaughtUp's separate forwarding and
-processing pipeline. Until that pipeline is configured for a user, inbox sweep
-and Gmail-draft actions return `inbound_forwarding_required` and do not use any
-legacy Gmail token.
+Inbound brand email arrives through CaughtUp's separate forwarding and
+processing pipeline. Until forwarding is configured and activated, CaughtUp
+shows setup guidance and has no inbox content to process. Reviewable replies
+are stored in CaughtUp, not Gmail Drafts, and no legacy Gmail token is used.
 
 ## Demo video checklist
 
@@ -36,10 +36,10 @@ Record a real end-to-end walkthrough in English using a dedicated test account:
 1. Start signed out and open the production extension setup flow.
 2. Show Google identity consent and the resulting CaughtUp session.
 3. Show the separate Gmail consent screen listing only permission to send email.
-4. Return to CaughtUp and show Gmail sending as connected.
-5. Demonstrate an explicitly approved send from the verified Gmail address once
-   the forwarding-based reply workflow is production-ready.
-6. Show that CaughtUp does not request inbox reading, draft, label, or settings
+4. Return to CaughtUp, complete the forwarding-address confirmation and activation flow, and run the controlled test.
+5. Demonstrate a real external message arriving through Gmail forwarding and an explicitly approved reply from the verified Gmail address.
+6. Show Auto-send disclosure, a negotiation remaining Review-only, forwarding disconnect instructions, Google revocation instructions, and the deletion-request path.
+7. Show that CaughtUp does not request inbox reading, draft, label, or settings
    permissions.
 
 Do not resubmit the previous restricted-scope verification materials. First

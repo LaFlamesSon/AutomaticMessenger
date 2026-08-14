@@ -188,51 +188,6 @@ test("invalid persisted manual-send keys are replaced safely", () => {
   assert.equal(Core.findManualSendKey({ "draft-123": "bad key with spaces" }, "draft-123"), null);
 });
 
-test("manual sweep request id remains stable across timeout retries and popup reloads", () => {
-  let generated = 0;
-  const first = Core.ensureSweepRequestId(null, () => {
-    generated += 1;
-    return "11111111-2222-3333-4444-555555555555";
-  });
-  const retry = Core.ensureSweepRequestId(first.requestId, () => {
-    generated += 1;
-    return "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-  });
-  assert.equal(first.requestId, "manual-sweep:11111111-2222-3333-4444-555555555555");
-  assert.equal(retry.requestId, first.requestId);
-  assert.equal(retry.created, false);
-  assert.equal(generated, 1);
-});
-
-test("pending sweep state recognizes a newly completed run and rejects legacy strings", () => {
-  const state = {
-    request_id: "manual-sweep:11111111-2222-3333-4444-555555555555",
-    started_at: "2026-08-02T02:20:00.000Z",
-    baseline_finished_at: "2026-08-02T02:10:00.000Z",
-  };
-  assert.deepEqual(Core.normalizeSweepState(state), state);
-  assert.equal(Core.normalizeSweepState(state.request_id), null);
-  assert.equal(Core.sweepRunChanged({ finished_at: state.baseline_finished_at, status: "ok" }, state), false);
-  assert.equal(Core.sweepRunChanged({ finished_at: "2026-08-02T02:21:00.000Z", status: "ok" }, state), true);
-  assert.equal(Core.sweepRunChanged({ finished_at: null }, state), false);
-  assert.equal(Core.sweepRunChanged(
-    { finished_at: "2026-08-02T02:19:00.000Z", status: "ok" },
-    { ...state, baseline_finished_at: null },
-  ), false);
-  assert.equal(Core.sweepRunChanged(
-    { finished_at: "2026-08-02T02:20:30.000Z", status: "ok" },
-    { ...state, baseline_finished_at: null },
-  ), true);
-});
-
-test("sweep summaries distinguish sent replies from Review drafts", () => {
-  assert.deepEqual(Core.summarizeSweepResults({ results: [
-    { scanned: 5, drafted: 4, auto_sent: 3, review_drafts: 1 },
-    { scanned: 2, drafted: 1, auto_sent: 0 },
-  ] }), { scanned: 7, sent: 3, review: 2 });
-  assert.deepEqual(Core.summarizeSweepResults(null), { scanned: 0, sent: 0, review: 0 });
-});
-
 test("unsafe provider details are not used for unknown errors", () => {
   assert.equal(Core.safeErrorMessage(new Error("secret provider response")), "CaughtUp couldn't complete that. Try again.");
   assert.match(Core.safeErrorMessage(new Core.ApiError("", 401, "unauthorized")), /session expired/i);

@@ -6,6 +6,15 @@ Starting commit: `df5c0fe84599c7cbfb7c9e7bf2d7228f816c68ee`
 
 Read [CAUGHTUP-WORK-COMPLETED-20260814.md](./CAUGHTUP-WORK-COMPLETED-20260814.md) before continuing. It contains the deployed versions, acceptance evidence, commits, safety constraints, and migration-history warning.
 
+## Continuation status
+
+The local send-only cleanup candidate now covers migration-history alignment,
+the guarded sweep-retirement migration, removal of active Gmail Draft/read
+paths, forwarding onboarding/test/disconnect UI, and public documentation. Local
+contract and type checks are green. Production deployment, OAuth secret
+rotation, controlled live acceptance, Google Cloud alignment, and reviewer
+submission remain open and must not be inferred from the local checks.
+
 ## Start-of-session warnings
 
 1. Auto-send is currently enabled in production for Urgent and Action needed. Do not run uncontrolled live email fixtures. Preserve the user's setting unless the user explicitly asks to change it.

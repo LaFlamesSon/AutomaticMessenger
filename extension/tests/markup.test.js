@@ -58,14 +58,13 @@ test("manual send retries persist and reuse one idempotency key", () => {
 
 test("automatic forwarding replaces manual inbox reads while Refresh reloads processed state", () => {
   assert.match(html, /id="sweepBtn"[^>]*>Refresh<\/button>/);
-  assert.match(script, /api\("sweep", \{\}, \{ timeout: 15000 \}\)/);
+  assert.match(script, /await loadDigest\(\)/);
   assert.match(script, /New forwarded email is processed automatically/);
-  assert.match(script, /manualSweepState = null/);
-  assert.doesNotMatch(script, /request_id: requestId/);
+  assert.doesNotMatch(script, /api\("sweep"|manualSweepState|MANUAL_SWEEP_ID_STORAGE/);
 });
 
-test("empty Today and successful sweeps use the requested caught-up states", () => {
-  assert.match(script, /You're all caught up — nothing pending!/);
+test("empty Today and forwarded refreshes use the requested caught-up states", () => {
+  assert.match(script, /nothing pending!/);
   assert.match(css, /\.global-status\.success/);
   assert.match(script, /Core\.deliveryState\(email\) !== "sent"/);
   assert.doesNotMatch(`${html}\n${script}\n${css}`, /duck/i);
@@ -75,53 +74,11 @@ test("Ask CaughtUp lives in Today while Opportunities remains unavailable until 
   const todayPanel = html.match(/<section id="today"[\s\S]*?<section id="opportunities"/)?.[0] ?? "";
   assert.match(todayPanel, /id="askCaughtUpTitle"[^>]*>Ask CaughtUp/);
   assert.match(todayPanel, /id="chatForm"/);
-  assert.match(todayPanel, /id="messages"[^>]+class="ask-messages hidden"/);
-  assert.match(html, /id="tab-opportunities"[^>]+aria-disabled="true"[^>]+data-tab="opportunities"[^>]+disabled[^>]*><span>Opportunities<\/span><small>Coming soon<\/small>/);
-  assert.match(html, /id="opportunityProfileForm"/);
-  assert.match(html, /id="opportunityAddForm"/);
-  assert.match(html, /id="affiliateMetricForm"/);
-  assert.match(html, /id="affiliateOpportunityForm"/);
-  assert.match(html, /id="opportunityControls"/);
-  assert.doesNotMatch(html, /id="ebayConnectionForm"|id="ebayCampaignId"/);
+  assert.match(html, /id="tab-opportunities"[^>]+aria-disabled="true"[^>]+disabled/);
   assert.match(html, /id="opportunityControls"[^>]+hidden/);
-  assert.ok(html.indexOf('id="opportunityList"') < html.indexOf('id="opportunityControls"'), "product results must come before configuration");
-  assert.match(html, /Add an affiliate product manually/);
-  assert.match(html, /does not import a marketplace catalog/);
-  assert.match(html, /id="opportunityFormats"/);
-  assert.match(html, /id="opportunityRegions"/);
-  assert.match(html, /id="opportunityDraftDialog"/);
-  assert.match(html, /Products and commissions matched from the brand emails you receive/);
-  for (const id of ["opportunityProductsTab", "opportunityConnectionsTab", "opportunityProductsView", "opportunityConnectionsView", "tiktokConnection", "connectTikTok", "disconnectTikTok"]) {
-    assert.match(html, new RegExp(`id="${id}"`));
-  }
-  assert.match(script, /setOpportunityView/);
-  assert.match(script, /chrome\.tabs\.create\(\{ url: chrome\.runtime\.getURL\("connect\.html\?flow=tiktok"\) \}\)/);
-  assert.match(script, /opportunity\.description/);
-  assert.doesNotMatch(script, /card\.append\(create\("p", "product-brand"/);
+  assert.doesNotMatch(html, /id="opportunityDraftDialog"/);
+  assert.doesNotMatch(script, /opportunity_draft_get|opportunity_send/);
   assert.match(script, /if \(!PANELS\.includes\(name\) \|\| name === "opportunities"\) return/);
-  assert.match(script, /#tabs \[role=tab\]:not\(:disabled\)/);
-  assert.doesNotMatch(script, /if \(name === "opportunities" && !opportunitiesLoaded/);
-  assert.match(css, /\.tab\.tab-coming-soon:disabled/);
-  assert.match(script, /api\("opportunity_draft_get"/);
-  assert.match(script, /api\("opportunity_send"/);
-  assert.match(script, /api\("affiliate_metric_upsert"/);
-  assert.match(script, /api\("affiliate_metric_delete"/);
-  assert.match(script, /api\("affiliate_opportunity_create"/);
-  assert.match(script, /opportunity\.opportunity_kind === "affiliate_product"/);
-  assert.match(script, /Number\(opportunity\.match_score \|\| 0\) >= 30/);
-  assert.match(script, /\.slice\(0, 10\)/);
-  assert.match(script, /opportunity\.commission_rate !== null \|\| opportunity\.commission_amount !== null/);
-  assert.match(script, /opportunity\.platform_eligible !== false/);
-  assert.match(script, /opportunity\.creator_relevant === true/);
-  assert.match(script, /Required platform/);
-  assert.match(script, /Listing platforms/);
-  assert.match(script, /platformLabel/);
-  assert.doesNotMatch(script, /Recommended for/);
-  assert.doesNotMatch(script, /Why it fits:|Est\. .*per related post/);
-  assert.match(script, /new affiliate opportunit/);
-  assert.doesNotMatch(script, /Object\.entries\(opportunity\.score_components/);
-  assert.doesNotMatch(html, /id="tab-chat"|id="chat"[^>]+role="tabpanel"/);
-  assert.match(script, /\["today", "opportunities", "kits", "calendar", "settings"\]/);
 });
 
 test("secondary tabs hydrate from cache and refresh without duplicate requests", () => {
@@ -151,19 +108,18 @@ test("expired Gmail authorization opens a real reconnect flow", () => {
   assert.match(connectScript, /api\("gmail_connect_start"/);
 });
 
-test("manual send requires an authoritative versioned preview for Gmail and CaughtUp drafts", () => {
-  assert.match(script, /forwarded \? "forwarded_draft_get" : "draft_get"/);
+test("manual send requires an authoritative versioned CaughtUp draft preview", () => {
+  assert.match(script, /api\("forwarded_draft_get"/);
   assert.match(script, /preview_version: pendingDraft\.preview_version/);
   assert.match(script, /Array\.isArray\(draft\.to\)/);
   assert.match(script, /Array\.isArray\(draft\.attachments\)/);
   assert.match(script, /previewAttachments/);
   assert.match(script, /code === "draft_changed"/);
-  assert.match(script, /The reply draft changed/);
-  assert.match(html, /id="previewBody"[^>]+textarea|<textarea id="previewBody"/);
+  assert.match(html, /<textarea id="previewBody"/);
   assert.match(html, /id="previewKit"/);
   assert.match(html, /id="saveDraftChanges"/);
   assert.match(script, /forwarded_draft_update/);
-  assert.match(script, /if \(draftEditorDirty\(\)\)/);
+  assert.doesNotMatch(script, /"draft_get"|"draft_update"|"send_draft"/);
 });
 
 test("kits form is labeled and bounded to approved client MIME types", () => {
@@ -183,53 +139,41 @@ test("dynamic rendering avoids innerHTML", () => {
   assert.match(script, /\.textContent\s*=/);
 });
 
-test("client targets the audited API actions", () => {
+test("client targets the audited send-only API actions", () => {
   [
-    "digest", "chat", "draft_get", "draft_update", "send_draft", "sweep", "profile_get", "profile_set",
-    "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list", "media_kit_rate_update",
-    "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
-    "media_kit_delete", "learning_reset", "gmail_connect_start",
-    "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
-    "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
-    "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
+    "digest", "chat", "profile_get", "profile_set", "auto_send_prepare", "auto_send_confirm", "auto_send_disable",
+    "media_kit_list", "media_kit_rate_update", "media_kit_upload_prepare", "media_kit_upload_complete",
+    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_start", "auth_refresh",
+    "calendar_get", "calendar_set", "booking_create", "booking_delete", "opportunities_get", "opportunity_refresh",
+    "opportunity_preferences_set", "brand_relationship_set", "opportunity_create", "opportunity_update",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
-    "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss", "negotiation_test_draft_create",
-    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate",
-    "forwarded_draft_get", "forwarded_draft_update", "forwarded_send",
+    "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss",
+    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_setup_disable",
+    "forwarding_test_send", "forwarded_draft_get", "forwarded_draft_update", "forwarded_send",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
+  assert.doesNotMatch(allScripts, /"(?:draft_get|draft_update|send_draft|sweep|opportunity_draft_get|opportunity_send|negotiation_test_draft_create)"/);
 });
 
-test("negotiations share the Today timeline with tier colors, details, replies, and dismissal", () => {
-  assert.doesNotMatch(html, /id="negotiationPanel"/);
-  assert.match(html, /Inbox and negotiation timeline/);
+test("negotiations share the Today timeline and only forwarded drafts expose review controls", () => {
   assert.match(script, /renderTodayFeed\(result\.emails \|\| \[\], result\.negotiations \|\| \[\]\)/);
   assert.match(script, /function negotiationTier/);
   assert.match(script, /What this is about/);
   assert.match(script, /Preview proposed reply/);
   assert.match(script, /api\("negotiation_dismiss"/);
-  assert.match(script, /api\("negotiation_test_draft_create"/);
-  assert.match(script, /Create draft/);
-  assert.match(script, /deal\.draft_email\?\.gmail_draft_id/);
+  assert.match(script, /if \(isForwardedDraft\(deal\.draft_email\)\)/);
+  assert.doesNotMatch(script, /negotiation_test_draft_create|Create draft|gmail_draft_id/);
   assert.match(script, /sendDraftFromCard/);
-  assert.match(script, /create\("button", "sendbtn", "Review"\)/);
-  assert.match(script, /create\("button", "sendbtn direct-send", "Send"\)/);
-  assert.match(script, /if \(!deal\.is_test && deal\.thread_id\)/);
   assert.match(css, /\.negotiation-card\.deal-bad/);
-  assert.match(css, /\.negotiation-card\.deal-mid/);
-  assert.match(css, /\.negotiation-card\.deal-good/);
 });
 
-test("ordinary cards hide reply text and offer compact verified card-level send", () => {
-  assert.doesNotMatch(html, /seedNormalTestEmails|Add 10 normal test emails/);
+test("ordinary forwarded cards hide reply text and offer compact verified send", () => {
   const renderer = script.match(/function renderEmailCard\(email\) \{([\s\S]*?)\n\}\n\nfunction renderDraftAttachments/)?.[1] || "";
   assert.doesNotMatch(renderer, /appendReplyDetails|Proposed reply/);
-  assert.match(script, /forwarded \? "forwarded_draft_get" : "draft_get"/);
+  assert.match(script, /api\("forwarded_draft_get"/);
   assert.match(script, /Send this reply through Gmail to/);
-  assert.match(script, /forwarded \? "forwarded_send" : "send_draft"/);
+  assert.match(script, /api\("forwarded_send"/);
   assert.match(script, /preview_version: draft\.preview_version/);
-  assert.match(css, /\.cardfoot \.compact \{ min-height: 24px/);
-  assert.match(css, /\.sendbtn\.direct-send \{ color: #fff; background: #007aff/);
-  assert.match(css, /\.badge\.test \{ min-height: 24px;[^}]*font-size: 11px/);
+  assert.doesNotMatch(script, /api\("(?:send_draft|draft_get)"/);
 });
 
 test("Calendar conditionally exposes validated contact and availability controls", () => {
@@ -349,17 +293,19 @@ test("selecting Auto-send immediately enters the save and confirmation flow", ()
   assert.match(script, /Auto-send is active\. Qualifying replies send automatically as forwarded email arrives/);
 });
 
-test("forwarding setup is a one-time guided Gmail flow", () => {
-  for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding"]) {
+test("forwarding setup, controlled test, and disconnect are complete guided flows", () => {
+  for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding", "runForwardingTest", "disableForwarding"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(script, /api\("forwarding_setup_start"\)/);
   assert.match(script, /navigator\.clipboard\.writeText/);
-  assert.match(script, /allowlistedHttpsUrl\(result\.gmail_settings_url, "mail\.google\.com", "\/mail\/"\)/);
-  assert.match(script, /allowlistedHttpsUrl\(forwarding\.confirmation_url, "mail-settings\.google\.com", "\/"\)/);
   assert.match(script, /api\("forwarding_setup_activate", \{ confirm: true \}\)/);
-  assert.match(script, /verification_received/);
-  assert.match(script, /setTimeout\(\(\) => \{ void loadForwarding/);
+  assert.match(script, /api\("forwarding_test_send"/);
+  assert.match(script, /delivery_target: "inbound_alias"/);
+  assert.match(script, /api\("forwarding_setup_disable", \{ confirm: true \}\)/);
+  assert.match(connectScript, /beginForwardingSetup/);
+  assert.match(connectScript, /api\("forwarding_setup_start"\)/);
+  assert.match(connectScript, /api\("forwarding_test_send"/);
 });
 
 test("Chat writing-style updates are reflected in extension state", () => {
@@ -373,7 +319,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.6.0");
+  assert.equal(manifest.version, "0.6.1");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

@@ -9,6 +9,11 @@ const flow = new URL(location.href).searchParams.get("flow") || "google";
 
 let session = null;
 let running = false;
+let connectedProfile = null;
+let forwardingState = null;
+let forwardingConfirmationUrl = null;
+let forwardingGmailSettingsUrl = "https://mail.google.com/mail/#settings/fwdandpop";
+let forwardingPollTimer = null;
 
 function setProgress(percent, message, kind = "") {
   $("progress").style.width = `${percent}%`;
@@ -128,6 +133,78 @@ async function signInWithGoogle() {
   return redirectUrl;
 }
 
+function allowlistedHttpsUrl(value, hostname, pathPrefix) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && url.hostname === hostname && url.pathname.startsWith(pathPrefix)
+      ? url.toString() : null;
+  } catch { return null; }
+}
+
+function forwardingTestMessage(test) {
+  if (!test) return "";
+  if (test.processed?.delivery_status === "sent") return "Test passed: one safe reply was sent to your own Gmail account.";
+  if (test.status === "processed") return "Test passed: a non-sendable Review card is ready in Today.";
+  if (["pending", "sent", "processing"].includes(test.status)) return "Test in progress. Waiting for CaughtUp to finish processing.";
+  if (test.status === "failed") return "The test failed safely. No unconfirmed reply will be retried automatically.";
+  if (test.status === "expired") return "The test expired before processing. You can run another test.";
+  return "";
+}
+
+function renderForwardingSetup(result = {}) {
+  const forwarding = result.forwarding || { status: "not_started" };
+  forwardingState = forwarding;
+  forwardingConfirmationUrl = allowlistedHttpsUrl(forwarding.confirmation_url, "mail-settings.google.com", "/");
+  forwardingGmailSettingsUrl = allowlistedHttpsUrl(result.gmail_settings_url, "mail.google.com", "/mail/") || forwardingGmailSettingsUrl;
+  const state = forwarding.status || "not_started";
+  const active = state === "active";
+  $("forwardingSetup").classList.remove("hidden");
+  $("forwardingAddressRow").classList.toggle("hidden", !forwarding.alias_address);
+  $("forwardingAddress").textContent = forwarding.alias_address || "";
+  $("forwardingCode").classList.toggle("hidden", !forwarding.verification_code);
+  $("forwardingCode").textContent = forwarding.verification_code ? `Google confirmation code: ${forwarding.verification_code}` : "";
+  $("confirmForwardingAddress").classList.toggle("hidden", state !== "verification_received" || !forwardingConfirmationUrl);
+  $("activateForwarding").classList.toggle("hidden", state !== "verification_received");
+  $("runForwardingTest").classList.toggle("hidden", !active);
+  $("runForwardingTest").textContent = connectedProfile?.reply_mode === "auto_send" && connectedProfile?.auto_send === true
+    ? "Test Auto-send to me" : "Create Review test";
+  $("forwardingInstructions").textContent = active
+    ? "Automatic intake is active. Run the controlled test, then close this page."
+    : state === "verification_received"
+    ? "Confirm Google's request, enable forwarding in Gmail, then finish here."
+    : "Paste this private address into Gmail's Forwarding settings. CaughtUp will detect Google's confirmation message.";
+  $("forwardingTestStatus").textContent = forwardingTestMessage(result.latest_test);
+  if (active) {
+    setProgress(100, "Gmail sending and forwarded intake are connected.", "success");
+    $("statusMark").textContent = "OK";
+    $("title").textContent = "You're connected";
+    $("message").textContent = "CaughtUp uses Gmail permission only to send replies. Incoming mail reaches CaughtUp through forwarding.";
+    $("close").classList.remove("hidden");
+  } else {
+    setProgress(state === "verification_received" ? 96 : 92, "Finish the forwarding steps below.");
+    $("title").textContent = "Finish Gmail forwarding";
+    $("message").textContent = "Gmail sending is connected. One forwarding step remains before CaughtUp can process new mail.";
+  }
+  if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
+  if (state === "pending" || ["pending", "sent", "processing"].includes(result.latest_test?.status)) {
+    forwardingPollTimer = setTimeout(async () => {
+      try { renderForwardingSetup(await api("forwarding_setup_get")); } catch { /* keep current recoverable setup state */ }
+    }, 5000);
+  }
+}
+
+async function beginForwardingSetup(profile) {
+  connectedProfile = profile?.profile || profile || {};
+  let result = await api("forwarding_setup_get");
+  if (["not_started", "disabled"].includes(result.forwarding?.status || "not_started")) {
+    result = await api("forwarding_setup_start");
+    if (result.forwarding?.alias_address) {
+      try { await navigator.clipboard.writeText(result.forwarding.alias_address); } catch { /* Copy remains available */ }
+    }
+  }
+  renderForwardingSetup(result);
+}
+
 async function connectGoogle() {
   if (running) return;
   running = true;
@@ -135,7 +212,7 @@ async function connectGoogle() {
   $("close").classList.add("hidden");
   $("title").textContent = "Connecting CaughtUp";
   $("message").textContent = "Keep this page open while Google sign-in and Gmail sending access finish.";
-  setProgress(10, "Checking your CaughtUp session…");
+  setProgress(10, "Checking your CaughtUp session...");
   try {
     const stored = await chrome.storage.local.get(["caughtup_session", GMAIL_RECONNECT_STORAGE]);
     session = Core.normalizeAuthSession(stored.caughtup_session);
@@ -153,7 +230,7 @@ async function connectGoogle() {
     let redirectUrl = chrome.identity.getRedirectURL("caughtup");
     if (!session) {
       redirectUrl = await signInWithGoogle();
-      setProgress(48, "Google sign-in saved. Verifying your CaughtUp account…");
+      setProgress(48, "Google sign-in saved. Verifying your CaughtUp account...");
       profile = await api("profile_get");
     }
 
@@ -166,7 +243,7 @@ async function connectGoogle() {
       if (gmailAuth.error || gmailAuth.caughtup_gmail !== "connected") {
         throw new Core.ApiError("Gmail connection did not finish. Try again.", 0, "gmail_oauth_error");
       }
-      setProgress(88, "Confirming Gmail sending access…");
+      setProgress(88, "Confirming Gmail sending access...");
       profile = await api("profile_get");
       if (profile.gmail_connected !== true) {
         throw new Core.ApiError("Gmail connection is still being confirmed. Try again.", 0, "gmail_not_connected");
@@ -174,11 +251,7 @@ async function connectGoogle() {
       await rememberReconnect(false);
     }
 
-    setProgress(100, "Gmail sending is connected.", "success");
-    $("statusMark").textContent = "✓";
-    $("title").textContent = "You’re connected";
-    $("message").textContent = "Close this page, then open CaughtUp. Your session is saved; inbound email forwarding is the next setup step.";
-    $("close").classList.remove("hidden");
+    await beginForwardingSetup(profile);
   } catch (error) {
     setProgress(100, Core.safeErrorMessage(error), "error");
     $("statusMark").textContent = "!";
@@ -197,13 +270,13 @@ async function connectTikTok() {
   $("close").classList.add("hidden");
   $("title").textContent = "Connecting TikTok Shop";
   $("message").textContent = "Keep this page open while TikTok verifies your creator account.";
-  setProgress(12, "Checking your CaughtUp sessionâ€¦");
+  setProgress(12, "Checking your CaughtUp session...");
   try {
     const stored = await chrome.storage.local.get("caughtup_session");
     session = stored.caughtup_session || null;
     if (!session) throw new Core.ApiError("Open CaughtUp and connect Google first.", 401, "unauthorized");
     await api("profile_get");
-    setProgress(35, "Opening TikTok creator authorizationâ€¦");
+    setProgress(35, "Opening TikTok creator authorization...");
     const redirectUrl = chrome.identity.getRedirectURL("caughtup_tiktok");
     const start = await api("tiktok_connect_start", { redirect_url: redirectUrl });
     if (!start.authorization_url) throw new Core.ApiError("TikTok connection is not available yet.", 0, "missing_tiktok_url");
@@ -211,12 +284,12 @@ async function connectTikTok() {
     if (callback.error || callback.caughtup_tiktok !== "connected") {
       throw new Core.ApiError("TikTok creator authorization did not finish.", 0, callback.error || "tiktok_oauth_error");
     }
-    setProgress(82, "Finding relevant TikTok Shop productsâ€¦");
+    setProgress(82, "Finding relevant TikTok Shop products...");
     const result = await api("opportunity_refresh");
     const connection = (result.affiliate_connections || []).find((item) => item.provider === "tiktok_shop");
     if (connection?.status !== "connected") throw new Core.ApiError("TikTok access still needs attention. Try connecting again.", 0, "tiktok_not_connected");
     setProgress(100, "TikTok Shop is connected.", "success");
-    $("statusMark").textContent = "âœ“";
+    $("statusMark").textContent = "OK";
     $("title").textContent = "TikTok is connected";
     $("message").textContent = "Close this page and open Opportunities to see product matches.";
     $("close").classList.remove("hidden");
@@ -236,4 +309,34 @@ function connect() {
 
 $("retry").addEventListener("click", connect);
 $("close").addEventListener("click", () => window.close());
+$("copyForwarding").addEventListener("click", async () => {
+  if (!forwardingState?.alias_address) return;
+  await navigator.clipboard.writeText(forwardingState.alias_address);
+  $("forwardingTestStatus").textContent = "Forwarding address copied.";
+});
+$("openGmailForwarding").addEventListener("click", () => chrome.tabs.create({ url: forwardingGmailSettingsUrl }));
+$("confirmForwardingAddress").addEventListener("click", () => {
+  if (forwardingConfirmationUrl) chrome.tabs.create({ url: forwardingConfirmationUrl });
+});
+$("activateForwarding").addEventListener("click", async () => {
+  try {
+    await api("forwarding_setup_activate", { confirm: true });
+    renderForwardingSetup(await api("forwarding_setup_get"));
+  } catch (error) { $("forwardingTestStatus").textContent = Core.safeErrorMessage(error); }
+});
+$("runForwardingTest").addEventListener("click", async () => {
+  const autoSend = connectedProfile?.reply_mode === "auto_send" && connectedProfile?.auto_send === true;
+  const explanation = autoSend
+    ? "This sends a test message into CaughtUp and permits one safe reply back to your own Gmail account. No third party will receive it. Continue?"
+    : "This sends a test message into CaughtUp and creates a non-sendable Review card. Continue?";
+  if (!confirm(explanation)) return;
+  const button = $("runForwardingTest");
+  button.disabled = true;
+  $("forwardingTestStatus").textContent = "Starting the controlled test…";
+  try {
+    await api("forwarding_test_send", { confirm: true, mode: autoSend ? "auto_send" : "review", delivery_target: "inbound_alias" });
+    renderForwardingSetup(await api("forwarding_setup_get"));
+  } catch (error) { $("forwardingTestStatus").textContent = Core.safeErrorMessage(error); }
+  finally { button.disabled = false; }
+});
 connect();

@@ -333,49 +333,6 @@
     return { key, keys: { ...current, [id]: key }, created: true };
   }
 
-  function ensureSweepRequestId(value, uuidFactory) {
-    const existing = typeof value === "string" ? value.trim() : "";
-    if (/^manual-sweep:[a-zA-Z0-9-]{8,120}$/.test(existing)) {
-      return { requestId: existing, created: false };
-    }
-    const rawUuid = String(uuidFactory()).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 120);
-    if (rawUuid.length < 8) throw new Error("uuidFactory returned an invalid value");
-    return { requestId: `manual-sweep:${rawUuid}`, created: true };
-  }
-
-  function normalizeSweepState(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const requestId = typeof value.request_id === "string" ? value.request_id.trim() : "";
-    const startedAt = typeof value.started_at === "string" ? value.started_at : "";
-    const baseline = value.baseline_finished_at === null ? null : String(value.baseline_finished_at || "");
-    if (!/^manual-sweep:[a-zA-Z0-9-]{8,120}$/.test(requestId) || Number.isNaN(Date.parse(startedAt))) return null;
-    if (baseline !== null && Number.isNaN(Date.parse(baseline))) return null;
-    return { request_id: requestId, started_at: startedAt, baseline_finished_at: baseline };
-  }
-
-  function sweepRunChanged(lastRun, sweepState) {
-    const state = normalizeSweepState(sweepState);
-    const finishedAt = typeof lastRun?.finished_at === "string" ? lastRun.finished_at : "";
-    if (!state || Number.isNaN(Date.parse(finishedAt))) return false;
-    if (state.baseline_finished_at !== null) return finishedAt !== state.baseline_finished_at;
-    return Date.parse(finishedAt) >= Date.parse(state.started_at) - 5000;
-  }
-
-  function summarizeSweepResults(payload) {
-    const rows = Array.isArray(payload?.results) ? payload.results : [];
-    const number = (value) => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
-    return rows.reduce((summary, row) => {
-      const sent = number(row?.auto_sent);
-      const drafted = number(row?.drafted);
-      summary.scanned += number(row?.scanned);
-      summary.sent += sent;
-      summary.review += row?.review_drafts === undefined
-        ? Math.max(0, drafted - sent)
-        : number(row.review_drafts);
-      return summary;
-    }, { scanned: 0, sent: 0, review: 0 });
-  }
-
   return {
     ApiError,
     CATEGORIES,
@@ -412,9 +369,5 @@
     ensureAutoSendCategories,
     findManualSendKey,
     ensureManualSendKey,
-    ensureSweepRequestId,
-    normalizeSweepState,
-    sweepRunChanged,
-    summarizeSweepResults,
   };
 });
