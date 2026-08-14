@@ -90,10 +90,11 @@ style learning.
 
 | Function | Version | Purpose |
 |---|---:|---|
-| `agent-sweep` | 45 | Gmail triage with bulk-mail prefilter, hourly manual-sweep rate limit, daily triage budget, negotiation detection that never hides verified commercial follow-ups, and a hard no-send boundary for marked stress fixtures |
-| `agent-api` | 39 | Extension API plus persistent Ask CaughtUp style memory, version-checked Gmail draft editing, owned media-kit replacement, mixed Today timeline, negotiation dismissal, verified manual send, and deterministic no-send stress fixtures |
-| `gmail-oauth` | 5 | Gmail OAuth connection |
-| `daily-digest` | 2 | Daily digest delivery |
+| `agent-sweep` | 46 | Gmail triage worker restricted to explicitly marked inbox-read accounts; send-only and legacy accounts are excluded |
+| `agent-api` | 41 | Extension API, identity-only login, send-only Gmail OAuth launch, and an inbound-forwarding gate on inbox/draft actions |
+| `gmail-oauth` | 6 | Verified-email Gmail send-only OAuth callback |
+| `daily-digest` | 3 | Daily digest delivery through send-only accounts |
+| `gmail-send-probe` | 4 | Permanently retired one-time acceptance probe; always returns HTTP 410 |
 | `seed-media-kit` | 3 | Controlled media-kit seed utility |
 | `stripe-webhook` | 1 | Billing webhook; billing remains dormant until configured |
 | `tiktok-oauth` | 1 | TikTok creator OAuth callback; awaiting TikTok approval |
