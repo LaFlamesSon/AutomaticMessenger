@@ -8,6 +8,7 @@ const api = read("../functions/agent-api/index.ts");
 const migration = read("../migrations/20260814032552_inbound_forwarding_pipeline.sql");
 const hardening = read("../migrations/20260814041500_inbound_forwarding_post_deploy_hardening.sql");
 const acceptanceTest = read("../migrations/20260814042435_forwarding_acceptance_test.sql");
+const acceptanceThread = read("../migrations/20260814043647_allow_forwarding_acceptance_test_threads.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
 
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
@@ -84,6 +85,8 @@ test("forwarding acceptance tests are self-addressed, one-use, and impossible to
   assert.match(ingest, /if \(isForwardingTest && decision === "auto_send"\) decision = "draft"/);
   assert.match(ingest, /if \(!isForwardingTest && decision === "auto_send"/);
   assert.match(ingest, /is_test: isForwardingTest/);
+  assert.match(ingest, /`fwd-test:\$\{forwardingTestRunId\}`/);
+  assert.match(acceptanceThread, /not is_test or thread_id like 'qa-inbox:%' or thread_id like 'fwd-test:%'/);
   assert.match(api, /if \(row\.is_test\) return json\(\{ error: "test drafts can never be sent", code: "test_send_blocked" \}/);
 });
 

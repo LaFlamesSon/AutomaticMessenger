@@ -273,7 +273,8 @@ Deno.serve(async (req: Request) => {
 
   const dedupeKey = await sha256(`${alias.id}\n${payload.message_id || `${payload.envelope_from}\n${payload.subject}\n${await sha256(payload.text)}`}`);
   const fallbackThread = `fwd:${dedupeKey}`;
-  const threadKey = await resolveThread(supabase, account.id, payload, fallbackThread);
+  const threadKey = forwardingTestRunId ? `fwd-test:${forwardingTestRunId}`
+    : await resolveThread(supabase, account.id, payload, fallbackThread);
   const { data: insertedInbound, error: inboundError } = await supabase.from("ia_inbound_messages").insert({
     forwarding_alias_id: alias.id, user_id: alias.user_id, gmail_account_id: account.id, dedupe_key: dedupeKey,
     rfc_message_id: payload.message_id, thread_key: threadKey, envelope_from: payload.envelope_from,
