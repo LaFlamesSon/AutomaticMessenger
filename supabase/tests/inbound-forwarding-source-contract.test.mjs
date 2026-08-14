@@ -7,6 +7,7 @@ const ingest = read("../functions/inbound-email/index.ts");
 const api = read("../functions/agent-api/index.ts");
 const migration = read("../migrations/20260814032552_inbound_forwarding_pipeline.sql");
 const hardening = read("../migrations/20260814041500_inbound_forwarding_post_deploy_hardening.sql");
+const acceptanceTest = read("../migrations/20260814042435_forwarding_acceptance_test.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
 
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
@@ -63,12 +64,36 @@ test("forwarded drafts preserve safety, Review negotiations, and explicit send c
   assert.match(send, /messageId: row\.outbound_message_id/);
 });
 
+test("forwarding acceptance tests are self-addressed, one-use, and impossible to reply to", () => {
+  assert.match(api, /case "forwarding_test_send"/);
+  const action = api.match(/case "forwarding_test_send": \{([\s\S]*?)\n      case "forwarding_setup_disable"/)?.[1] ?? "";
+  assert.match(action, /body\.confirm !== true/);
+  assert.match(action, /\.eq\("status", "active"\)/);
+  assert.match(action, /profile\?\.auto_send === true \|\| profile\?\.reply_mode === "auto_send"/);
+  assert.match(action, /to: account\.gmail_address/);
+  assert.match(action, /`test\+\$\{testToken\}@inbound\.getcaughtup\.io`/);
+  assert.match(action, /users\/me\/messages\/send/);
+  assert.doesNotMatch(action, /To:\s*[^$\n]*@(?:example|gmail|outlook|yahoo)\./i);
+
+  assert.match(acceptanceTest, /create table public\.ia_forwarding_test_runs/);
+  assert.match(acceptanceTest, /token_hash text not null unique/);
+  assert.match(acceptanceTest, /alter table public\.ia_forwarding_test_runs enable row level security/);
+  assert.match(acceptanceTest, /revoke all on table public\.ia_forwarding_test_runs from public, anon, authenticated/);
+  assert.match(ingest, /\^test\\\+\(\[0-9a-f\]\{48\}\)@inbound\\\.getcaughtup\\\.io\$/);
+  assert.match(ingest, /from\("ia_forwarding_test_runs"\)/);
+  assert.match(ingest, /if \(isForwardingTest && decision === "auto_send"\) decision = "draft"/);
+  assert.match(ingest, /if \(!isForwardingTest && decision === "auto_send"/);
+  assert.match(ingest, /is_test: isForwardingTest/);
+  assert.match(api, /if \(row\.is_test\) return json\(\{ error: "test drafts can never be sent", code: "test_send_blocked" \}/);
+});
+
 test("new forwarding tables are service-role-only under RLS", () => {
   for (const table of ["ia_forwarding_aliases", "ia_inbound_messages"]) {
     assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`));
     assert.match(migration, new RegExp(`revoke all on table public\\.${table} from anon, authenticated`));
     assert.match(migration, new RegExp(`grant all on table public\\.${table} to service_role`));
   }
+  assert.match(acceptanceTest, /grant all on table public\.ia_forwarding_test_runs to service_role/);
   assert.match(migration, /ingestion_source in \('gmail_api', 'forwarded'\)/);
   assert.match(hardening, /ia_inbound_messages\(user_id, created_at desc\)/);
   assert.match(hardening, /ia_inbound_messages\(processed_email_id\)/);

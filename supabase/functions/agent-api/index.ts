@@ -1288,6 +1288,70 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, forwarding: activated });
       }
 
+      case "forwarding_test_send": {
+        if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
+        const { data: alias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
+          .select("id,gmail_account_id,status").eq("user_id", user.id).eq("status", "active").maybeSingle();
+        if (aliasError) throw new Error(aliasError.message);
+        if (!alias) return json({ error: "activate Gmail forwarding first", code: "inbound_forwarding_required" }, 409);
+        const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
+          .select("id,gmail_address,refresh_token,oauth_capability").eq("id", alias.gmail_account_id)
+          .eq("user_id", user.id).eq("oauth_capability", "send_only").maybeSingle();
+        if (accountError) throw new Error(accountError.message);
+        if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
+        const { data: profile, error: profileError } = await supabase.from("ia_voice_profiles")
+          .select("reply_mode,auto_send").eq("user_id", user.id).maybeSingle();
+        if (profileError) throw new Error(profileError.message);
+        if (profile?.auto_send === true || profile?.reply_mode === "auto_send") {
+          return json({ error: "turn off Auto-send before running a forwarding test", code: "test_requires_review_mode" }, 409);
+        }
+        const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+        const { count: recentTests, error: countError } = await supabase.from("ia_forwarding_test_runs")
+          .select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", oneHourAgo);
+        if (countError) throw new Error(countError.message);
+        if ((recentTests ?? 0) >= 3) return json({ error: "try another forwarding test later", code: "rate_limited" }, 429);
+
+        const tokenBytes = crypto.getRandomValues(new Uint8Array(24));
+        const testToken = Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const { data: testRun, error: testError } = await supabase.from("ia_forwarding_test_runs").insert({
+          user_id: user.id, gmail_account_id: account.id, forwarding_alias_id: alias.id,
+          token_hash: await sha256(testToken), expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+        }).select("id").single();
+        if (testError || !testRun) throw new Error(testError?.message ?? "forwarding test state unavailable");
+
+        const accessToken = await gmailAccessToken(account.refresh_token, CFG);
+        if (!accessToken) {
+          await supabase.from("ia_forwarding_test_runs").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", testRun.id);
+          return json({ error: "Gmail access expired", code: "gmail_reconnect_required" }, 422);
+        }
+        const testReplyTo = `test+${testToken}@inbound.getcaughtup.io`;
+        const rfcMessageId = `<caughtup-forwarding-test-${testRun.id}@getcaughtup.io>`;
+        const raw = buildTestInboxMime({
+          from: account.gmail_address, fromName: "CaughtUp Brand Test", to: account.gmail_address,
+          subject: "Potential product collaboration",
+          body: "Hi Yafet, we are interested in discussing a product collaboration. Could you share more information about working together?\n\nThanks,\nCaughtUp Brand Test",
+          messageId: rfcMessageId, date: new Date(),
+          extraHeaders: [`Reply-To: CaughtUp Brand Test <${testReplyTo}>`],
+        });
+        let response: Response | null = null;
+        try {
+          response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+            method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ raw }), signal: AbortSignal.timeout(30_000),
+          });
+        } catch { /* an interrupted Gmail request has an unknown outcome */ }
+        if (!response?.ok) {
+          await supabase.from("ia_forwarding_test_runs").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", testRun.id);
+          return json({ error: "Gmail forwarding test send failed", code: "gmail_error" }, 502);
+        }
+        const sent = await response.json().catch(() => ({}));
+        const { error: stateError } = await supabase.from("ia_forwarding_test_runs").update({
+          status: "sent", gmail_sent_message_id: sent.id ?? null, updated_at: new Date().toISOString(),
+        }).eq("id", testRun.id).eq("status", "pending");
+        if (stateError) return json({ error: "test sent; state reconciliation required", code: "test_reconcile" }, 503);
+        return json({ ok: true, test_id: testRun.id, sent_to: account.gmail_address, reply_sending_blocked: true });
+      }
+
       case "forwarding_setup_disable": {
         if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
         const { data: disabled, error } = await supabase.from("ia_forwarding_aliases").update({
