@@ -65,6 +65,24 @@ test("forwarded drafts preserve safety, Review negotiations, and explicit send c
   assert.match(send, /messageId: row\.outbound_message_id/);
 });
 
+test("forwarded negotiations require a creator reply and remain linked across replies", () => {
+  assert.match(ingest, /sanitizeMessageIds\(`\$\{payload\.references\} \$\{payload\.in_reply_to\}`\)/);
+  assert.match(ingest, /\.eq\("gmail_account_id", accountId\)\.in\("outbound_message_id", refs\)/);
+  assert.match(ingest, /\.eq\("gmail_account_id", account\.id\)\.eq\("thread_id", threadKey\)\.eq\("delivery_status", "sent"\)/);
+  assert.match(ingest, /commercialTerms\.detected && Boolean\(previousReplies\?\.length\)/);
+  assert.match(ingest, /\|\| Boolean\(activeNegotiation\)/);
+  assert.match(ingest, /human_review_required: negotiationRequired \|\| isForwardingTest/);
+
+  const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "send_draft"/)?.[1] ?? "";
+  assert.match(send, /sent_via: "manual_extension"/);
+  assert.match(send, /inReplyTo: row\.rfc_message_id/);
+  assert.match(send, /references: row\.rfc_references/);
+  assert.match(send, /messageId: row\.outbound_message_id/);
+
+  assert.match(api, /row\.gmail_draft_id \|\| row\.ingestion_source === "forwarded"/);
+  assert.match(api, /draft_email: linkedNegotiationDrafts\.get\(row\.id\) \?\? null/);
+});
+
 test("forwarding acceptance tests are self-addressed, one-use, and impossible to reply to", () => {
   assert.match(api, /case "forwarding_test_send"/);
   const action = api.match(/case "forwarding_test_send": \{([\s\S]*?)\n      case "forwarding_setup_disable"/)?.[1] ?? "";
