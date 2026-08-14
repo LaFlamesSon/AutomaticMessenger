@@ -314,6 +314,10 @@ test("isolated Gmail send probe is explicit, self-addressed, and separate from n
   assert.match(connectScript, /one fixed email from the authorized company account back to itself/);
   assert.match(connectScript, /No inbox mail is read\. No Google token is saved by this probe\./);
   assert.match(connectScript, /callback\.caughtup_gmail_probe !== "sent"/);
+  const probeSignIn = connectScript.match(/async function signInForGmailSendProbe\(\)[\s\S]*?async function connectGoogle/)?.[0] ?? "";
+  assert.match(probeSignIn, /authorize\.searchParams\.set\("scopes", "openid email profile"\)/);
+  assert.doesNotMatch(probeSignIn, /gmail\.modify|gmail\.readonly|gmail\.compose|gmail\.settings/);
+  assert.match(connectScript, /await signInForGmailSendProbe\(\)/);
 });
 
 test("saved sessions survive transient startup and refresh failures", () => {
@@ -376,7 +380,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.11");
+  assert.equal(manifest.version, "0.5.12");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

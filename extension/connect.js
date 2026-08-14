@@ -139,6 +139,20 @@ async function signInWithGoogle() {
   return { providerTokens, redirectUrl };
 }
 
+async function signInForGmailSendProbe() {
+  setProgress(22, "Complete Google sign-in in the window that opened.");
+  const redirectUrl = chrome.identity.getRedirectURL("caughtup");
+  const authorize = new URL(SUPABASE_AUTH);
+  authorize.searchParams.set("provider", "google");
+  authorize.searchParams.set("redirect_to", redirectUrl);
+  authorize.searchParams.set("scopes", "openid email profile");
+  authorize.searchParams.set("prompt", "select_account");
+  const auth = Core.parseOAuthCallback(await launchAuthFlow(authorize.toString()));
+  if (auth.error) throw new Core.ApiError("Google sign-in did not finish. Try again.", 0, "oauth_error");
+  if (!auth.access_token) throw new Core.ApiError("Google sign-in did not create a CaughtUp session.", 0, "missing_session");
+  await saveSession(auth);
+}
+
 async function connectGoogle() {
   if (running) return;
   running = true;
@@ -274,8 +288,19 @@ async function runGmailSendProbe() {
   try {
     const stored = await chrome.storage.local.get("caughtup_session");
     session = Core.normalizeAuthSession(stored.caughtup_session);
-    if (!session) throw new Core.ApiError("Open CaughtUp and connect Google first.", 401, "unauthorized");
-    await api("profile_get");
+    if (session) {
+      try {
+        await api("profile_get");
+      } catch (error) {
+        if (error?.code !== "unauthorized" && error?.status !== 401) throw error;
+        await clearSession();
+      }
+    }
+    if (!session) {
+      setProgress(20, "Signing in to CaughtUp with identity-only access…");
+      await signInForGmailSendProbe();
+      await api("profile_get");
+    }
     setProgress(35, "Opening the minimal Gmail consent screen…");
     const redirectUrl = chrome.identity.getRedirectURL("caughtup_gmail_send_probe");
     const start = await api("gmail_send_probe_start", { redirect_url: redirectUrl });
