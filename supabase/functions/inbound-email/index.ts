@@ -234,16 +234,18 @@ Deno.serve(async (req: Request) => {
   if (!sender) return json({ ok: true, discarded: "invalid_or_owner_sender" }, 202);
   const forwardingTestMatch = sender.address.match(/^test\+([0-9a-f]{48})@inbound\.getcaughtup\.io$/);
   let forwardingTestRunId: string | null = null;
+  let forwardingTestAutoSend = false;
   if (forwardingTestMatch) {
     if (!payload.message_id) return json({ ok: true, discarded: "invalid_forwarding_test" }, 202);
     const testTokenHash = await sha256(forwardingTestMatch[1]);
     const { data: testRun, error: testRunError } = await supabase.from("ia_forwarding_test_runs")
-      .select("id,status,inbound_rfc_message_id,expires_at").eq("token_hash", testTokenHash)
+      .select("id,status,inbound_rfc_message_id,expires_at,allow_auto_send").eq("token_hash", testTokenHash)
       .eq("user_id", alias.user_id).eq("gmail_account_id", account.id).eq("forwarding_alias_id", alias.id).maybeSingle();
     if (testRunError) return json({ error: "forwarding test lookup failed" }, 503);
     if (!testRun) return json({ ok: true, discarded: "invalid_forwarding_test" }, 202);
     if (["processing", "processed"].includes(testRun.status) && testRun.inbound_rfc_message_id === payload.message_id) {
       forwardingTestRunId = testRun.id;
+      forwardingTestAutoSend = testRun.allow_auto_send === true;
     } else if (["pending", "sent"].includes(testRun.status) && new Date(testRun.expires_at).getTime() > Date.now()) {
       const { data: claimed, error: claimError } = await supabase.from("ia_forwarding_test_runs").update({
         status: "processing", inbound_rfc_message_id: payload.message_id, updated_at: new Date().toISOString(),
@@ -252,6 +254,7 @@ Deno.serve(async (req: Request) => {
       if (claimError) return json({ error: "forwarding test claim failed" }, 503);
       if (!claimed) return json({ ok: true, discarded: "forwarding_test_already_claimed" }, 202);
       forwardingTestRunId = claimed.id;
+      forwardingTestAutoSend = testRun.allow_auto_send === true;
     } else {
       if (["pending", "sent"].includes(testRun.status)) {
         await supabase.from("ia_forwarding_test_runs").update({ status: "expired", updated_at: new Date().toISOString() })
@@ -263,7 +266,8 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, discarded: "invalid_or_owner_sender" }, 202);
   }
   const isForwardingTest = Boolean(forwardingTestRunId);
-  const replyRecipient = isForwardingTest ? "test@inbound.getcaughtup.io" : sender.address;
+  const replyRecipient = forwardingTestAutoSend ? String(account.gmail_address).toLowerCase()
+    : isForwardingTest ? "test@inbound.getcaughtup.io" : sender.address;
 
   const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
   const { count: receivedToday, error: budgetError } = await supabase.from("ia_inbound_messages")
@@ -404,7 +408,7 @@ Deno.serve(async (req: Request) => {
     if (matchedRules.some((rule: any) => rule.action === "never_draft")) decision = "none";
     if (decision === "auto_send" && matchedRules.some((rule: any) => rule.action === "require_approval")) decision = "draft";
     if (negotiationRequired && decision === "auto_send") decision = "draft";
-    if (isForwardingTest && decision === "auto_send") decision = "draft";
+    if (isForwardingTest && !forwardingTestAutoSend && decision === "auto_send") decision = "draft";
 
     let finalDraft = triage.draft ? enforceConfiguredSignoff(triage.draft, profile) : null;
     if (finalDraft && triage.wants_portfolio) finalDraft = finalizePortfolioDraft(finalDraft, Boolean(selectedKit));
@@ -423,14 +427,14 @@ Deno.serve(async (req: Request) => {
       sender: isForwardingTest ? "CaughtUp Brand Test <test@inbound.getcaughtup.io>" : payload.from || sender.address,
       subject: payload.subject || "(no subject)", delivery_status: finalDraft && decision !== "none" ? "draft" : "none",
       selected_media_kit_id: finalDraft && decision !== "none" && selectedKit ? selectedKit.id : null,
-      negotiation_id: negotiationId, human_review_required: negotiationRequired || isForwardingTest, is_test: isForwardingTest,
+      negotiation_id: negotiationId, human_review_required: negotiationRequired || (isForwardingTest && !forwardingTestAutoSend), is_test: isForwardingTest,
       ingestion_source: "forwarded", inbound_message_id: inbound.id, reply_to_address: replyRecipient,
       rfc_message_id: payload.message_id, rfc_in_reply_to: payload.in_reply_to, rfc_references: payload.references,
       outbound_message_id: outboundMessageId, draft_version: draftVersion, draft_updated_at: draftUpdatedAt,
     }).select("id").single();
     if (processedError || !processed) throw new Error("processed_email_failed");
 
-    if (!isForwardingTest && decision === "auto_send" && finalDraft && outboundMessageId) {
+    if ((!isForwardingTest || forwardingTestAutoSend) && decision === "auto_send" && finalDraft && outboundMessageId) {
       const { data: freshProfile } = await supabase.from("ia_voice_profiles").select("*").eq("user_id", alias.user_id).single();
       const freshDecision = freshProfile && Number(freshProfile.settings_version) === Number(profile.settings_version)
         ? deliveryDecision({ category: triage.category, draft: finalDraft, missingRequired: triage.missing_required,
@@ -455,7 +459,7 @@ Deno.serve(async (req: Request) => {
                 .select("id").maybeSingle()
               : { data: null };
             if (sending && lockedDraft) {
-              const raw = buildReplyMime({ to: sender.address, subject: payload.subject, body: finalDraft,
+              const raw = buildReplyMime({ to: replyRecipient, subject: payload.subject, body: finalDraft,
                 messageId: outboundMessageId, inReplyTo: payload.message_id, references: payload.references, attachment });
               let response: Response | null = null;
               try {

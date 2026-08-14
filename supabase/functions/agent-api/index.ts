@@ -1290,6 +1290,7 @@ Deno.serve(async (req: Request) => {
 
       case "forwarding_test_send": {
         if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
+        const autoSendTest = body.mode === "auto_send";
         const { data: alias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
           .select("id,gmail_account_id,status,alias_address").eq("user_id", user.id).eq("status", "active").maybeSingle();
         if (aliasError) throw new Error(aliasError.message);
@@ -1303,20 +1304,29 @@ Deno.serve(async (req: Request) => {
         const { data: profile, error: profileError } = await supabase.from("ia_voice_profiles")
           .select("reply_mode,auto_send").eq("user_id", user.id).maybeSingle();
         if (profileError) throw new Error(profileError.message);
-        if (profile?.auto_send === true || profile?.reply_mode === "auto_send") {
+        const autoSendEnabled = profile?.auto_send === true && profile?.reply_mode === "auto_send";
+        if (!autoSendTest && autoSendEnabled) {
           return json({ error: "turn off Auto-send before running a forwarding test", code: "test_requires_review_mode" }, 409);
         }
+        if (autoSendTest && !autoSendEnabled) {
+          return json({ error: "turn on Auto-send before running this test", code: "auto_send_required" }, 409);
+        }
         const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
-        const { count: recentTests, error: countError } = await supabase.from("ia_forwarding_test_runs")
+        let recentTestQuery = supabase.from("ia_forwarding_test_runs")
           .select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", oneHourAgo);
+        if (autoSendTest) recentTestQuery = recentTestQuery.eq("allow_auto_send", true);
+        const { count: recentTests, error: countError } = await recentTestQuery;
         if (countError) throw new Error(countError.message);
-        if ((recentTests ?? 0) >= 3) return json({ error: "try another forwarding test later", code: "rate_limited" }, 429);
+        if ((recentTests ?? 0) >= (autoSendTest ? 1 : 3)) {
+          return json({ error: "try another forwarding test later", code: "rate_limited" }, 429);
+        }
 
         const tokenBytes = crypto.getRandomValues(new Uint8Array(24));
         const testToken = Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
         const { data: testRun, error: testError } = await supabase.from("ia_forwarding_test_runs").insert({
           user_id: user.id, gmail_account_id: account.id, forwarding_alias_id: alias.id,
-          token_hash: await sha256(testToken), expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+          token_hash: await sha256(testToken), allow_auto_send: autoSendTest,
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         }).select("id").single();
         if (testError || !testRun) throw new Error(testError?.message ?? "forwarding test state unavailable");
 
@@ -1351,7 +1361,8 @@ Deno.serve(async (req: Request) => {
           status: "sent", gmail_sent_message_id: sent.id ?? null, updated_at: new Date().toISOString(),
         }).eq("id", testRun.id).eq("status", "pending");
         if (stateError) return json({ error: "test sent; state reconciliation required", code: "test_reconcile" }, 503);
-        return json({ ok: true, test_id: testRun.id, delivery_target: deliveryTarget, reply_sending_blocked: true });
+        return json({ ok: true, test_id: testRun.id, delivery_target: deliveryTarget,
+          reply_sending_blocked: !autoSendTest, expected_reply_recipient: autoSendTest ? account.gmail_address : null });
       }
 
       case "forwarding_setup_disable": {

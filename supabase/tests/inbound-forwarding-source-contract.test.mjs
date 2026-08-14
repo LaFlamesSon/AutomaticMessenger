@@ -9,6 +9,7 @@ const migration = read("../migrations/20260814032552_inbound_forwarding_pipeline
 const hardening = read("../migrations/20260814041500_inbound_forwarding_post_deploy_hardening.sql");
 const acceptanceTest = read("../migrations/20260814042435_forwarding_acceptance_test.sql");
 const acceptanceThread = read("../migrations/20260814043647_allow_forwarding_acceptance_test_threads.sql");
+const autoSendAcceptance = read("../migrations/20260814045104_forwarding_auto_send_acceptance.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
 
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
@@ -71,7 +72,7 @@ test("forwarded negotiations require a creator reply and remain linked across re
   assert.match(ingest, /\.eq\("gmail_account_id", account\.id\)\.eq\("thread_id", threadKey\)\.eq\("delivery_status", "sent"\)/);
   assert.match(ingest, /commercialTerms\.detected && Boolean\(previousReplies\?\.length\)/);
   assert.match(ingest, /\|\| Boolean\(activeNegotiation\)/);
-  assert.match(ingest, /human_review_required: negotiationRequired \|\| isForwardingTest/);
+  assert.match(ingest, /human_review_required: negotiationRequired \|\| \(isForwardingTest && !forwardingTestAutoSend\)/);
 
   const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "send_draft"/)?.[1] ?? "";
   assert.match(send, /sent_via: "manual_extension"/);
@@ -88,7 +89,7 @@ test("forwarding acceptance tests are self-addressed, one-use, and impossible to
   const action = api.match(/case "forwarding_test_send": \{([\s\S]*?)\n      case "forwarding_setup_disable"/)?.[1] ?? "";
   assert.match(action, /body\.confirm !== true/);
   assert.match(action, /\.eq\("status", "active"\)/);
-  assert.match(action, /profile\?\.auto_send === true \|\| profile\?\.reply_mode === "auto_send"/);
+  assert.match(action, /profile\?\.auto_send === true && profile\?\.reply_mode === "auto_send"/);
   assert.match(action, /deliveryTarget === "inbound_alias" \? alias\.alias_address : account\.gmail_address/);
   assert.match(action, /`test\+\$\{testToken\}@inbound\.getcaughtup\.io`/);
   assert.match(action, /users\/me\/messages\/send/);
@@ -100,12 +101,26 @@ test("forwarding acceptance tests are self-addressed, one-use, and impossible to
   assert.match(acceptanceTest, /revoke all on table public\.ia_forwarding_test_runs from public, anon, authenticated/);
   assert.match(ingest, /\^test\\\+\(\[0-9a-f\]\{48\}\)@inbound\\\.getcaughtup\\\.io\$/);
   assert.match(ingest, /from\("ia_forwarding_test_runs"\)/);
-  assert.match(ingest, /if \(isForwardingTest && decision === "auto_send"\) decision = "draft"/);
-  assert.match(ingest, /if \(!isForwardingTest && decision === "auto_send"/);
+  assert.match(ingest, /if \(isForwardingTest && !forwardingTestAutoSend && decision === "auto_send"\) decision = "draft"/);
+  assert.match(ingest, /if \(\(!isForwardingTest \|\| forwardingTestAutoSend\) && decision === "auto_send"/);
   assert.match(ingest, /is_test: isForwardingTest/);
   assert.match(ingest, /`fwd-test:\$\{forwardingTestRunId\}`/);
   assert.match(acceptanceThread, /not is_test or thread_id like 'qa-inbox:%' or thread_id like 'fwd-test:%'/);
   assert.match(api, /if \(row\.is_test\) return json\(\{ error: "test drafts can never be sent", code: "test_send_blocked" \}/);
+});
+
+test("Auto-send acceptance is enabled only for an active policy and self-addressed reply", () => {
+  assert.match(autoSendAcceptance, /add column allow_auto_send boolean not null default false/);
+  const action = api.match(/case "forwarding_test_send": \{([\s\S]*?)\n      case "forwarding_setup_disable"/)?.[1] ?? "";
+  assert.match(action, /const autoSendTest = body\.mode === "auto_send"/);
+  assert.match(action, /profile\?\.auto_send === true && profile\?\.reply_mode === "auto_send"/);
+  assert.match(action, /if \(autoSendTest\) recentTestQuery = recentTestQuery\.eq\("allow_auto_send", true\)/);
+  assert.match(action, /autoSendTest \? 1 : 3/);
+  assert.match(action, /allow_auto_send: autoSendTest/);
+  assert.match(ingest, /forwardingTestAutoSend \? String\(account\.gmail_address\)\.toLowerCase\(\)/);
+  assert.match(ingest, /buildReplyMime\(\{ to: replyRecipient/);
+  assert.doesNotMatch(ingest, /buildReplyMime\(\{ to: sender\.address/);
+  assert.match(ingest, /human_review_required: negotiationRequired \|\| \(isForwardingTest && !forwardingTestAutoSend\)/);
 });
 
 test("new forwarding tables are service-role-only under RLS", () => {
