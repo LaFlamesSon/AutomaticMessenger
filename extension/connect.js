@@ -27,6 +27,9 @@ function apiError(data, status) {
   if (code === "gmail_already_connected") {
     return new Core.ApiError("That Gmail inbox is already connected to another CaughtUp account.", status, code);
   }
+  if (code === "probe_unavailable") {
+    return new Core.ApiError("The Gmail send test has not been enabled yet.", status, code);
+  }
   if (status === 400 || status === 422) {
     return new Core.ApiError("Google connection could not be verified. Try again.", status, code);
   }
@@ -259,8 +262,46 @@ async function connectTikTok() {
   } finally { running = false; }
 }
 
+async function runGmailSendProbe() {
+  if (running) return;
+  running = true;
+  $("retry").classList.add("hidden");
+  $("close").classList.add("hidden");
+  $("title").textContent = "Testing Gmail send access";
+  $("message").textContent = "This controlled test sends one fixed email from the authorized company account back to itself.";
+  $("safety").textContent = "No inbox mail is read. No Google token is saved by this probe.";
+  setProgress(12, "Checking your existing CaughtUp session…");
+  try {
+    const stored = await chrome.storage.local.get("caughtup_session");
+    session = Core.normalizeAuthSession(stored.caughtup_session);
+    if (!session) throw new Core.ApiError("Open CaughtUp and connect Google first.", 401, "unauthorized");
+    await api("profile_get");
+    setProgress(35, "Opening the minimal Gmail consent screen…");
+    const redirectUrl = chrome.identity.getRedirectURL("caughtup_gmail_send_probe");
+    const start = await api("gmail_send_probe_start", { redirect_url: redirectUrl });
+    if (!start.authorization_url) throw new Core.ApiError("The Gmail send test is not available yet.", 0, "missing_probe_url");
+    const callback = Core.parseOAuthCallback(await launchAuthFlow(start.authorization_url));
+    if (callback.error || callback.caughtup_gmail_probe !== "sent") {
+      throw new Core.ApiError("The Gmail send test did not finish.", 0, callback.error || "probe_failed");
+    }
+    setProgress(100, "One self-addressed Gmail test was sent.", "success");
+    $("statusMark").textContent = "✓";
+    $("title").textContent = "Gmail send test passed";
+    $("message").textContent = "Check the company account's Inbox and Sent folder for the marked CaughtUp OAuth test message.";
+    $("close").classList.remove("hidden");
+  } catch (error) {
+    setProgress(100, Core.safeErrorMessage(error), "error");
+    $("statusMark").textContent = "!";
+    $("title").textContent = "Gmail send test needs attention";
+    $("message").textContent = "No retry happens automatically. Resolve the shown issue before trying again.";
+    $("retry").classList.remove("hidden");
+  } finally { running = false; }
+}
+
 function connect() {
-  return flow === "tiktok" ? connectTikTok() : connectGoogle();
+  if (flow === "tiktok") return connectTikTok();
+  if (flow === "gmail-send-probe") return runGmailSendProbe();
+  return connectGoogle();
 }
 
 $("retry").addEventListener("click", connect);

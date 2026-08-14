@@ -131,7 +131,7 @@ test("extension-facing action contract is present", async () => {
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare",
     "auto_send_confirm", "auto_send_disable", "draft_get", "draft_update", "negotiation_test_draft_create", "send_draft", "sweep",
     "media_kit_list", "media_kit_upload_prepare", "media_kit_upload_complete",
-    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
+    "media_kit_update", "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start", "gmail_send_probe_start",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ]) assert.match(api, new RegExp(`case "${action}"`));
   assert.match(api, /body\.action === "auth_refresh"/);

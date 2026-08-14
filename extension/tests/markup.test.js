@@ -198,7 +198,7 @@ test("client targets the audited API actions", () => {
     "digest", "chat", "draft_get", "draft_update", "send_draft", "sweep", "profile_get", "profile_set",
     "auto_send_prepare", "auto_send_confirm", "auto_send_disable", "media_kit_list", "media_kit_rate_update",
     "media_kit_upload_prepare", "media_kit_upload_complete", "media_kit_update",
-    "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start",
+    "media_kit_delete", "learning_reset", "gmail_connect_provider", "gmail_connect_start", "gmail_send_probe_start",
     "auth_refresh", "calendar_get", "calendar_set", "booking_create", "booking_delete",
     "opportunities_get", "opportunity_refresh", "opportunity_preferences_set", "brand_relationship_set",
     "opportunity_create", "opportunity_update", "opportunity_draft_get", "opportunity_send",
@@ -306,6 +306,16 @@ test("Google onboarding runs in a durable extension page with a safe Gmail fallb
   assert.match(connectCss, /prefers-reduced-motion/);
 });
 
+test("isolated Gmail send probe is explicit, self-addressed, and separate from normal onboarding", () => {
+  assert.match(connectHtml, /id="safety"/);
+  assert.match(connectScript, /flow === "gmail-send-probe"/);
+  assert.match(connectScript, /"gmail_send_probe_start"/);
+  assert.match(connectScript, /chrome\.identity\.getRedirectURL\("caughtup_gmail_send_probe"\)/);
+  assert.match(connectScript, /one fixed email from the authorized company account back to itself/);
+  assert.match(connectScript, /No inbox mail is read\. No Google token is saved by this probe\./);
+  assert.match(connectScript, /callback\.caughtup_gmail_probe !== "sent"/);
+});
+
 test("saved sessions survive transient startup and refresh failures", () => {
   assert.match(script, /Core\.normalizeAuthSession\(local\.caughtup_session\)/);
   assert.match(script, /Core\.isTerminalSessionError\(refreshError\)/);
@@ -366,7 +376,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.5.10");
+  assert.equal(manifest.version, "0.5.11");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

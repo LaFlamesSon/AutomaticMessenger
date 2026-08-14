@@ -2258,6 +2258,43 @@ Deno.serve(async (req: Request) => {
         return json({ authorization_url: consent.toString(), expires_at: expiresAt });
       }
 
+      case "gmail_send_probe_start": {
+        const redirectUri = cleanString(body.redirect_url, "redirect_url", 500);
+        if (!allowedChromeRedirect(redirectUri, CFG["ia_allowed_extension_ids"] ?? "")) {
+          return json({ error: "redirect_url must be a Chrome identity callback" }, 400);
+        }
+        const probeClientId = CFG["ia_google_send_probe_client_id"] ?? "";
+        const probeClientSecret = CFG["ia_google_send_probe_client_secret"] ?? "";
+        const probeEmail = (CFG["ia_google_send_probe_email"] ?? "").trim().toLowerCase();
+        if (
+          CFG["ia_google_send_probe_enabled"] !== "true" ||
+          !/^[0-9]+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(probeClientId) ||
+          probeClientSecret.length < 20 ||
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(probeEmail)
+        ) {
+          return json({ error: "Gmail send probe is unavailable", code: "probe_unavailable" }, 503);
+        }
+        const state = crypto.randomUUID() + crypto.randomUUID();
+        const stateHash = await sha256(state);
+        const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+        const { error } = await supabase.from("ia_oauth_states").insert({
+          user_id: user.id, state_hash: stateHash, redirect_uri: redirectUri, expires_at: expiresAt,
+        });
+        if (error) throw new Error(error.message);
+        const callback = `${Deno.env.get("SUPABASE_URL")}/functions/v1/gmail-send-probe`;
+        const consent = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+        consent.searchParams.set("client_id", probeClientId);
+        consent.searchParams.set("redirect_uri", callback);
+        consent.searchParams.set("response_type", "code");
+        consent.searchParams.set("scope", "openid email profile https://www.googleapis.com/auth/gmail.send");
+        consent.searchParams.set("access_type", "offline");
+        consent.searchParams.set("prompt", "consent");
+        consent.searchParams.set("include_granted_scopes", "false");
+        consent.searchParams.set("login_hint", probeEmail);
+        consent.searchParams.set("state", state);
+        return json({ authorization_url: consent.toString(), expires_at: expiresAt });
+      }
+
       case "calendar_get": {
         const preference = await ensureCalendarPreference(supabase, user.id);
         const { data: bookings, error } = await supabase.from("ia_bookings")
