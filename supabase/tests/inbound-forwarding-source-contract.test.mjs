@@ -6,6 +6,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const ingest = read("../functions/inbound-email/index.ts");
 const api = read("../functions/agent-api/index.ts");
 const migration = read("../migrations/20260814032552_inbound_forwarding_pipeline.sql");
+const hardening = read("../migrations/20260814041500_inbound_forwarding_post_deploy_hardening.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
 
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
@@ -69,4 +70,7 @@ test("new forwarding tables are service-role-only under RLS", () => {
     assert.match(migration, new RegExp(`grant all on table public\\.${table} to service_role`));
   }
   assert.match(migration, /ingestion_source in \('gmail_api', 'forwarded'\)/);
+  assert.match(hardening, /ia_inbound_messages\(user_id, created_at desc\)/);
+  assert.match(hardening, /ia_inbound_messages\(processed_email_id\)/);
+  assert.match(hardening, /revoke execute on function public\.rls_auto_enable\(\) from public, anon, authenticated/);
 });
