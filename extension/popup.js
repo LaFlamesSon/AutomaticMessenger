@@ -459,7 +459,7 @@ async function rememberGmailReconnectRequired(required) {
 function showSetup(show, message = "", mode = "app") {
   $("setup").classList.toggle("hidden", !show);
   $("tabs").classList.toggle("hidden", show);
-  $("sweepBtn").classList.toggle("hidden", show);
+  $("refreshBtn").classList.toggle("hidden", show);
   PANELS.forEach((panel) => $(panel).classList.add("hidden"));
   if (!show) activateTab("today", false);
   if (show && mode === "retry") {
@@ -1057,8 +1057,8 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-$("sweepBtn").addEventListener("click", async () => {
-  const button = $("sweepBtn");
+$("refreshBtn").addEventListener("click", async () => {
+  const button = $("refreshBtn");
   setBusy(button, true, "Refreshing...");
   setGlobalStatus("Refreshing processed email...", "progress");
   try {

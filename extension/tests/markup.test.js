@@ -57,7 +57,8 @@ test("manual send retries persist and reuse one idempotency key", () => {
 });
 
 test("automatic forwarding replaces manual inbox reads while Refresh reloads processed state", () => {
-  assert.match(html, /id="sweepBtn"[^>]*>Refresh<\/button>/);
+  assert.match(html, /id="refreshBtn"[^>]*>Refresh<\/button>/);
+  assert.doesNotMatch(html, /id="sweepBtn"/);
   assert.match(script, /await loadDigest\(\)/);
   assert.match(script, /New forwarded email is processed automatically/);
   assert.doesNotMatch(script, /api\("sweep"|manualSweepState|MANUAL_SWEEP_ID_STORAGE/);
