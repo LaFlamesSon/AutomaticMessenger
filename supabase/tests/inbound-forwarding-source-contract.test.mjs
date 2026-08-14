@@ -70,7 +70,7 @@ test("forwarding acceptance tests are self-addressed, one-use, and impossible to
   assert.match(action, /body\.confirm !== true/);
   assert.match(action, /\.eq\("status", "active"\)/);
   assert.match(action, /profile\?\.auto_send === true \|\| profile\?\.reply_mode === "auto_send"/);
-  assert.match(action, /to: account\.gmail_address/);
+  assert.match(action, /deliveryTarget === "inbound_alias" \? alias\.alias_address : account\.gmail_address/);
   assert.match(action, /`test\+\$\{testToken\}@inbound\.getcaughtup\.io`/);
   assert.match(action, /users\/me\/messages\/send/);
   assert.doesNotMatch(action, /To:\s*[^$\n]*@(?:example|gmail|outlook|yahoo)\./i);

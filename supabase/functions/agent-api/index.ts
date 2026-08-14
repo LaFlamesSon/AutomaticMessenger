@@ -1291,9 +1291,10 @@ Deno.serve(async (req: Request) => {
       case "forwarding_test_send": {
         if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
         const { data: alias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
-          .select("id,gmail_account_id,status").eq("user_id", user.id).eq("status", "active").maybeSingle();
+          .select("id,gmail_account_id,status,alias_address").eq("user_id", user.id).eq("status", "active").maybeSingle();
         if (aliasError) throw new Error(aliasError.message);
         if (!alias) return json({ error: "activate Gmail forwarding first", code: "inbound_forwarding_required" }, 409);
+        const deliveryTarget = body.delivery_target === "inbound_alias" ? "inbound_alias" : "gmail_inbox";
         const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
           .select("id,gmail_address,refresh_token,oauth_capability").eq("id", alias.gmail_account_id)
           .eq("user_id", user.id).eq("oauth_capability", "send_only").maybeSingle();
@@ -1327,7 +1328,8 @@ Deno.serve(async (req: Request) => {
         const testReplyTo = `test+${testToken}@inbound.getcaughtup.io`;
         const rfcMessageId = `<caughtup-forwarding-test-${testRun.id}@getcaughtup.io>`;
         const raw = buildTestInboxMime({
-          from: account.gmail_address, fromName: "CaughtUp Brand Test", to: account.gmail_address,
+          from: account.gmail_address, fromName: "CaughtUp Brand Test",
+          to: deliveryTarget === "inbound_alias" ? alias.alias_address : account.gmail_address,
           subject: "Potential product collaboration",
           body: "Hi Yafet, we are interested in discussing a product collaboration. Could you share more information about working together?\n\nThanks,\nCaughtUp Brand Test",
           messageId: rfcMessageId, date: new Date(),
@@ -1349,7 +1351,7 @@ Deno.serve(async (req: Request) => {
           status: "sent", gmail_sent_message_id: sent.id ?? null, updated_at: new Date().toISOString(),
         }).eq("id", testRun.id).eq("status", "pending");
         if (stateError) return json({ error: "test sent; state reconciliation required", code: "test_reconcile" }, 503);
-        return json({ ok: true, test_id: testRun.id, sent_to: account.gmail_address, reply_sending_blocked: true });
+        return json({ ok: true, test_id: testRun.id, delivery_target: deliveryTarget, reply_sending_blocked: true });
       }
 
       case "forwarding_setup_disable": {
