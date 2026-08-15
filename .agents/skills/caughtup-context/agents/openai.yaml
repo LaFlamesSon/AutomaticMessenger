@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaughtUp Context"
+  short_description: "Run EA-controlled CaughtUp agent memory"
+  default_prompt: "Use $caughtup-context for this EA-invoked agent's startup read and completion closeout."

@@ -1,0 +1,30 @@
+[agents]
+max_threads = 5
+max_depth = 1
+
+[agents.database-agent]
+description = "Owns CaughtUp migrations, RLS, cron, and constraints. No function product logic."
+config_file = "./agents/database-agent.toml"
+
+[agents.backend-dev]
+description = "Implements CaughtUp Supabase Edge Function product logic and integrations. DDL owned by database-agent."
+config_file = "./agents/backend-dev.toml"
+
+[agents.frontend-dev]
+description = "Implements the Chrome extension and marketing web UI."
+config_file = "./agents/frontend-dev.toml"
+
+[agents.extension-dev]
+description = "Alias of frontend-dev. Implements the Chrome extension and marketing web UI."
+config_file = "./agents/extension-dev.toml"
+
+[agents.qa-agent]
+description = "Verifies CaughtUp behavior and reports evidence without fixing code."
+config_file = "./agents/qa-agent.toml"
+
+[agents.research-agent]
+description = "Researches external APIs and architecture using primary sources."
+config_file = "./agents/research-agent.toml"
+
+[mcp_servers.supabase]
+url = "https://mcp.supabase.com/mcp?project_ref=xkrpxvswdkreglmefuot&read_only=true"

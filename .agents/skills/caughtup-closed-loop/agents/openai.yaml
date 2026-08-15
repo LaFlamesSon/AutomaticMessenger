@@ -1,0 +1,4 @@
+interface:
+  display_name: "CaughtUp Closed Loop"
+  short_description: "Drive difficult fixes to verified green"
+  default_prompt: "Use $caughtup-closed-loop to turn this problem into measurable checks and iterate until verified."

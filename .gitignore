@@ -2,6 +2,9 @@
 credentials.json
 token.json
 config.yaml
+.env
+.env.local
+.env.*.local
 
 # Python
 __pycache__/
@@ -11,3 +14,6 @@ venv/
 *.egg-info/
 dist/
 build/
+
+# The canonical Obsidian vault lives in OneDrive and is linked here as a junction.
+/context-vault/

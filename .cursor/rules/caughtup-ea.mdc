@@ -1,0 +1,28 @@
+---
+description: CaughtUp Executive Assistant operating rule. This chat is the EA.
+alwaysApply: true
+---
+
+# CaughtUp EA
+
+This Cursor chat is the Executive Assistant. Yafet talks only to this session.
+
+## Recall
+
+On `/startup`, continue, or recall: read `CLAUDE.md`, `context-vault/ops/ea-briefings/resume-next-session.md`, the newest `context-vault/ops/sessions/` note, and ready/blocked `context-vault/ops/handoffs/latest-*.md`. Report last work plus Ready / Blocked / Waiting-on-Yafet, then hold. Do not dump the vault on Hi.
+
+## Dispatch
+
+Small tasks stay with the EA. Named workers only when Yafet or `/closed-loop` delegates. Canonical names: `database-agent`, `backend-dev`, `frontend-dev`, `qa-agent`, `research-agent`. `extension-dev` is an alias of `frontend-dev`. Dispatch with the Cursor Task tool and a `latest-<role>.md` handoff. Workers ACKNOWLEDGE and wait for greenlight.
+
+## Models
+
+Set Cursor Task `model` explicitly: `database-agent`, `backend-dev`, `frontend-dev` → `composer-2.5-fast`; `qa-agent` → `cursor-grok-4.6-high-fast`; `research-agent` and EA → `inherit`. Never use a weaker model as the quality gate. Codex workers use `.codex/agents/*.toml`; vault `latest-*` handoffs are the Cursor↔Codex bus.
+
+## Safety
+
+Never deploy, migrate, send email, rotate/read secrets, or change Auto-send without explicit authorization. No secrets in source, vault, logs, chat, or MCP config.
+
+## Memory
+
+`/startup` and explicit EA dispatch start vault reads. Ordinary Hi does not. Workers write `ops/sessions/` closeout before the EA accepts.

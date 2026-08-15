@@ -10,40 +10,89 @@ workers as needed, and is the bridge between the team's work and Yafet's
 understanding of it.
 
 ```
-Yafet → EA (this session, team lead)
-           ↓ dispatches
-    backend-dev | extension-dev | qa-agent | research-agent
+Yafet → EA (this Cursor chat, team lead)
+           ↓ dispatches via Cursor Task tool + latest-* handoff
+    database-agent | backend-dev | frontend-dev | qa-agent | research-agent
            ↓ each worker can spawn sub-agents internally
     sub-agent-1 | sub-agent-2 | ...
 ```
 
+`extension-dev` is an alias of `frontend-dev`. Do not dispatch it as a fifth
+worker.
+
 ## Roles
 
-- **backend-dev** — Supabase edge functions (Deno), Postgres schema, Vault
-  config, cron jobs, Gmail/DeepSeek/Stripe integrations.
-- **extension-dev** — Chrome MV3 extension (`extension/`), landing page
-  (`web/`), UI polish per `UI-SPEC.md`. Never breaks the token-auth flow.
+- **database-agent** — named migrations, RLS, cron/job scheduling, constraints.
+  No Edge Function product logic. No ad-hoc production DDL.
+- **backend-dev** — Supabase edge function product logic, Vault *usage*
+  patterns, Gmail/DeepSeek/Stripe integrations. DDL is owned by database-agent.
+- **frontend-dev** — Chrome MV3 extension (`extension/`), public site
+  (`web/`), UI polish per `UI-SPEC.md`. Never breaks the session-auth flow.
 - **qa-agent** — proves claims with REAL execution: invokes deployed functions
   via `net.http_post` through `execute_sql`, reads `net._http_response`,
   asserts against actual DB rows. Never accepts a worker's self-report.
 - **research-agent** — reads docs/APIs/competitors, returns findings only.
 
+## Cursor model routing
+
+When the EA dispatches via Cursor Task, set `model` explicitly:
+
+| Role | Cursor Task `model` |
+| --- | --- |
+| `database-agent`, `backend-dev`, `frontend-dev` | `composer-2.5-fast` |
+| `qa-agent` | `cursor-grok-4.6-high-fast` |
+| `research-agent`, EA | `inherit` |
+
+Never use a weaker model as the quality gate. Codex workers keep their
+`.codex/agents/*.toml` roles; vault `latest-*` handoffs are the Cursor↔Codex bus.
+
 ## Worker rules — read this every startup
 
 1. **Spawn workers based on what the task needs.** Full-stack feature →
-   backend-dev + extension-dev. Backend-only fix → backend-dev alone. Match
-   the workers to the work — no more, no less. Small tasks: EA does it inline.
+   backend-dev + frontend-dev. Schema change → database-agent. Backend-only
+   fix → backend-dev alone. Match the workers to the work — no more, no less.
+   Small tasks: EA does it inline.
 2. **One instance per role per session.** For a subsequent task in the same
-   role, SendMessage the existing worker — do NOT spawn `backend-dev-2`.
+   role, resume the existing Cursor Task — do NOT spawn `backend-dev-2`.
    The existing worker has context; a new spawn starts cold.
 3. **Workers sub-agent internally for large tasks.** EA dispatches to a role;
    the role decides how to break it down.
-4. **Canonical names only:** `backend-dev`, `extension-dev`, `qa-agent`,
-   `research-agent`. Suffixed names break message routing.
+4. **Canonical names only:** `database-agent`, `backend-dev`, `frontend-dev`,
+   `qa-agent`, `research-agent`. `extension-dev` is an alias of `frontend-dev`.
+   Suffixed names break routing.
 5. **ACKNOWLEDGE protocol for dispatches.** A dispatched worker replies
    `ACKNOWLEDGED — scope is <one line>. Holding for greenlight.` and STOPS
    until the EA greenlights. This catches mis-scoped dispatches before any
    code is written.
+
+## EA-controlled Obsidian memory lifecycle
+
+`/startup` and an explicit EA dispatch both start vault reads. Ordinary Hi
+does not. The worker closeout lifecycle runs only when the EA explicitly
+spawns, resumes, or dispatches a named worker. Merely opening the repository
+or mentioning a role does not trigger worker vault writes.
+
+The canonical vault is `C:\Users\yafet\OneDrive\Desktop\CaughtUp` and is available
+inside the repository at `context-vault/`.
+
+**Invoked worker startup (read-only):**
+
+1. Read `context-vault/index.md`.
+2. Read `context-vault/wiki/agents/<role>.md`.
+3. Read the relevant project pages and `context-vault/ops/handoffs/latest-<role>.md`.
+4. Do not write to the vault during startup.
+
+**Invoked worker closeout (mandatory before reporting done):**
+
+1. Write a completed record to `context-vault/ops/sessions/` containing the task,
+   work completed, verification, durable promotion (or `none`), and next step.
+2. Read the current canonical role page again and merge only durable learning.
+3. Update canonical wiki pages and `index.md` only if content or scope changed.
+4. Append to `log.md` only for ingest, durable query synthesis, or lint/maintenance.
+5. Send the EA a pointer to the completion record with the result.
+
+Every invoked worker writes a closeout record even when no durable learning was
+promoted. The EA does not accept the result until that record exists.
 
 ## CaughtUp Constitution (hard constraints)
 
@@ -106,8 +155,9 @@ Accept ONLY on green at the appropriate layer. Never on a self-report.
 ## Inter-Agent Communication
 
 Two channels, use both every time:
-1. **SendMessage** — immediate wake-up signal (address by NAME, not ID).
-2. **Handoff file** — persistent record at `docs/handoff-<role>.md`:
+1. **Cursor Task tool** — dispatch or resume the named worker.
+2. **Live mailbox** — `context-vault/ops/handoffs/latest-<role>.md`
+   (not `docs/handoff-*.md`):
 
 ```
 ## From: [your agent name]
@@ -117,16 +167,16 @@ Two channels, use both every time:
 ## Read first: [any files they must read]
 ```
 
-On startup every agent checks `docs/` for a handoff addressed to it and
-actions it before starting new work. If blocked: write the handoff +
-SendMessage rather than guessing or stopping.
+On startup every invoked agent checks its `latest-*` mailbox and actions it
+before starting new work. If blocked: update the mailbox rather than guessing
+or stopping. Dated `ops/handoffs/` files are archives.
 
 ## Sub-Agent Protocol
 
 Any agent can spawn a sub-agent when a task is too large or parallelizable.
 One task, one output file (`docs/subagent-[task-name].md`) per sub-agent —
 nothing more. Parent reads the output and continues. Notify the EA via
-`docs/handoff-ea.md` when spawning.
+`context-vault/ops/handoffs/latest-ea.md` when spawning.
 
 ## Self-Learning Protocol
 
@@ -144,7 +194,17 @@ parrot its own stale answers (SOURCE OF TRUTH rule in prompts).
 
 ## Session start
 
+For `/startup`, continue, or recall: the EA reads `CLAUDE.md`,
+`context-vault/ops/ea-briefings/resume-next-session.md`, the newest session
+note, and ready/blocked `latest-*` mailboxes. Report queues and hold. Do not
+dump the vault on Hi. Do not spawn the whole team.
+
+For a worker explicitly invoked by the EA:
+
 1. Read `CLAUDE.md` (repo root) end-to-end — it is the source of truth for
    project state and overrides stale conversation memory.
-2. Check `docs/` for handoffs addressed to you.
-3. Orient: `supabase/DEPLOY.md` for ops, `UI-SPEC.md` for design intent.
+2. Run the read-only Obsidian startup sequence above.
+3. Check `context-vault/ops/handoffs/latest-<role>.md` (and dated archives only
+   if the live mailbox points at them).
+4. Orient: `supabase/DEPLOY.md` for ops, `UI-SPEC.md` for design intent.
+5. Before returning to the EA, run the mandatory closeout sequence above.

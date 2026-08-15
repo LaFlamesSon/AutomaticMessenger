@@ -40,9 +40,15 @@ problem list, (b) the /goal as verifiable conditions, (c) the verifier
 ## THE LOOP — each iteration
 
 1. EA dispatches the next unfixed goal item to the right worker
-   (backend-dev / extension-dev / research-agent) under the **ACKNOWLEDGE
-   protocol**: worker replies `ACKNOWLEDGED — scope is <one line>. Holding
-   for greenlight.` and STOPS until EA greenlights.
+   (database-agent / backend-dev / frontend-dev / research-agent) under the
+   **ACKNOWLEDGE protocol**: worker replies
+   `ACKNOWLEDGED — scope is <one line>. Holding for greenlight.` and STOPS
+   until EA greenlights. Dispatch with the Cursor Task tool plus
+   `context-vault/ops/handoffs/latest-<role>.md`. `extension-dev` is an alias
+   of `frontend-dev`.
+   This explicit dispatch starts that worker's Obsidian memory lifecycle from
+   `.claude/AGENTS.md`: read role context at startup and write one completion
+   record before returning to the EA.
 2. Worker implements. **Commit to git before any deploy** (HC-8 — the deploy
    channel is flaky; lost deploys must never mean lost code).
 3. **qa-agent proves it** with the raw invocation response + DB assertions in
@@ -52,6 +58,8 @@ problem list, (b) the /goal as verifiable conditions, (c) the verifier
    header — an auth failure in testing is a test-harness bug, not a code bug.
 5. On accept: note the fix; if it revealed a reusable pattern, apply the
    Self-Learning Protocol (CLAUDE.md + code comment).
+   Do not accept a worker result until its `context-vault/ops/sessions/` closeout
+   record exists. A later dispatch starts a new lifecycle and gets a new record.
 
 ## SPEED RULES (apply every iteration)
 
@@ -76,8 +84,9 @@ problem list, (b) the /goal as verifiable conditions, (c) the verifier
 
 - Cap 40 iterations. Halt if the same fix fails 3× in a row. Halt + report
   if the verifier can't run.
-- Migrations are audit-gated per `.claude/AGENTS.md`: draft the migration,
-  get Yafet's authorization, then `apply_migration` — never ad-hoc DDL.
+- Migrations are audit-gated per `.claude/AGENTS.md`: database-agent drafts
+  the migration, get Yafet's authorization, then `apply_migration` — never
+  ad-hoc DDL.
 - Never touch Vault secrets, `ia_users.api_token` values, or live Gmail
   refresh tokens as part of a fix without explicit authorization.
 - Never flip `auto_send` on any profile as part of testing (HC-2).
