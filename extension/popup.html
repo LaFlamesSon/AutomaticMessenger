@@ -31,6 +31,13 @@
       <h1 id="setupTitle">Your inbox, handled</h1>
       <p id="setupCopy" class="sub">Connect Gmail so CaughtUp can prepare replies. Nothing sends automatically unless you turn it on later.</p>
       <button id="connectGoogle" class="primary" type="button">Continue with Google</button>
+      <div id="setupIntake" class="setup-intake hidden" aria-live="polite">
+        <div id="setupIntakeAddressRow" class="setup-intake-address hidden">
+          <code id="setupIntakeAddress"></code>
+        </div>
+        <p id="setupIntakeCopy" class="hint"></p>
+        <button id="setupIntakeAction" class="primary" type="button">Turn on CaughtUp</button>
+      </div>
       <p id="setupStatus" class="status-text" role="status" aria-live="polite"></p>
     </section>
 

@@ -60,6 +60,8 @@ test("automatic forwarding replaces manual inbox reads while Refresh reloads pro
   assert.match(html, /id="refreshBtn"[^>]*>Refresh<\/button>/);
   assert.doesNotMatch(html, /id="sweepBtn"/);
   assert.match(script, /await loadDigest\(\)/);
+  assert.match(script, /intakeGateActive/);
+  assert.match(script, /if \(intakeGateActive\) \{[\s\S]*?Intake status updated\.[\s\S]*?return;/);
   assert.match(script, /New forwarded email is processed automatically/);
   assert.doesNotMatch(script, /api\("sweep"|manualSweepState|MANUAL_SWEEP_ID_STORAGE/);
 });
@@ -302,15 +304,28 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
   for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding", "runForwardingTest", "disableForwarding"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
+  for (const id of ["setupIntake", "setupIntakeAction", "setupIntakeAddress"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /id="setupIntakeAction"[^>]*>Turn on CaughtUp</);
+  assert.match(connectHtml, /id="intakePrimary"[^>]*>Turn on CaughtUp</);
+  assert.match(script, /inbound_forwarding_ready !== true/);
+  assert.doesNotMatch(script, /inbound_forwarding_ready !== true[\s\S]*forwardingTestPassed\(forwardingSnapshot/);
+  assert.match(script, /showSetup\(true, "", "forwarding"\)/);
+  assert.match(script, /Turn on CaughtUp/);
   assert.match(script, /api\("forwarding_setup_start"\)/);
   assert.match(script, /navigator\.clipboard\.writeText/);
   assert.match(script, /api\("forwarding_setup_activate", \{ confirm: true \}\)/);
   assert.match(script, /api\("forwarding_test_send"/);
   assert.match(script, /delivery_target: "inbound_alias"/);
+  assert.match(script, /shouldPollForwarding/);
+  assert.match(script, /verification_received/);
   assert.match(script, /api\("forwarding_setup_disable", \{ confirm: true \}\)/);
   assert.match(connectScript, /beginForwardingSetup/);
   assert.match(connectScript, /api\("forwarding_setup_start"\)/);
+  assert.match(connectScript, /Turn on CaughtUp/);
   assert.match(connectScript, /api\("forwarding_test_send"/);
+  assert.doesNotMatch(connectHtml, /id="openGmailForwarding"/);
 });
 
 test("Chat writing-style updates are reflected in extension state", () => {
@@ -324,7 +339,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.6.2");
+  assert.equal(manifest.version, "0.6.3");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 
