@@ -1,0 +1,22 @@
+{
+  "name": "caughtup-negotiation-responder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "wrangler types && tsc --noEmit",
+    "test": "vitest run",
+    "types": "wrangler types",
+    "deploy:check": "wrangler deploy --dry-run",
+    "startup:check": "wrangler check startup"
+  },
+  "dependencies": {
+    "mimetext": "3.0.28"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  }
+}
