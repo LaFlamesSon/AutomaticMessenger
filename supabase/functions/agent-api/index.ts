@@ -13,6 +13,7 @@ import {
 } from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
 import { inboundAliasAddress, isLegacyPlusInboundAlias } from "../_shared/inbound-alias.ts";
+import { cloudflareInboundRoutingConfigured, ensureCloudflareInboundMailbox } from "../_shared/cloudflare-email-routing.ts";
 import {
   matchOpportunity, normalizeOpportunityDomain, normalizeOpportunitySourceUrl,
   OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
@@ -1110,9 +1111,16 @@ Deno.serve(async (req: Request) => {
           .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at")
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
-        // Gmail's forwarding UI rejects plus-aliases, and Cloudflare Email Routing
-        // only delivers them via catch-all. Mint a normal mailbox local-part instead.
+        // Gmail rejects plus-aliases, and Cloudflare Email Routing only accepts
+        // exact mailboxes. Register each minted address as a Worker destination.
         if (existing && existing.status !== "disabled" && !isLegacyPlusInboundAlias(existing.alias_address)) {
+          if (cloudflareInboundRoutingConfigured(CFG)) {
+            try {
+              await ensureCloudflareInboundMailbox(CFG, existing.alias_address);
+            } catch {
+              return json({ error: "CaughtUp could not prepare a Gmail forwarding address. Try again.", code: "inbound_mailbox_unavailable" }, 503);
+            }
+          }
           return json({ forwarding: existing, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
         }
         const bytes = crypto.getRandomValues(new Uint8Array(24));
@@ -1129,6 +1137,13 @@ Deno.serve(async (req: Request) => {
         const { data: created, error } = await operation
           .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at").single();
         if (error) throw new Error(error.message);
+        if (cloudflareInboundRoutingConfigured(CFG)) {
+          try {
+            await ensureCloudflareInboundMailbox(CFG, created.alias_address, existing?.alias_address);
+          } catch {
+            return json({ error: "CaughtUp could not prepare a Gmail forwarding address. Try again.", code: "inbound_mailbox_unavailable" }, 503);
+          }
+        }
         return json({ forwarding: created, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
       }
 

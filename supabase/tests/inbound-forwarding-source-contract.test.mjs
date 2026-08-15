@@ -20,6 +20,19 @@ test("Gmail-safe inbound aliases do not use plus-addressing", () => {
   assert.match(worker, /\^\(\?:inbox\\\+\|u\)\(\[a-z0-9\]\{32,96\}\)/);
 });
 
+test("each inbound alias is registered as an exact Cloudflare Email Routing mailbox", () => {
+  const routing = read("../functions/_shared/cloudflare-email-routing.ts");
+  assert.match(routing, /ia_cloudflare_api_token/);
+  assert.match(routing, /email\/routing\/rules/);
+  assert.match(routing, /type: "literal"/);
+  assert.match(routing, /caughtup-inbound-email/);
+  assert.match(routing, /ensureCloudflareInboundMailbox/);
+  assert.match(api, /ensureCloudflareInboundMailbox\(CFG, existing\.alias_address\)/);
+  assert.match(api, /ensureCloudflareInboundMailbox\(CFG, created\.alias_address, existing\?\.alias_address\)/);
+  assert.match(api, /code: "inbound_mailbox_unavailable"/);
+  assert.doesNotMatch(routing, /console\.(?:log|error|info|debug)/);
+});
+
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
   assert.equal((worker.match(/message\.raw/g) ?? []).length, 4, "raw should appear only in size/stream handling and payload metadata");
   assert.match(worker, /new Response\(message\.raw\)\.arrayBuffer\(\)/);
