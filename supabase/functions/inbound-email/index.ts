@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { inboundSystemPrompt, triageInbound, type TriageResult } from "../_shared/inbound-triage.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
+import { envelopeMatchesAliasToken } from "../_shared/inbound-alias.ts";
 import {
   applyContactPreference, collaborationMediaKitRelevant, contactSafetyViolations, deliveryDecision,
   draftSafetyViolations, enforceConfiguredSignoff, explicitPortfolioRequest, finalizePortfolioDraft,
@@ -76,7 +77,7 @@ async function validSignature(req: Request, body: string): Promise<boolean> {
 function validatePayload(raw: any): InboundPayload | null {
   const token = clean(raw?.alias_token, 96).toLowerCase();
   const envelopeTo = clean(raw?.envelope_to, 320).toLowerCase();
-  if (!/^[a-z0-9]{32,96}$/.test(token) || envelopeTo !== `inbox+${token}@inbound.getcaughtup.io`) return null;
+  if (!/^[a-z0-9]{32,96}$/.test(token) || !envelopeMatchesAliasToken(envelopeTo, token)) return null;
   const received = new Date(String(raw?.received_at ?? ""));
   const rawSize = Number(raw?.raw_size);
   if (!Number.isFinite(received.getTime()) || !Number.isInteger(rawSize) || rawSize < 1 || rawSize > 10_000_000) return null;

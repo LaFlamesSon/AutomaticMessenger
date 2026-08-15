@@ -12,6 +12,14 @@ const acceptanceThread = read("../migrations/20260814043733_allow_forwarding_acc
 const autoSendAcceptance = read("../migrations/20260814045411_forwarding_auto_send_acceptance.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
 
+test("Gmail-safe inbound aliases do not use plus-addressing", () => {
+  assert.match(api, /inboundAliasAddress\(token\)/);
+  assert.match(api, /isLegacyPlusInboundAlias\(existing\.alias_address\)/);
+  assert.doesNotMatch(api, /inbox\+\$\{token\}@inbound\.getcaughtup\.io/);
+  assert.match(ingest, /envelopeMatchesAliasToken\(envelopeTo, token\)/);
+  assert.match(worker, /\^\(\?:inbox\\\+\|u\)\(\[a-z0-9\]\{32,96\}\)/);
+});
+
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
   assert.equal((worker.match(/message\.raw/g) ?? []).length, 4, "raw should appear only in size/stream handling and payload metadata");
   assert.match(worker, /new Response\(message\.raw\)\.arrayBuffer\(\)/);

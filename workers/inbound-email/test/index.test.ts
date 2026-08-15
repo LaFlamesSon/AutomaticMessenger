@@ -5,7 +5,7 @@ import { aliasToken, inboundPayload, signPayload } from "../src/index";
 function message(overrides: Partial<ForwardableEmailMessage> = {}): ForwardableEmailMessage {
   return {
     from: "brand@example.com",
-    to: "inbox+abcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io",
+    to: "uabcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io",
     raw: new ReadableStream<Uint8Array>(),
     rawSize: 321,
     headers: new Headers(),
@@ -17,7 +17,9 @@ function message(overrides: Partial<ForwardableEmailMessage> = {}): ForwardableE
 }
 
 describe("inbound email envelope", () => {
-  it("accepts only tokenized CaughtUp subaddresses", () => {
+  it("accepts tokenized CaughtUp mailboxes and rejects unknown addresses", () => {
+    expect(aliasToken("uabcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io"))
+      .toBe("abcdefghijklmnopqrstuvwxyz123456");
     expect(aliasToken("inbox+abcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io"))
       .toBe("abcdefghijklmnopqrstuvwxyz123456");
     expect(aliasToken("inbox@inbound.getcaughtup.io")).toBeNull();

@@ -12,6 +12,7 @@ import {
   type StableDraftAttachment, stableDraftPreview,
 } from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
+import { inboundAliasAddress, isLegacyPlusInboundAlias } from "../_shared/inbound-alias.ts";
 import {
   matchOpportunity, normalizeOpportunityDomain, normalizeOpportunitySourceUrl,
   OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
@@ -1109,19 +1110,21 @@ Deno.serve(async (req: Request) => {
           .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at")
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
-        if (existing && existing.status !== "disabled") {
+        // Gmail's forwarding UI rejects plus-aliases, and Cloudflare Email Routing
+        // only delivers them via catch-all. Mint a normal mailbox local-part instead.
+        if (existing && existing.status !== "disabled" && !isLegacyPlusInboundAlias(existing.alias_address)) {
           return json({ forwarding: existing, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
         }
         const bytes = crypto.getRandomValues(new Uint8Array(24));
         const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-        const aliasAddress = `inbox+${token}@inbound.getcaughtup.io`;
+        const aliasAddress = inboundAliasAddress(token);
         const aliasValues = {
           gmail_account_id: account.id, alias_token_hash: await sha256(token), alias_address: aliasAddress,
           status: "pending", verification_code: null, confirmation_url: null,
           verification_received_at: null, activated_at: null, updated_at: new Date().toISOString(),
         };
         const operation = existing
-          ? supabase.from("ia_forwarding_aliases").update(aliasValues).eq("user_id", user.id).eq("status", "disabled")
+          ? supabase.from("ia_forwarding_aliases").update(aliasValues).eq("user_id", user.id)
           : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, ...aliasValues });
         const { data: created, error } = await operation
           .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at").single();

@@ -3,7 +3,8 @@ import PostalMime, { type Address, type Email } from "postal-mime";
 const MAX_RAW_BYTES = 10_000_000;
 const MAX_BODY_CHARS = 100_000;
 const MAX_ATTACHMENTS = 25;
-const TOKEN_RECIPIENT = /^inbox\+([a-z0-9]{32,96})@inbound\.getcaughtup\.io$/i;
+// Gmail forwarding rejects plus-aliases. Current mailboxes are u{token}@...
+const TOKEN_RECIPIENT = /^(?:inbox\+|u)([a-z0-9]{32,96})@inbound\.getcaughtup\.io$/i;
 
 function clean(value: unknown, max: number): string {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
