@@ -48,8 +48,8 @@
       label = "Open Gmail settings";
       action = "open_gmail";
       poll = true;
-      copy = "Paste this address in Gmail. Gmail may show it as saved before CaughtUp receives Google's confirmation email — wait here until Confirm appears.";
-    } else if (status === "google_verification_received" && confirmationUrl && !confirmOpened) {
+      copy = "Paste this address in Gmail. Leave this popup open — CaughtUp will confirm Google's email automatically. Gmail can list the address before that happens.";
+    } else if (status === "google_verification_received" && confirmationUrl && !confirmOpened && !forwarding.google_confirmed_at) {
       label = "Confirm";
       action = "confirm_google";
       poll = true;

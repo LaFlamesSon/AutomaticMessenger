@@ -1,15 +1,15 @@
-export const STABLE_INBOUND_HOST = "getcaughtup.io";
+export const STABLE_INBOUND_HOST = "inbound.getcaughtup.io";
 export const LEGACY_INBOUND_HOST = "inbound.getcaughtup.io";
 export const ROUTE_PROBE_SENDER = "setup-probe@getcaughtup.io";
 
 export const RESERVED_ALIAS_SLUGS = new Set([
   "abuse", "admin", "administrator", "api", "app", "billing", "caughtup", "contact", "email",
-  "help", "hello", "inbound", "info", "jobs", "legal", "mail", "marketing", "no-reply", "noreply",
+  "help", "hello", "inbound", "inbox", "info", "jobs", "legal", "mail", "marketing", "no-reply", "noreply",
   "postmaster", "privacy", "probe", "root", "sales", "security", "setup", "setup-probe", "status",
   "support", "team", "test", "webmaster", "www",
 ]);
 
-export const STABLE_ALIAS_RE = /^([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)@getcaughtup\.io$/i;
+export const STABLE_ALIAS_RE = /^([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)@(?:inbound\.)?getcaughtup\.io$/i;
 export const OPAQUE_ALIAS_RE = /^u([a-z0-9]{32,96})@inbound\.getcaughtup\.io$/i;
 export const LEGACY_PLUS_ALIAS_RE = /^inbox\+([a-z0-9]{32,96})@inbound\.getcaughtup\.io$/i;
 
@@ -36,12 +36,6 @@ export function stableAliasAddress(slug: string): string {
 
 export function parseInboundRecipient(envelopeTo: string): ParsedInboundRecipient | null {
   const address = envelopeTo.trim().toLowerCase();
-  const stable = address.match(STABLE_ALIAS_RE);
-  if (stable) {
-    const slug = stable[1].toLowerCase();
-    if (RESERVED_ALIAS_SLUGS.has(slug)) return null;
-    return { kind: "stable", address, aliasToken: slug, slug };
-  }
   const opaque = address.match(OPAQUE_ALIAS_RE);
   if (opaque) {
     const token = opaque[1].toLowerCase();
@@ -51,6 +45,12 @@ export function parseInboundRecipient(envelopeTo: string): ParsedInboundRecipien
   if (legacy) {
     const token = legacy[1].toLowerCase();
     return { kind: "legacy_plus", address, aliasToken: token, token };
+  }
+  const stable = address.match(STABLE_ALIAS_RE);
+  if (stable) {
+    const slug = stable[1].toLowerCase();
+    if (RESERVED_ALIAS_SLUGS.has(slug)) return null;
+    return { kind: "stable", address, aliasToken: slug, slug };
   }
   return null;
 }

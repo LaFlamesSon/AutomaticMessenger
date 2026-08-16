@@ -16,8 +16,8 @@ const autoSendAcceptance = read("../migrations/20260814045411_forwarding_auto_se
 const worker = read("../../workers/inbound-email/src/index.ts");
 const recipient = read("../../workers/inbound-email/src/recipient.ts");
 
-test("stable aliases use the Gmail local part on getcaughtup.io without plus-addressing", () => {
-  assert.match(aliasHelper, /STABLE_INBOUND_HOST = "getcaughtup\.io"/);
+test("stable aliases use the Gmail local part on inbound.getcaughtup.io without plus-addressing", () => {
+  assert.match(aliasHelper, /STABLE_INBOUND_HOST = "inbound\.getcaughtup\.io"/);
   assert.match(aliasHelper, /proposedAliasSlug/);
   assert.match(aliasHelper, /gmail\.com|googlemail\.com/);
   assert.match(api, /stableAliasAddress\(slug\)/);
@@ -67,7 +67,9 @@ test("ingest rejects unsigned or stale calls before resolving an alias", () => {
 
 test("forwarding verification trusts only Google's sender and allowlisted confirmation host", () => {
   assert.match(ingest, /GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google\.com"/);
-  assert.match(ingest, /payload\.envelope_from !== GOOGLE_FORWARDING_SENDER \|\| parseStrictRecipient\(payload\.from\) !== GOOGLE_FORWARDING_SENDER/);
+  assert.match(ingest, /googleForwardingSenderTrusted/);
+  assert.match(ingest, /autoConfirmGoogleForwarding/);
+  assert.match(ingest, /parseStrictRecipient\(payload\.from\) !== GOOGLE_FORWARDING_SENDER/);
   assert.match(ingest, /parsed\.hostname !== "mail-settings\.google\.com"/);
   assert.match(ingest, /pathname\.replace\(\/%5B\/gi, "\["\)/);
   assert.match(ingest, /path\.startsWith\("\/mail\/vf-"\)/);

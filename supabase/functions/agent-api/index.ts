@@ -46,7 +46,7 @@ const REQUIRED_QUESTIONS = new Set([
 
 class InputError extends Error {}
 
-const FORWARDING_PUBLIC_SELECT = "status,alias_address,alias_slug,legacy_alias_address,verification_code,confirmation_url,verification_received_at,activated_at,route_verified_at,updated_at";
+const FORWARDING_PUBLIC_SELECT = "status,alias_address,alias_slug,legacy_alias_address,verification_code,confirmation_url,verification_received_at,google_confirmed_at,activated_at,route_verified_at,updated_at";
 
 function gmailForwardingSettingsUrl(address?: string | null): string {
   const account = address ? `?authuser=${encodeURIComponent(address)}` : "";
@@ -1179,6 +1179,13 @@ Deno.serve(async (req: Request) => {
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
         if (existing && existing.status !== "disabled" && isStableInboundAlias(existing.alias_address) && existing.alias_slug) {
+          const advertised = stableAliasAddress(existing.alias_slug);
+          if (existing.alias_address !== advertised) {
+            const { error: migrateError } = await supabase.from("ia_forwarding_aliases").update({
+              alias_address: advertised, alias_token_hash: await sha256(existing.alias_slug), updated_at: new Date().toISOString(),
+            }).eq("user_id", user.id).eq("id", existing.id);
+            if (migrateError) throw new Error(migrateError.message);
+          }
           if (cloudflareInboundRoutingConfigured(CFG) && isOpaqueOrLegacyInboundAlias(existing.legacy_alias_address || "")) {
             try { await ensureCloudflareInboundMailbox(CFG, existing.legacy_alias_address); } catch { /* catch-all owns stable aliases */ }
           }
@@ -1201,13 +1208,12 @@ Deno.serve(async (req: Request) => {
           verification_received_at: remint ? null : existing.verification_received_at,
           activated_at: remint ? null : existing.activated_at,
           route_verified_at: remint ? null : existing.route_verified_at,
-          alias_token_hash: remint ? await sha256(slug) : undefined,
+          alias_token_hash: await sha256(slug),
           updated_at: new Date().toISOString(),
         };
-        if (aliasValues.alias_token_hash === undefined) delete aliasValues.alias_token_hash;
         const operation = existing
           ? supabase.from("ia_forwarding_aliases").update(aliasValues).eq("user_id", user.id)
-          : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, alias_token_hash: await sha256(slug), ...aliasValues });
+          : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, ...aliasValues });
         const { error } = await operation.select("id").single();
         if (error) throw new Error(error.message);
         if (cloudflareInboundRoutingConfigured(CFG) && isOpaqueOrLegacyInboundAlias(String(keepLegacy || ""))) {

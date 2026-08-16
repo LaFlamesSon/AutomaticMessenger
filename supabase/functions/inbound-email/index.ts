@@ -117,8 +117,23 @@ function canonicalGoogleConfirmationUrl(candidate: string): string | null {
   }
 }
 
+function googleForwardingSenderTrusted(payload: InboundPayload): boolean {
+  if (parseStrictRecipient(payload.from) !== GOOGLE_FORWARDING_SENDER) return false;
+  const envelope = parseStrictRecipient(payload.envelope_from) ?? payload.envelope_from.trim().toLowerCase();
+  return envelope === GOOGLE_FORWARDING_SENDER || /@(?:google|googlemail)\.com$/.test(envelope);
+}
+
+async function autoConfirmGoogleForwarding(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15_000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function googleForwardingConfirmation(payload: InboundPayload): { code: string | null; url: string | null } | null {
-  if (payload.envelope_from !== GOOGLE_FORWARDING_SENDER || parseStrictRecipient(payload.from) !== GOOGLE_FORWARDING_SENDER) return null;
+  if (!googleForwardingSenderTrusted(payload)) return null;
   if (!/gmail forwarding confirmation/i.test(payload.subject)) return null;
   const code = payload.text.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1] ?? null;
   const urls = payload.text.match(/https:\/\/mail-settings\.google\.com\/[^\s<>'"]+/gi) ?? [];
@@ -279,14 +294,18 @@ Deno.serve(async (req: Request) => {
 
   const confirmation = googleForwardingConfirmation(payload);
   if (confirmation) {
+    const now = new Date().toISOString();
     const update: Record<string, unknown> = {
-      status: "google_verification_received", verification_received_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      status: "google_verification_received", verification_received_at: now, updated_at: now,
     };
     if (confirmation.code) update.verification_code = confirmation.code;
     if (confirmation.url) update.confirmation_url = confirmation.url;
+    if (confirmation.url && await autoConfirmGoogleForwarding(confirmation.url)) update.google_confirmed_at = now;
     const { error } = await supabase.from("ia_forwarding_aliases").update(update).eq("id", alias.id)
       .in("status", ["address_ready", "google_verification_received"]);
-    return error ? json({ error: "verification state failed" }, 503) : json({ ok: true, verification_received: true });
+    return error ? json({ error: "verification state failed" }, 503) : json({
+      ok: true, verification_received: true, google_confirmed: Boolean(update.google_confirmed_at),
+    });
   }
 
   const probeToken = routeProbeToken(payload);

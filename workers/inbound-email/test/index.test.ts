@@ -23,6 +23,7 @@ describe("inbound email envelope", () => {
     expect(aliasToken("inbox+abcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io"))
       .toBe("abcdefghijklmnopqrstuvwxyz123456");
     expect(aliasToken("yafet2132@getcaughtup.io")).toBe("yafet2132");
+    expect(aliasToken("yafet2132@inbound.getcaughtup.io")).toBe("yafet2132");
     expect(aliasToken("support@getcaughtup.io")).toBeNull();
     expect(aliasToken("inbox@inbound.getcaughtup.io")).toBeNull();
     expect(aliasToken("inbox+abc@example.com")).toBeNull();
