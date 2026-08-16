@@ -70,6 +70,9 @@ test("forwarding verification trusts only Google's sender and allowlisted confir
   assert.match(ingest, /googleForwardingSenderTrusted/);
   assert.match(ingest, /autoConfirmGoogleForwarding/);
   assert.match(ingest, /parseStrictRecipient\(payload\.from\) !== GOOGLE_FORWARDING_SENDER/);
+  assert.match(ingest, /payload\.subject\.match\(\/\^\\\(#\(\[0-9\]\{6,20\}\)\\\)\/\)/);
+  assert.match(worker, /googleForwardingControlText/);
+  assert.match(worker, /mail-settings\\\.google\\\.com\\\/mail\\\/vf-/);
   assert.match(ingest, /parsed\.hostname !== "mail-settings\.google\.com"/);
   assert.match(ingest, /pathname\.replace\(\/%5B\/gi, "\["\)/);
   assert.match(ingest, /path\.startsWith\("\/mail\/vf-"\)/);

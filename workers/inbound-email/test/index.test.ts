@@ -56,6 +56,21 @@ describe("inbound email envelope", () => {
     expect(payload).not.toHaveProperty("html");
   });
 
+  it("preserves only Gmail forwarding control data from an HTML confirmation", () => {
+    const url = "https://mail-settings.google.com/mail/vf-%5Btoken%5D-proof";
+    const email: Email = {
+      headers: [{ key: "from", originalKey: "From", value: "Gmail Team <forwarding-noreply@google.com>" }],
+      headerLines: [],
+      subject: "(#12345678) Gmail Forwarding Confirmation - Receive Mail",
+      html: `<p>Confirm forwarding</p><a href="${url}">Confirm</a>`,
+      attachments: [],
+    };
+    const payload = inboundPayload(message({ from: "forwarding-noreply@google.com" }), email, "abcdefghijklmnopqrstuvwxyz123456");
+    expect(payload.text).toContain("Confirmation code: 12345678");
+    expect(payload.text).toContain(url);
+    expect(payload).not.toHaveProperty("html");
+  });
+
   it("produces P-256 signatures without exposing the private key", async () => {
     const pair = await crypto.subtle.generateKey(
       { name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"],

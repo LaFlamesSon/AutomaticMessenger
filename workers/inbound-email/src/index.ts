@@ -4,6 +4,7 @@ import { parseInboundRecipient } from "./recipient";
 const MAX_RAW_BYTES = 10_000_000;
 const MAX_BODY_CHARS = 100_000;
 const MAX_ATTACHMENTS = 25;
+const GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google.com";
 
 function clean(value: unknown, max: number): string {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
@@ -41,6 +42,23 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+function googleForwardingControlText(
+  message: ForwardableEmailMessage,
+  email: Email,
+  text: string,
+): string {
+  const subject = clean(email.subject, 500);
+  if (clean(message.from, 320).toLowerCase() !== GOOGLE_FORWARDING_SENDER ||
+      !/gmail forwarding confirmation/i.test(subject)) return text;
+  const code = subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
+    ?? text.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1];
+  const searchableHtml = String(email.html ?? "").replace(/&amp;/gi, "&");
+  const url = `${text}\n${searchableHtml}`
+    .match(/https:\/\/mail-settings\.google\.com\/mail\/vf-[^\s<>'"]+/i)?.[0]
+    ?.replace(/[).,]+$/, "");
+  return [text, code ? `Confirmation code: ${code}` : "", url ?? ""].filter(Boolean).join("\n");
+}
+
 function attachmentSize(content: ArrayBuffer | Uint8Array | string): number {
   if (typeof content === "string") return new TextEncoder().encode(content).byteLength;
   return content.byteLength;
@@ -51,7 +69,8 @@ export function aliasToken(recipient: string): string | null {
 }
 
 export function inboundPayload(message: ForwardableEmailMessage, email: Email, token: string): Record<string, unknown> {
-  const text = String(email.text ?? "").trim() || htmlToText(String(email.html ?? ""));
+  const parsedText = String(email.text ?? "").trim() || htmlToText(String(email.html ?? ""));
+  const text = googleForwardingControlText(message, email, parsedText);
   const parsedDate = new Date(String(email.date ?? ""));
   return {
     alias_token: token,

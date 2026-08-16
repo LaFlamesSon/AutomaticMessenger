@@ -135,7 +135,9 @@ async function autoConfirmGoogleForwarding(url: string): Promise<boolean> {
 function googleForwardingConfirmation(payload: InboundPayload): { code: string | null; url: string | null } | null {
   if (!googleForwardingSenderTrusted(payload)) return null;
   if (!/gmail forwarding confirmation/i.test(payload.subject)) return null;
-  const code = payload.text.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1] ?? null;
+  const code = payload.subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
+    ?? payload.text.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1]
+    ?? null;
   const urls = payload.text.match(/https:\/\/mail-settings\.google\.com\/[^\s<>'"]+/gi) ?? [];
   let url: string | null = null;
   for (const candidate of urls) {
