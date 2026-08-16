@@ -150,6 +150,21 @@ async function deliver(message: ForwardableEmailMessage, env: Env): Promise<void
     body,
     signal: AbortSignal.timeout(30_000),
   });
+  if (clean(message.from, 320).toLowerCase() === GOOGLE_FORWARDING_SENDER) {
+    const result: Record<string, unknown> = await response.clone().json<Record<string, unknown>>()
+      .catch(() => ({} as Record<string, unknown>));
+    console.log(JSON.stringify({
+      kind: "google_forwarding_diagnostic",
+      response_status: response.status,
+      result: result.verification_received === true
+        ? "verification_received"
+        : typeof result.discarded === "string" ? result.discarded : result.error ? "error" : "other",
+      subject_marker: /gmail forwarding confirmation/i.test(String(email.subject ?? "")),
+      from_marker: header(email, "from", 500).toLowerCase().includes(GOOGLE_FORWARDING_SENDER),
+      code_marker: /confirmation\s+code\s*:\s*[0-9]{6,20}/i.test(body),
+      url_marker: /https:\/\/mail-settings\.google\.com\/mail\/vf-/i.test(body),
+    }));
+  }
   if (!response.ok) throw new Error(`inbound_ingest_${response.status}`);
 }
 
