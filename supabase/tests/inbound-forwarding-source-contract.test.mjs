@@ -191,8 +191,10 @@ test("route verification requires an external probe through Gmail, not a user cl
   assert.match(api, /kind: "route_probe"/);
   assert.match(sending, /setup-probe@getcaughtup\.io/);
   assert.match(sending, /email\/sending\/send/);
-  assert.match(ingest, /ROUTE_PROBE_SENDER/);
+  assert.match(ingest, /routeProbeClaimToken/);
   assert.match(ingest, /claimRouteProbe/);
+  assert.match(aliasHelper, /gmailCafForwardedAlias/);
+  assert.match(aliasHelper, /routeProbeClaimToken/);
   assert.match(ingest, /status: "route_verified"/);
   assert.match(api, /inbound_forwarding_ready: routeVerifiedStatus/);
   assert.doesNotMatch(api, /status: "active", activated_at: now/);

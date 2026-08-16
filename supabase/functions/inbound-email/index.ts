@@ -3,7 +3,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { inboundSystemPrompt, triageInbound, type TriageResult } from "../_shared/inbound-triage.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
 import {
-  envelopeMatchesAliasToken, parseInboundRecipient, ROUTE_PROBE_SENDER, routeVerifiedStatus,
+  envelopeMatchesAliasToken, parseInboundRecipient, routeProbeClaimToken, routeVerifiedStatus,
 } from "../_shared/inbound-alias.ts";
 import {
   applyContactPreference, collaborationMediaKitRelevant, contactSafetyViolations, deliveryDecision,
@@ -287,9 +287,14 @@ async function archiveAutoSentReply(
   });
 }
 
-function routeProbeToken(payload: InboundPayload): string | null {
-  if (payload.envelope_from !== ROUTE_PROBE_SENDER || parseStrictRecipient(payload.from) !== ROUTE_PROBE_SENDER) return null;
-  return payload.subject.match(/CaughtUp connection check ([0-9a-f]{48})/i)?.[1]?.toLowerCase() ?? null;
+function routeProbeToken(payload: InboundPayload, alias: { alias_address?: string | null; legacy_alias_address?: string | null }): string | null {
+  return routeProbeClaimToken({
+    subject: payload.subject,
+    from: parseStrictRecipient(payload.from) ?? "",
+    envelopeFrom: payload.envelope_from,
+    aliasAddress: alias.alias_address,
+    legacyAliasAddress: alias.legacy_alias_address,
+  });
 }
 
 async function lookupForwardingAlias(supabase: any, recipient: { kind: string; address: string }, aliasToken: string): Promise<{ data: any; error: any }> {
@@ -371,7 +376,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const probeToken = routeProbeToken(payload);
+  const probeToken = routeProbeToken(payload, alias);
   if (probeToken) {
     const verified = await claimRouteProbe(supabase, alias, probeToken, payload.message_id);
     if (verified === "error") return json({ error: "route probe state failed" }, 503);

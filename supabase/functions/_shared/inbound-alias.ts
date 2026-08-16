@@ -96,6 +96,37 @@ export function proposedAliasSlug(gmailAddress: string): string {
   return local;
 }
 
+export function gmailCafForwardedAlias(envelopeFrom: string): string | null {
+  const match = String(envelopeFrom || "").trim().toLowerCase()
+    .match(/^[^+@]+\+caf_=([^=]+)=([^@]+)@(?:gmail|googlemail)\.com$/);
+  if (!match) return null;
+  return `${match[1]}@${match[2]}`;
+}
+
+export function routeProbeSubjectToken(subject: string): string | null {
+  return String(subject || "").match(/CaughtUp connection check ([0-9a-f]{48})/i)?.[1]?.toLowerCase() ?? null;
+}
+
+export function routeProbeClaimToken(input: {
+  subject: string;
+  from: string;
+  envelopeFrom: string;
+  aliasAddress?: string | null;
+  legacyAliasAddress?: string | null;
+}): string | null {
+  const token = routeProbeSubjectToken(input.subject);
+  if (!token) return null;
+  const from = String(input.from || "").trim().toLowerCase();
+  const envelope = String(input.envelopeFrom || "").trim().toLowerCase();
+  if (from === ROUTE_PROBE_SENDER || envelope === ROUTE_PROBE_SENDER) return token;
+  const forwardedTo = gmailCafForwardedAlias(envelope);
+  if (!forwardedTo) return null;
+  const aliases = [input.aliasAddress, input.legacyAliasAddress]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  return aliases.includes(forwardedTo) ? token : null;
+}
+
 export function routeVerifiedStatus(status: string | null | undefined): boolean {
   return status === "route_verified" || status === "active";
 }
