@@ -42,6 +42,20 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+function base64MimeText(rawText: string): string {
+  const decoded: string[] = [];
+  const parts = rawText.split(/\r?\n--[^\r\n]+/);
+  for (const part of parts) {
+    if (!/content-transfer-encoding:\s*base64/i.test(part)) continue;
+    const body = part.split(/\r?\n\r?\n/, 2)[1]?.replace(/\s+/g, "") ?? "";
+    if (!body || body.length > 200_000 || !/^[a-z0-9+/]+=*$/i.test(body)) continue;
+    try {
+      decoded.push(new TextDecoder().decode(Uint8Array.from(atob(body), (character) => character.charCodeAt(0))));
+    } catch { /* malformed MIME part is ignored */ }
+  }
+  return decoded.join("\n");
+}
+
 function googleForwardingControlText(
   message: ForwardableEmailMessage,
   email: Email,
@@ -54,7 +68,8 @@ function googleForwardingControlText(
   const rawControlText = raw
     ? new TextDecoder().decode(raw).replace(/=\r?\n/g, "").replace(/=3D/gi, "=").replace(/&amp;/gi, "&")
     : "";
-  const searchable = `${subject}\n${text}\n${String(email.html ?? "").replace(/&amp;/gi, "&")}\n${rawControlText}`;
+  const decodedMimeText = raw ? base64MimeText(new TextDecoder().decode(raw)) : "";
+  const searchable = `${subject}\n${text}\n${String(email.html ?? "").replace(/&amp;/gi, "&")}\n${rawControlText}\n${decodedMimeText}`;
   const code = subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
     ?? searchable.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1];
   const url = searchable
