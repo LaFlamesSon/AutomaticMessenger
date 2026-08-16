@@ -46,14 +46,18 @@ function googleForwardingControlText(
   message: ForwardableEmailMessage,
   email: Email,
   text: string,
+  raw?: ArrayBuffer,
 ): string {
   const subject = clean(email.subject, 500);
   if (clean(message.from, 320).toLowerCase() !== GOOGLE_FORWARDING_SENDER ||
       !/gmail forwarding confirmation/i.test(subject)) return text;
+  const rawControlText = raw
+    ? new TextDecoder().decode(raw).replace(/=\r?\n/g, "").replace(/=3D/gi, "=").replace(/&amp;/gi, "&")
+    : "";
+  const searchable = `${subject}\n${text}\n${String(email.html ?? "").replace(/&amp;/gi, "&")}\n${rawControlText}`;
   const code = subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
-    ?? text.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1];
-  const searchableHtml = String(email.html ?? "").replace(/&amp;/gi, "&");
-  const url = `${text}\n${searchableHtml}`
+    ?? searchable.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1];
+  const url = searchable
     .match(/https:\/\/mail-settings\.google\.com\/mail\/vf-[^\s<>'"]+/i)?.[0]
     ?.replace(/[).,]+$/, "");
   return [text, code ? `Confirmation code: ${code}` : "", url ?? ""].filter(Boolean).join("\n");
@@ -68,9 +72,14 @@ export function aliasToken(recipient: string): string | null {
   return parseInboundRecipient(recipient)?.aliasToken ?? null;
 }
 
-export function inboundPayload(message: ForwardableEmailMessage, email: Email, token: string): Record<string, unknown> {
+export function inboundPayload(
+  message: ForwardableEmailMessage,
+  email: Email,
+  token: string,
+  raw?: ArrayBuffer,
+): Record<string, unknown> {
   const parsedText = String(email.text ?? "").trim() || htmlToText(String(email.html ?? ""));
-  const text = googleForwardingControlText(message, email, parsedText);
+  const text = googleForwardingControlText(message, email, parsedText, raw);
   const parsedDate = new Date(String(email.date ?? ""));
   return {
     alias_token: token,
@@ -137,7 +146,7 @@ async function deliver(message: ForwardableEmailMessage, env: Env): Promise<void
     rfc822Attachments: true,
     attachmentEncoding: "arraybuffer",
   });
-  const body = JSON.stringify(inboundPayload(message, email, token));
+  const body = JSON.stringify(inboundPayload(message, email, token, raw));
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = await signPayload(env.IA_INBOUND_SIGNING_PRIVATE_KEY, timestamp, body);
   const response = await fetch(env.SUPABASE_INGEST_URL, {
