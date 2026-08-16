@@ -35,7 +35,11 @@ begin
     from pg_constraint con
     where con.conrelid = 'public.ia_forwarding_aliases'::regclass
       and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ~* 'status in'
+      and (
+        pg_get_constraintdef(con.oid) ~* 'status in'
+        or pg_get_constraintdef(con.oid) ~* 'status = ANY'
+        or pg_get_constraintdef(con.oid) ~* $$ARRAY\['pending'$$
+      )
   loop
     execute format('alter table public.ia_forwarding_aliases drop constraint %I', constraint_name);
   end loop;
@@ -96,7 +100,10 @@ begin
     from pg_constraint con
     where con.conrelid = 'public.ia_forwarding_test_runs'::regclass
       and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ~* 'kind in'
+      and (
+        pg_get_constraintdef(con.oid) ~* 'kind in'
+        or pg_get_constraintdef(con.oid) ~* 'kind = ANY'
+      )
   loop
     execute format('alter table public.ia_forwarding_test_runs drop constraint %I', constraint_name);
   end loop;
