@@ -62,10 +62,55 @@ function quotedPrintableText(value: string): string {
     .replace(/=([0-9a-f]{2})/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 }
 
+function decodeControlEntities(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      return code > 31 && code < 127 ? String.fromCharCode(code) : " ";
+    })
+    .replace(/&#([0-9]+);/g, (_match, decimal: string) => {
+      const code = Number.parseInt(decimal, 10);
+      return code > 31 && code < 127 ? String.fromCharCode(code) : " ";
+    });
+}
+
+function decodeControlPercents(value: string): string {
+  return value.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) => {
+    const code = Number.parseInt(hex, 16);
+    if (code === 0x5b || code === 0x5d) return _match;
+    return code > 31 && code < 127 ? String.fromCharCode(code) : _match;
+  });
+}
+
+function unwrapGoogleRedirect(value: string): string {
+  const wrapped = value.match(/https:\/\/www\.google\.com\/url\?[^'"\s<>]*[?&]q=([^&'"\s<>]+)/i)?.[1];
+  if (!wrapped) return value;
+  try { return `${value}\n${decodeURIComponent(wrapped)}`; } catch { return `${value}\n${wrapped}`; }
+}
+
+function extractGoogleConfirmUrl(searchable: string): string | null {
+  const decoded = unwrapGoogleRedirect(decodeControlPercents(decodeControlEntities(quotedPrintableText(searchable))));
+  const direct = decoded
+    .match(/https:\/\/(?:mail-settings|mail)\.google\.com\/mail\/vf-[^\s<>'"]+/i)?.[0]
+    ?.replace(/[).,]+$/, "");
+  if (direct) return direct;
+  const relative = decoded.match(/\/mail\/vf-[A-Za-z0-9%_\-\[\]]+/i)?.[0];
+  return relative ? `https://mail-settings.google.com${relative}` : null;
+}
+
+function extractGoogleConfirmCode(subject: string, searchable: string): string | null {
+  return subject.match(/\(#\s*([0-9]{6,20})\s*\)/)?.[1]
+    ?? searchable.match(/confirmation\s+code\s*[:#]?\s*([0-9]{6,20})/i)?.[1]
+    ?? searchable.match(/\bcode\s*[:#]\s*([0-9]{6,20})\b/i)?.[1]
+    ?? null;
+}
+
 function attachmentControlText(email: Email): string {
   const decoded: string[] = [];
   for (const attachment of email.attachments.slice(0, MAX_ATTACHMENTS)) {
-    if (!/^(?:text\/(?:plain|html)|message\/rfc822)$/i.test(String(attachment.mimeType ?? ""))) continue;
+    const mimeType = String(attachment.mimeType ?? "");
+    if (mimeType && !/^(?:text\/(?:plain|html)|message\/rfc822|application\/octet-stream)$/i.test(mimeType)) continue;
     if (attachmentSize(attachment.content) > 200_000) continue;
     try {
       const bytes = typeof attachment.content === "string"
@@ -89,15 +134,12 @@ function googleForwardingControlText(
   if (clean(message.from, 320).toLowerCase() !== GOOGLE_FORWARDING_SENDER ||
       !/gmail forwarding confirmation/i.test(subject)) return text;
   const rawText = raw ? new TextDecoder().decode(raw) : "";
-  const rawControlText = quotedPrintableText(rawText).replace(/&amp;/gi, "&");
+  const rawControlText = quotedPrintableText(rawText);
   const decodedMimeText = raw ? base64MimeText(rawText) : "";
-  const searchable = `${subject}\n${text}\n${String(email.html ?? "").replace(/&amp;/gi, "&")}\n` +
+  const searchable = `${subject}\n${text}\n${String(email.html ?? "")}\n` +
     `${attachmentControlText(email)}\n${rawControlText}\n${quotedPrintableText(decodedMimeText)}`;
-  const code = subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
-    ?? searchable.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1];
-  const url = searchable
-    .match(/https:\/\/mail-settings\.google\.com\/mail\/vf-[^\s<>'"]+/i)?.[0]
-    ?.replace(/[).,]+$/, "");
+  const code = extractGoogleConfirmCode(subject, searchable);
+  const url = extractGoogleConfirmUrl(searchable);
   return [text, code ? `Confirmation code: ${code}` : "", url ?? ""].filter(Boolean).join("\n");
 }
 
@@ -200,16 +242,25 @@ async function deliver(message: ForwardableEmailMessage, env: Env): Promise<void
   if (clean(message.from, 320).toLowerCase() === GOOGLE_FORWARDING_SENDER) {
     const result: Record<string, unknown> = await response.clone().json<Record<string, unknown>>()
       .catch(() => ({} as Record<string, unknown>));
+    const rawText = new TextDecoder().decode(raw);
     console.log(JSON.stringify({
       kind: "google_forwarding_diagnostic",
       response_status: response.status,
       result: result.verification_received === true
         ? "verification_received"
+        : result.google_confirmed === true
+        ? "google_confirmed"
         : typeof result.discarded === "string" ? result.discarded : result.error ? "error" : "other",
       subject_marker: /gmail forwarding confirmation/i.test(String(email.subject ?? "")),
       from_marker: header(email, "from", 500).toLowerCase().includes(GOOGLE_FORWARDING_SENDER),
       code_marker: /confirmation\s+code\s*:\s*[0-9]{6,20}/i.test(body),
-      url_marker: /https:\/\/mail-settings\.google\.com\/mail\/vf-/i.test(body),
+      url_marker: /https:\/\/(?:mail-settings|mail)\.google\.com\/mail\/vf-/i.test(body),
+      html_present: Boolean(email.html),
+      text_present: Boolean(email.text),
+      raw_has_mail_settings: /mail-settings\.google\.com/i.test(rawText),
+      raw_has_mail_google: /mail\.google\.com/i.test(rawText),
+      raw_has_vf: /\/mail\/vf-/i.test(rawText),
+      raw_has_base64: /content-transfer-encoding:\s*base64/i.test(rawText),
     }));
   }
   if (!response.ok) throw new Error(`inbound_ingest_${response.status}`);

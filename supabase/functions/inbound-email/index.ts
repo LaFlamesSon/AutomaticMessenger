@@ -111,8 +111,15 @@ function replyAddress(payload: InboundPayload): string | null {
 
 function canonicalGoogleConfirmationUrl(candidate: string): string | null {
   try {
-    const parsed = new URL(candidate.replace(/[).,]+$/, ""));
-    if (parsed.protocol !== "https:" || parsed.hostname !== "mail-settings.google.com") return null;
+    let value = candidate.replace(/[).,]+$/, "");
+    const wrapped = value.match(/https:\/\/www\.google\.com\/url\?[^'"\s<>]*[?&]q=([^&'"\s<>]+)/i)?.[1];
+    if (wrapped) {
+      try { value = decodeURIComponent(wrapped); } catch { value = wrapped; }
+    }
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || !["mail-settings.google.com", "mail.google.com"].includes(parsed.hostname)) {
+      return null;
+    }
     const path = parsed.pathname.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
     if (!path.startsWith("/mail/vf-")) return null;
     return `https://mail-settings.google.com${path}`.slice(0, 2000);
@@ -128,27 +135,38 @@ function googleForwardingSenderTrusted(payload: InboundPayload): boolean {
 }
 
 async function autoConfirmGoogleForwarding(url: string): Promise<boolean> {
+  const variants = [url];
   try {
-    const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15_000) });
-    return response.ok;
-  } catch {
-    return false;
+    const parsed = new URL(url);
+    if (parsed.hostname === "mail-settings.google.com") {
+      variants.push(`https://mail.google.com${parsed.pathname}`.slice(0, 2000));
+    }
+  } catch { /* keep the allowlisted original */ }
+  for (const candidate of variants) {
+    for (const method of ["GET", "POST"] as const) {
+      try {
+        const response = await fetch(candidate, { method, redirect: "follow", signal: AbortSignal.timeout(15_000) });
+        if (response.ok) return true;
+      } catch { /* try the next allowlisted confirm method */ }
+    }
   }
+  return false;
 }
 
 function googleForwardingConfirmation(payload: InboundPayload): { code: string | null; url: string | null } | null {
   if (!googleForwardingSenderTrusted(payload)) return null;
   if (!/gmail forwarding confirmation/i.test(payload.subject)) return null;
-  const code = payload.subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
-    ?? payload.text.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1]
+  const code = payload.subject.match(/\(#\s*([0-9]{6,20})\s*\)/)?.[1]
+    ?? payload.text.match(/confirmation\s+code\s*[:#]?\s*([0-9]{6,20})/i)?.[1]
+    ?? payload.text.match(/\bcode\s*[:#]\s*([0-9]{6,20})\b/i)?.[1]
     ?? null;
-  const urls = payload.text.match(/https:\/\/mail-settings\.google\.com\/[^\s<>'"]+/gi) ?? [];
+  const urls = payload.text.match(/https:\/\/(?:mail-settings\.google\.com|mail\.google\.com|www\.google\.com)\/[^\s<>'"]+/gi) ?? [];
   let url: string | null = null;
   for (const candidate of urls) {
     url = canonicalGoogleConfirmationUrl(candidate);
     if (url) break;
   }
-  return code || url ? { code, url } : null;
+  return { code, url };
 }
 
 function addressParts(value: string): { address: string; domain: string } | null {

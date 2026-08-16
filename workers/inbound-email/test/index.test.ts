@@ -71,6 +71,20 @@ describe("inbound email envelope", () => {
     expect(payload).not.toHaveProperty("html");
   });
 
+  it("extracts Gmail forwarding controls from a google.com redirect wrapper", () => {
+    const url = "https://mail-settings.google.com/mail/vf-%5Bwrapped-token%5D-proof";
+    const wrapped = `https://www.google.com/url?q=${encodeURIComponent(url)}&amp;source=gmail`;
+    const email: Email = {
+      headers: [{ key: "from", originalKey: "From", value: "Gmail Team <forwarding-noreply@google.com>" }],
+      headerLines: [],
+      subject: "Gmail Forwarding Confirmation - Receive Mail",
+      html: `<p>Confirm forwarding</p><a href="${wrapped}">Confirm</a>`,
+      attachments: [],
+    };
+    const payload = inboundPayload(message({ from: "forwarding-noreply@google.com" }), email, "abcdefghijklmnopqrstuvwxyz123456");
+    expect(payload.text).toContain(url);
+  });
+
   it("extracts Gmail forwarding controls from quoted-printable raw MIME in memory", () => {
     const url = "https://mail-settings.google.com/mail/vf-%5Braw-token%5D-proof";
     const email: Email = {
