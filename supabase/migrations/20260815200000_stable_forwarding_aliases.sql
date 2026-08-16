@@ -16,6 +16,9 @@ alter table public.ia_forwarding_aliases
   add column if not exists google_confirmed_at timestamptz,
   add column if not exists route_verified_at timestamptz;
 
+alter table public.ia_forwarding_aliases
+  drop constraint if exists ia_forwarding_aliases_status_check;
+
 do $$
 declare
   constraint_name text;
@@ -38,7 +41,6 @@ begin
       and (
         pg_get_constraintdef(con.oid) ~* 'status in'
         or pg_get_constraintdef(con.oid) ~* 'status = ANY'
-        or pg_get_constraintdef(con.oid) ~* $$ARRAY\['pending'$$
       )
   loop
     execute format('alter table public.ia_forwarding_aliases drop constraint %I', constraint_name);
