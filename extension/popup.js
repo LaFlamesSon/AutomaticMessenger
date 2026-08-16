@@ -40,6 +40,8 @@ let forwardingPollTimer = null;
 let intakePollTimer = null;
 let intakeGateActive = false;
 let intakeConfirmAlias = "";
+let memoryLoaded = false;
+let memoryLoading = false;
 
 function isForwardedDraft(email) {
   return email?.ingestion_source === "forwarded";
@@ -505,6 +507,7 @@ function showSetup(show, message = "", mode = "app") {
 function applyIdentity(result = {}) {
   appEmail = result.email || appEmail;
   gmailAddress = result.gmail_address || result.profile?.gmail_address || gmailAddress;
+  if ($("deleteDataConfirmation")) $("deleteDataConfirmation").placeholder = appEmail || "you@example.com";
 }
 
 function connectedIdentityLabel() {
@@ -529,6 +532,7 @@ function activateTab(name, focus = true) {
   if (name === "kits" && !kitsLoaded && !kitsLoading) loadKits();
   if (name === "calendar" && !calendarLoaded && !calendarLoading) loadCalendar();
   if (name === "settings" && !settingsLoaded) loadProfile();
+  if (name === "settings" && !memoryLoaded && !memoryLoading) loadAgentMemory();
 }
 
 const enabledPrimaryTabs = Array.from(document.querySelectorAll("#tabs [role=tab]:not(:disabled)"));
@@ -575,6 +579,8 @@ async function signOutCaughtUp() {
   calendarLoaded = false;
   calendarLoading = false;
   settingsLoaded = false;
+  memoryLoaded = false;
+  memoryLoading = false;
   opportunitiesLoaded = false;
   opportunitiesLoading = false;
   currentOpportunityState = null;
@@ -1989,6 +1995,168 @@ $("setupIntakeAction").addEventListener("click", async () => {
   }
 });
 
+function memoryKindLabel(kind) {
+  return {
+    niche: "Creator niche",
+    recurring_brand: "Recurring brand",
+    inquiry_pattern: "Inquiry pattern",
+    campaign_type: "Campaign type",
+    missing_information: "Often missing",
+  }[kind] || "Observed pattern";
+}
+
+function renderAgentMemory(result) {
+  const list = $("memoryList");
+  list.replaceChildren();
+  const evidenceByObservation = new Map();
+  (result.evidence || []).forEach((evidence) => {
+    const rows = evidenceByObservation.get(evidence.observation_id) || [];
+    rows.push(evidence);
+    evidenceByObservation.set(evidence.observation_id, rows);
+  });
+  const observations = result.observations || [];
+  if (!observations.length) {
+    stateCard("memoryStatus", "No learned email patterns yet.");
+    list.classList.add("hidden");
+    return;
+  }
+  $("memoryStatus").classList.add("hidden");
+  observations.forEach((observation) => {
+    const card = create("article", `memory-item ${observation.status}`);
+    const head = create("div", "memory-item-head");
+    const title = create("div");
+    title.append(create("strong", "", memoryKindLabel(observation.kind)));
+    title.append(create("p", "", observation.value_text));
+    head.append(title, create("span", `badge ${observation.status === "confirmed" ? "sent" : observation.status === "rejected" ? "failed" : "proposed"}`, observation.status));
+    card.append(head);
+    card.append(create("p", "", `${observation.evidence_count} supporting message${Number(observation.evidence_count) === 1 ? "" : "s"} · ${Math.round(Number(observation.confidence || 0) * 100)}% confidence`));
+    const evidenceRows = evidenceByObservation.get(observation.id) || [];
+    if (evidenceRows.length) {
+      const details = create("details");
+      const summary = create("summary", "", "View evidence");
+      details.append(summary);
+      evidenceRows.slice(0, 3).forEach((evidence) => {
+        details.append(create("p", "", `${evidence.sender_address || "Sender"} — ${evidence.subject || "(no subject)"}: ${evidence.excerpt || "No excerpt"}`));
+      });
+      card.append(details);
+    }
+    const actions = create("div", "memory-item-actions");
+    [["Confirm", "confirmed"], ["Reject", "rejected"]].forEach(([label, status]) => {
+      if (observation.status === status) return;
+      const button = create("button", status === "rejected" ? "ghost danger" : "ghost", label);
+      button.type = "button";
+      button.addEventListener("click", async () => {
+        setBusy(button, true, "Saving...");
+        try {
+          await api("memory_set_status", { id: observation.id, status });
+          await loadAgentMemory(true);
+        } catch (error) {
+          setStatus("memoryActionStatus", Core.safeErrorMessage(error), "error");
+          setBusy(button, false);
+        }
+      });
+      actions.append(button);
+    });
+    card.append(actions);
+    list.append(card);
+  });
+  list.classList.remove("hidden");
+}
+
+async function loadAgentMemory(force = false) {
+  if (memoryLoading) return;
+  if (memoryLoaded && !force) return;
+  memoryLoading = true;
+  stateCard("memoryStatus", "Loading learned patterns...");
+  try {
+    const result = await readApi("memory_get");
+    renderAgentMemory(result);
+    memoryLoaded = true;
+  } catch (error) {
+    stateCard("memoryStatus", Core.safeErrorMessage(error), "error", () => loadAgentMemory(true));
+  } finally {
+    memoryLoading = false;
+  }
+}
+
+$("refreshMemory").addEventListener("click", () => { void loadAgentMemory(true); });
+
+$("resetMemory").addEventListener("click", async () => {
+  if (!confirm("Reset all learned email patterns? Your archived messages and creator-owned settings will remain.")) return;
+  const button = $("resetMemory");
+  setBusy(button, true, "Resetting...");
+  try {
+    await api("memory_reset", { confirm: true });
+    memoryLoaded = false;
+    await loadAgentMemory(true);
+    setStatus("memoryActionStatus", "Learned patterns reset. Archived messages were not deleted.", "success");
+  } catch (error) {
+    setStatus("memoryActionStatus", Core.safeErrorMessage(error), "error");
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+$("exportArchive").addEventListener("click", async () => {
+  const button = $("exportArchive");
+  setBusy(button, true, "Preparing...");
+  setStatus("memoryActionStatus", "Preparing your export...");
+  try {
+    let page = 0;
+    let result = await readApi("archive_export", { page }, { timeout: 30_000 });
+    const archive = {
+      export_version: result.export_version,
+      generated_at: result.generated_at,
+      account_email: result.account_email,
+      profile: result.profile,
+      observations: result.observations || [],
+      threads: result.threads || [],
+      messages: [...(result.messages || [])],
+      evidence: [...(result.evidence || [])],
+    };
+    while (result.has_more && page < 199) {
+      page += 1;
+      result = await readApi("archive_export", { page }, { timeout: 30_000 });
+      archive.messages.push(...(result.messages || []));
+      archive.evidence.push(...(result.evidence || []));
+    }
+    if (result.has_more) throw new Core.ApiError("This archive is too large for an extension export. Contact support.", 413, "too_large");
+    const blob = new Blob([JSON.stringify(archive, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = create("a");
+    link.href = url;
+    link.download = `caughtup-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus("memoryActionStatus", `Exported ${archive.messages.length} archived messages.`, "success");
+  } catch (error) {
+    setStatus("memoryActionStatus", Core.safeErrorMessage(error), "error");
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+$("deleteCaughtUpData").addEventListener("click", async () => {
+  const confirmation = $("deleteDataConfirmation").value.trim().toLowerCase();
+  if (!appEmail || confirmation !== appEmail.toLowerCase()) {
+    setStatus("deleteDataStatus", "Enter your signed-in email exactly.", "error");
+    return;
+  }
+  if (!confirm("Permanently delete all CaughtUp data? This cannot be undone, and Gmail forwarding must be removed separately in Gmail.")) return;
+  const button = $("deleteCaughtUpData");
+  setBusy(button, true, "Deleting...");
+  try {
+    await api("caughtup_data_delete", { confirmation });
+    await signOutCaughtUp();
+    setStatus("setupStatus", "Your CaughtUp data was deleted. Remove the forwarding rule in Gmail if it is still enabled.", "success");
+  } catch (error) {
+    setStatus("deleteDataStatus", Core.safeErrorMessage(error), "error");
+    setBusy(button, false);
+  }
+});
+
 async function loadProfile() {
   stateCard("settingsStatus", "Loading settings...");
   $("settingsForm").classList.add("hidden");
@@ -2004,6 +2172,7 @@ async function loadProfile() {
     $("settingsForm").classList.remove("hidden");
     settingsLoaded = true;
     await loadForwarding();
+    await loadAgentMemory();
   } catch (error) {
     stateCard("settingsStatus", Core.safeErrorMessage(error), "error", loadProfile);
   }

@@ -142,6 +142,20 @@ test("dynamic rendering avoids innerHTML", () => {
   assert.match(script, /\.textContent\s*=/);
 });
 
+test("Settings exposes reviewable agent memory, export, reset, and verified deletion", () => {
+  for (const id of [
+    "memoryCard", "memoryStatus", "memoryList", "refreshMemory", "exportArchive",
+    "resetMemory", "deleteDataConfirmation", "deleteCaughtUpData", "deleteDataStatus",
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+  for (const action of [
+    "memory_get", "memory_set_status", "memory_reset", "archive_export", "caughtup_data_delete",
+  ]) assert.ok(script.includes(`"${action}"`), `missing ${action}`);
+  assert.match(html, /Email patterns are suggestions, not preferences or permission to send/);
+  assert.match(html, /Disconnecting intake or signing out does not delete them/);
+  assert.match(script, /confirmation !== appEmail\.toLowerCase\(\)/);
+  assert.match(script, /Gmail forwarding must be removed separately in Gmail/);
+});
+
 test("client targets the audited send-only API actions", () => {
   [
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare", "auto_send_confirm", "auto_send_disable",
@@ -153,6 +167,7 @@ test("client targets the audited send-only API actions", () => {
     "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss",
     "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_route_probe", "forwarding_setup_disable",
     "forwarding_test_send", "forwarded_draft_get", "forwarded_draft_update", "forwarded_send",
+    "memory_get", "memory_set_status", "memory_reset", "archive_export", "caughtup_data_delete",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
   assert.doesNotMatch(allScripts, /"(?:draft_get|draft_update|send_draft|sweep|opportunity_draft_get|opportunity_send|negotiation_test_draft_create)"/);
 });
@@ -353,7 +368,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.6.6");
+  assert.equal(manifest.version, "0.7.0");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

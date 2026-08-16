@@ -100,6 +100,7 @@ test("current extension-facing action contract is present and legacy Gmail actio
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare", "auto_send_confirm", "auto_send_disable",
     "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_route_probe", "forwarding_test_send", "forwarding_setup_disable",
     "forwarded_draft_get", "forwarded_draft_update", "forwarded_send", "media_kit_list", "learning_reset", "gmail_connect_start",
+    "inbox_threads_get", "memory_get", "memory_set_status", "memory_reset", "archive_export", "caughtup_data_delete",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ]) assert.match(api, new RegExp(`case "${action}"`));
   for (const action of ["sweep", "draft_get", "draft_update", "send_draft", "negotiation_test_draft_create"]) {

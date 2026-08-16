@@ -14,6 +14,10 @@ import {
 import {
   evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage, negotiationSummary,
 } from "../_shared/negotiations.ts";
+import {
+  archiveAddress, archiveDomain, archiveInboundMessage, archiveOutboundMessage,
+  loadRelevantInboxContext, recordInboxObservations,
+} from "../_shared/inbox-archive.ts";
 
 const MAX_DAILY_MESSAGES = 200;
 const GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google.com";
@@ -230,6 +234,41 @@ async function resolveThread(supabase: any, accountId: string, payload: InboundP
   return refs[0] ?? (payload.message_id || fallback);
 }
 
+async function archiveAutoSentReply(
+  supabase: any,
+  alias: { id: string; user_id: string },
+  account: { id: string; gmail_address: string },
+  payload: InboundPayload,
+  threadKey: string,
+  replyRecipient: string,
+  processed: any,
+  sentAt: string,
+  providerMessageId: string | null,
+): Promise<void> {
+  const senderAddress = archiveAddress(account.gmail_address);
+  await archiveOutboundMessage(supabase, {
+    userId: alias.user_id,
+    gmailAccountId: account.id,
+    forwardingAliasId: alias.id,
+    threadKey,
+    messageKey: await sha256(`${account.id}\noutbound\n${processed.outbound_message_id}`),
+    source: "auto_send",
+    senderAddress,
+    recipientAddresses: [replyRecipient],
+    senderDomain: archiveDomain(senderAddress),
+    subject: payload.subject.toLowerCase().startsWith("re:") ? payload.subject : `Re: ${payload.subject}`,
+    bodyText: String(processed.draft_text ?? ""),
+    rfcMessageId: processed.outbound_message_id,
+    inReplyTo: payload.message_id,
+    referencesHeader: sanitizeMessageIds(`${payload.references} ${payload.message_id}`),
+    category: processed.category,
+    summary: processed.summary,
+    occurredAt: sentAt,
+    processedEmailId: processed.id,
+    safeMetadata: { provider: "gmail", provider_message_id: providerMessageId },
+  });
+}
+
 function routeProbeToken(payload: InboundPayload): string | null {
   if (payload.envelope_from !== ROUTE_PROBE_SENDER || parseStrictRecipient(payload.from) !== ROUTE_PROBE_SENDER) return null;
   return payload.subject.match(/CaughtUp connection check ([0-9a-f]{48})/i)?.[1]?.toLowerCase() ?? null;
@@ -302,7 +341,11 @@ Deno.serve(async (req: Request) => {
     };
     if (confirmation.code) update.verification_code = confirmation.code;
     if (confirmation.url) update.confirmation_url = confirmation.url;
-    if (confirmation.url && await autoConfirmGoogleForwarding(confirmation.url)) update.google_confirmed_at = now;
+    if (confirmation.url && await autoConfirmGoogleForwarding(confirmation.url)) {
+      update.google_confirmed_at = now;
+      update.verification_code = null;
+      update.confirmation_url = null;
+    }
     const { error } = await supabase.from("ia_forwarding_aliases").update(update).eq("id", alias.id)
       .in("status", ["address_ready", "google_verification_received"]);
     return error ? json({ error: "verification state failed" }, 503) : json({
@@ -389,12 +432,31 @@ Deno.serve(async (req: Request) => {
   }).select("id").maybeSingle();
   let inbound = insertedInbound;
   if (inboundError || !inbound) {
-    const { data: duplicate } = await supabase.from("ia_inbound_messages").select("id,processing_status,updated_at")
+    const { data: duplicate } = await supabase.from("ia_inbound_messages").select("id,processing_status,processed_email_id,updated_at")
       .eq("forwarding_alias_id", alias.id).eq("dedupe_key", dedupeKey).maybeSingle();
     if (!duplicate) return json({ error: "inbound state failed" }, 503);
     const staleProcessing = duplicate.processing_status === "processing" &&
       new Date(duplicate.updated_at).getTime() < Date.now() - 10 * 60_000;
     if (duplicate.processing_status !== "error" && !staleProcessing) {
+      if (duplicate.processing_status === "processed" && duplicate.processed_email_id) {
+        const { data: sentRow } = await supabase.from("ia_processed_emails")
+          .select("id,delivery_status,sent_via,sent_at,gmail_sent_message_id,outbound_message_id,draft_text,category,summary")
+          .eq("id", duplicate.processed_email_id).eq("gmail_account_id", account.id).maybeSingle();
+        if (sentRow?.delivery_status === "sent" && sentRow.sent_via === "auto" && sentRow.outbound_message_id) {
+          try {
+            await archiveAutoSentReply(
+              supabase, alias, account, payload, threadKey, replyRecipient, sentRow,
+              sentRow.sent_at ?? new Date().toISOString(), sentRow.gmail_sent_message_id ?? null,
+            );
+            await supabase.from("ia_send_attempts").update({
+              status: "sent", error_code: null, updated_at: new Date().toISOString(),
+            }).eq("user_id", alias.user_id).eq("processed_email_id", sentRow.id)
+              .eq("status", "reconcile").eq("error_code", "archive_state_failed");
+          } catch {
+            return json({ error: "sent state reconciliation failed" }, 503);
+          }
+        }
+      }
       return json({ ok: true, duplicate: true, status: duplicate.processing_status });
     }
     const { data: reclaimed, error: reclaimError } = await supabase.from("ia_inbound_messages").update({
@@ -406,7 +468,30 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const [{ data: profile }, { data: edits }, { data: calendarRow }, { data: bookings }, { data: mediaKits }, { data: senderRules }] = await Promise.all([
+    const archivedInbound = await archiveInboundMessage(supabase, {
+      userId: alias.user_id,
+      gmailAccountId: account.id,
+      forwardingAliasId: alias.id,
+      threadKey,
+      messageKey: dedupeKey,
+      senderAddress: sender.address,
+      recipientAddresses: [String(account.gmail_address).toLowerCase()],
+      senderDomain: sender.domain,
+      subject: payload.subject,
+      bodyText: payload.text,
+      rfcMessageId: payload.message_id,
+      inReplyTo: payload.in_reply_to,
+      referencesHeader: payload.references,
+      occurredAt: payload.received_at,
+      inboundMessageId: inbound.id,
+      processingState: "received",
+      safeMetadata: { attachment_count: payload.attachments.length, is_forwarding_test: isForwardingTest },
+    });
+    const archiveContext = await loadRelevantInboxContext(
+      supabase, alias.user_id, account.id, threadKey, sender.domain,
+    );
+    const [{ data: profile }, { data: edits }, { data: calendarRow }, { data: bookings }, { data: mediaKits },
+      { data: senderRules }, { data: existingNegotiation }] = await Promise.all([
       supabase.from("ia_voice_profiles").select("*").eq("user_id", alias.user_id).single(),
       supabase.from("ia_draft_edits").select("original_draft,edited_final").eq("user_id", alias.user_id).order("created_at", { ascending: false }).limit(10),
       supabase.from("ia_calendar_preferences").select("contact_mode,phone_number,booking_url,timezone,weekly_availability").eq("user_id", alias.user_id).maybeSingle(),
@@ -414,6 +499,9 @@ Deno.serve(async (req: Request) => {
       supabase.from("ia_media_kits").select("id,label,best_for,storage_path,original_filename,mime_type,byte_size,brand_names,sender_domains,keywords,is_default,auto_attach")
         .eq("user_id", alias.user_id).eq("status", "active"),
       supabase.from("ia_sender_rules").select("match_type,match_value,action,priority").eq("user_id", alias.user_id).eq("enabled", true).order("priority"),
+      supabase.from("ia_negotiations")
+        .select("id,stage,media_kit_id,current_terms,threshold_status,brand_name,brand_domain,summary,updated_at")
+        .eq("user_id", alias.user_id).eq("gmail_account_id", account.id).eq("thread_id", threadKey).maybeSingle(),
     ]);
     if (!profile) throw new Error("profile_unavailable");
     const calendar: CalendarPreference = safeCalendarPreference(calendarRow, profile.timezone ?? "America/Los_Angeles");
@@ -428,16 +516,24 @@ Deno.serve(async (req: Request) => {
       const { data: configRows, error: configError } = await supabase.rpc("ia_get_config");
       if (configError) throw new Error("configuration_unavailable");
       const config = Object.fromEntries((configRows ?? []).map((row: any) => [row.name, row.secret]));
-      triage = await triageInbound(config, inboundSystemPrompt(profile, edits ?? [], calendar), payload.from, payload.subject, payload.text);
+      const retrievalContext = [
+        archiveContext,
+        existingNegotiation
+          ? `CURRENT NEGOTIATION STATE:\nstage ${clean(existingNegotiation.stage, 40)}; ` +
+            `threshold ${clean(existingNegotiation.threshold_status, 40)}; ` +
+            `summary ${clean(existingNegotiation.summary, 500)}; updated ${clean(existingNegotiation.updated_at, 40)}`
+          : "",
+      ].filter(Boolean).join("\n\n");
+      triage = await triageInbound(
+        config, inboundSystemPrompt(profile, edits ?? [], calendar, retrievalContext),
+        payload.from, payload.subject, payload.text,
+      );
     }
     const hostile = hostileInboundDetected(payload.subject, payload.text);
     if (hostile) triage = { category: "spam_or_poor_fit", summary: "Message contains untrusted instructions directed at the agent.", draft: null, wants_portfolio: false, missing_required: [], confidence: 1 };
 
     const { data: previousReplies } = await supabase.from("ia_processed_emails").select("id")
       .eq("gmail_account_id", account.id).eq("thread_id", threadKey).eq("delivery_status", "sent").limit(1);
-    const { data: existingNegotiation } = await supabase.from("ia_negotiations")
-      .select("id,stage,media_kit_id,current_terms,threshold_status,brand_name,brand_domain")
-      .eq("gmail_account_id", account.id).eq("thread_id", threadKey).maybeSingle();
     const commercialTerms = extractCommercialTerms(payload.subject, payload.text);
     const activeNegotiation = existingNegotiation && !["agreed", "declined", "closed"].includes(existingNegotiation.stage);
     const negotiationRequired = !hostile && ((commercialTerms.detected && Boolean(previousReplies?.length)) || Boolean(activeNegotiation));
@@ -529,8 +625,39 @@ Deno.serve(async (req: Request) => {
       ingestion_source: "forwarded", inbound_message_id: inbound.id, reply_to_address: replyRecipient,
       rfc_message_id: payload.message_id, rfc_in_reply_to: payload.in_reply_to, rfc_references: payload.references,
       outbound_message_id: outboundMessageId, draft_version: draftVersion, draft_updated_at: draftUpdatedAt,
-    }).select("id").single();
+    }).select("id,outbound_message_id,draft_text,category,summary").single();
     if (processedError || !processed) throw new Error("processed_email_failed");
+    await archiveInboundMessage(supabase, {
+      userId: alias.user_id,
+      gmailAccountId: account.id,
+      forwardingAliasId: alias.id,
+      threadKey,
+      messageKey: dedupeKey,
+      senderAddress: sender.address,
+      recipientAddresses: [String(account.gmail_address).toLowerCase()],
+      senderDomain: sender.domain,
+      subject: payload.subject,
+      bodyText: payload.text,
+      rfcMessageId: payload.message_id,
+      inReplyTo: payload.in_reply_to,
+      referencesHeader: payload.references,
+      category: triage.category,
+      summary: triage.summary,
+      occurredAt: payload.received_at,
+      inboundMessageId: inbound.id,
+      processedEmailId: processed.id,
+      processingState: "processed",
+      safeMetadata: { attachment_count: payload.attachments.length, is_forwarding_test: isForwardingTest },
+    });
+    try {
+      await recordInboxObservations(
+        supabase, alias.user_id, archivedInbound.id, triage.observations ?? [], sender.domain,
+      );
+    } catch (observationError) {
+      console.error(JSON.stringify({
+        component: "inbound-email", inbound_id: inbound.id, error_type: "agent_observation_failed",
+      }));
+    }
 
     if ((!isForwardingTest || forwardingTestAutoSend) && decision === "auto_send" && finalDraft && outboundMessageId) {
       const { data: freshProfile } = await supabase.from("ia_voice_profiles").select("*").eq("user_id", alias.user_id).single();
@@ -574,6 +701,17 @@ Deno.serve(async (req: Request) => {
                 await supabase.from("ia_send_attempts").update({ status: stateError ? "reconcile" : "sent",
                   gmail_message_id: sent.id ?? null, error_code: stateError ? "state_update_failed" : null, updated_at: sentAt,
                 }).eq("id", attempt.id);
+                if (!stateError) {
+                  try {
+                    await archiveAutoSentReply(
+                      supabase, alias, account, payload, threadKey, replyRecipient, processed, sentAt, sent.id ?? null,
+                    );
+                  } catch {
+                    await supabase.from("ia_send_attempts").update({
+                      status: "reconcile", error_code: "archive_state_failed", updated_at: sentAt,
+                    }).eq("id", attempt.id).eq("status", "sent");
+                  }
+                }
               } else await supabase.from("ia_send_attempts").update({ status: "reconcile", error_code: response ? `gmail_${response.status}` : "gmail_transport",
                 updated_at: new Date().toISOString() }).eq("id", attempt.id);
             } else await supabase.from("ia_send_attempts").update({ status: "failed", error_code: "draft_changed",
@@ -584,7 +722,7 @@ Deno.serve(async (req: Request) => {
       }
     }
     await supabase.from("ia_inbound_messages").update({ processing_status: "processed", processed_email_id: processed.id,
-      text_body: "", updated_at: new Date().toISOString() }).eq("id", inbound.id);
+      updated_at: new Date().toISOString() }).eq("id", inbound.id);
     if (forwardingTestRunId) {
       await supabase.from("ia_forwarding_test_runs").update({ status: "processed", processed_email_id: processed.id,
         updated_at: new Date().toISOString() }).eq("id", forwardingTestRunId).eq("status", "processing");
@@ -593,8 +731,29 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     console.error(JSON.stringify({ component: "inbound-email", inbound_id: inbound.id,
       error_type: error instanceof Error ? error.message.slice(0, 100) : "unknown" }));
+    try {
+      await archiveInboundMessage(supabase, {
+        userId: alias.user_id,
+        gmailAccountId: account.id,
+        forwardingAliasId: alias.id,
+        threadKey,
+        messageKey: dedupeKey,
+        senderAddress: sender.address,
+        recipientAddresses: [String(account.gmail_address).toLowerCase()],
+        senderDomain: sender.domain,
+        subject: payload.subject,
+        bodyText: payload.text,
+        rfcMessageId: payload.message_id,
+        inReplyTo: payload.in_reply_to,
+        referencesHeader: payload.references,
+        occurredAt: payload.received_at,
+        inboundMessageId: inbound.id,
+        processingState: "error",
+        safeMetadata: { attachment_count: payload.attachments.length, is_forwarding_test: isForwardingTest, error_code: "processing_failed" },
+      });
+    } catch { /* the primary processing failure remains authoritative */ }
     await supabase.from("ia_inbound_messages").update({ processing_status: "error", error_code: "processing_failed",
-      text_body: "", updated_at: new Date().toISOString() }).eq("id", inbound.id);
+      updated_at: new Date().toISOString() }).eq("id", inbound.id);
     return json({ error: "processing failed" }, 503);
   }
 });

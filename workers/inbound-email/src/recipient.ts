@@ -17,11 +17,11 @@ export type ParsedInboundRecipient = {
 export function parseInboundRecipient(envelopeTo: string): ParsedInboundRecipient | null {
   const address = envelopeTo.trim().toLowerCase();
   const opaque = address.match(OPAQUE_ALIAS_RE);
-  if (opaque) return { kind: "opaque", address, aliasToken: opaque[1].toLowerCase() };
+  if (opaque?.[1]) return { kind: "opaque", address, aliasToken: opaque[1].toLowerCase() };
   const legacy = address.match(LEGACY_PLUS_ALIAS_RE);
-  if (legacy) return { kind: "legacy_plus", address, aliasToken: legacy[1].toLowerCase() };
+  if (legacy?.[1]) return { kind: "legacy_plus", address, aliasToken: legacy[1].toLowerCase() };
   const stable = address.match(STABLE_ALIAS_RE);
-  if (stable) {
+  if (stable?.[1]) {
     const slug = stable[1].toLowerCase();
     if (RESERVED_ALIAS_SLUGS.has(slug)) return null;
     return { kind: "stable", address, aliasToken: slug };

@@ -83,13 +83,14 @@ test("forwarding verification trusts only Google's sender and allowlisted confir
   assert.doesNotMatch(api, /\.in\("status", \["verification_received", "active"\]\)/);
 });
 
-test("forwarded content is deduplicated, bounded, and erased after processing", () => {
+test("forwarded content is deduplicated, bounded, and retained as normalized archive data", () => {
   assert.match(migration, /unique \(forwarding_alias_id, dedupe_key\)/);
   assert.match(migration, /check \(length\(text_body\) <= 100000\)/);
   assert.match(ingest, /MAX_DAILY_MESSAGES = 200/);
   assert.match(ingest, /\.gte\("created_at", dayStart\.toISOString\(\)\)/);
   assert.match(ingest, /staleProcessing/);
-  assert.match(ingest, /text_body: ""/);
+  assert.doesNotMatch(ingest, /text_body: ""/);
+  assert.match(ingest, /archiveInboundMessage\(supabase/);
   assert.match(ingest, /processing_status: "processed"/);
 });
 

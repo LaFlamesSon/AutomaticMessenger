@@ -28,6 +28,7 @@ import {
 } from "../_shared/affiliate.ts";
 import { fetchEbayProducts, normalizeEbayCampaignId } from "../_shared/ebay.ts";
 import { fetchTikTokProducts, normalizeGrantedScopes, TIKTOK_CREATOR_SCOPE, tokenExpiryIso } from "../_shared/tiktok.ts";
+import { archiveAddress, archiveDomain, archiveOutboundMessage } from "../_shared/inbox-archive.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -42,6 +43,10 @@ const REQUIRED_QUESTIONS = new Set([
   "budget range",
   "timeline",
   "what brand materials they already have",
+]);
+const CONFIG_FREE_ACTIONS = new Set([
+  "inbox_threads_get", "memory_get", "memory_set_status", "memory_reset",
+  "archive_export", "caughtup_data_delete",
 ]);
 
 class InputError extends Error {}
@@ -425,6 +430,44 @@ async function forwardedDraftPreview(supabase: any, userId: string, row: any): P
     },
     selectedKit,
   };
+}
+
+async function archiveManualSentReply(
+  supabase: any,
+  userId: string,
+  row: any,
+  sentAt: string,
+  providerMessageId: string | null,
+): Promise<void> {
+  const recipient = parseStrictRecipient(row.reply_to_address);
+  const gmailAccount = row.ia_gmail_accounts;
+  const senderAddress = archiveAddress(gmailAccount?.gmail_address);
+  if (!recipient || !senderAddress || !row.outbound_message_id) throw new Error("archive_state_failed");
+  const { data: forwardingAlias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
+    .select("id").eq("user_id", userId).eq("gmail_account_id", row.gmail_account_id).maybeSingle();
+  if (aliasError || !forwardingAlias) throw new Error("archive_state_failed");
+  const subject = sanitizeHeader(row.subject, 500);
+  await archiveOutboundMessage(supabase, {
+    userId,
+    gmailAccountId: row.gmail_account_id,
+    forwardingAliasId: forwardingAlias.id,
+    threadKey: row.thread_id,
+    messageKey: await sha256(`${row.gmail_account_id}\noutbound\n${row.outbound_message_id}`),
+    source: "manual_extension",
+    senderAddress,
+    recipientAddresses: [recipient],
+    senderDomain: archiveDomain(senderAddress),
+    subject: subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`,
+    bodyText: String(row.draft_text ?? ""),
+    rfcMessageId: row.outbound_message_id,
+    inReplyTo: row.rfc_message_id,
+    referencesHeader: sanitizeMessageIds(`${row.rfc_references} ${row.rfc_message_id}`),
+    category: row.category,
+    summary: row.summary,
+    occurredAt: sentAt,
+    processedEmailId: row.id,
+    safeMetadata: { provider: "gmail", provider_message_id: providerMessageId },
+  });
 }
 
 async function sha256(value: string): Promise<string> {
@@ -969,9 +1012,12 @@ Deno.serve(async (req: Request) => {
   let user = await authenticate(supabase, req);
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  const { data: cfgRows, error: cfgError } = await supabase.rpc("ia_get_config");
-  if (cfgError) return json({ error: "configuration unavailable" }, 503);
-  const CFG: Record<string, string> = Object.fromEntries((cfgRows ?? []).map((r: any) => [r.name, r.secret]));
+  let CFG: Record<string, string> = {};
+  if (!CONFIG_FREE_ACTIONS.has(String(body.action ?? ""))) {
+    const { data: cfgRows, error: cfgError } = await supabase.rpc("ia_get_config");
+    if (cfgError) return json({ error: "configuration unavailable" }, 503);
+    CFG = Object.fromEntries((cfgRows ?? []).map((r: any) => [r.name, r.secret]));
+  }
 
   try {
     switch (body.action) {
@@ -1824,12 +1870,25 @@ Deno.serve(async (req: Request) => {
         if (!/^[0-9a-f]{64}$/.test(previewVersion) || idempotencyKey.length < 8) return json({ error: "preview_version and idempotency_key are required", code: "invalid_request" }, 400);
         const accountIds = await ownedAccountIds(supabase, user.id);
         const { data: row, error: rowError } = await supabase.from("ia_processed_emails")
-          .select("id,ingestion_source,delivery_status,draft_text,reply_to_address,subject,selected_media_kit_id,rfc_message_id,rfc_references,outbound_message_id,is_test,gmail_account_id,draft_updated_at,ia_gmail_accounts(refresh_token)")
+          .select("id,ingestion_source,delivery_status,draft_text,reply_to_address,subject,summary,category,thread_id,selected_media_kit_id,rfc_message_id,rfc_references,outbound_message_id,is_test,gmail_account_id,draft_updated_at,sent_at,gmail_sent_message_id,ia_gmail_accounts(refresh_token,gmail_address)")
           .eq("id", rowId).in("gmail_account_id", accountIds).eq("ingestion_source", "forwarded").maybeSingle();
         if (rowError) throw new Error(rowError.message);
         if (!row) return json({ error: "not found" }, 404);
         if (row.is_test) return json({ error: "test drafts can never be sent", code: "test_send_blocked" }, 422);
-        if (row.delivery_status === "sent") return json({ ok: true, already_sent: true });
+        if (row.delivery_status === "sent") {
+          try {
+            await archiveManualSentReply(
+              supabase, user.id, row, row.sent_at ?? new Date().toISOString(), row.gmail_sent_message_id ?? null,
+            );
+            await supabase.from("ia_send_attempts").update({
+              status: "sent", error_code: null, updated_at: new Date().toISOString(),
+            }).eq("user_id", user.id).eq("processed_email_id", row.id)
+              .eq("status", "reconcile").eq("error_code", "archive_state_failed");
+            return json({ ok: true, already_sent: true, gmail_message_id: row.gmail_sent_message_id ?? null });
+          } catch {
+            return json({ error: "sent by Gmail; state reconciliation required", code: "reconcile_required" }, 503);
+          }
+        }
         if (row.delivery_status === "sending") {
           const { data: pendingAttempt } = await supabase.from("ia_send_attempts").select("id,status,gmail_message_id,updated_at")
             .eq("user_id", user.id).eq("processed_email_id", row.id).in("status", ["sending", "sent", "reconcile"])
@@ -1917,6 +1976,14 @@ Deno.serve(async (req: Request) => {
         await supabase.from("ia_send_attempts").update({ status: stateError ? "reconcile" : "sent", gmail_message_id: sent.id ?? null,
           error_code: stateError ? "state_update_failed" : null, updated_at: sentAt }).eq("id", attemptId);
         if (stateError) return json({ error: "sent by Gmail; state reconciliation required", code: "reconcile_required" }, 503);
+        try {
+          await archiveManualSentReply(supabase, user.id, row, sentAt, sent.id ?? null);
+        } catch {
+          await supabase.from("ia_send_attempts").update({
+            status: "reconcile", error_code: "archive_state_failed", updated_at: sentAt,
+          }).eq("id", attemptId).eq("status", "sent");
+          return json({ error: "sent by Gmail; state reconciliation required", code: "reconcile_required" }, 503);
+        }
         return json({ ok: true, gmail_message_id: sent.id ?? null });
       }
 
@@ -2258,6 +2325,173 @@ Deno.serve(async (req: Request) => {
         if (error) throw new Error(error.message);
         if (!data) return json({ error: "not found" }, 404);
         return json({ ok: true });
+      }
+
+      case "inbox_threads_get": {
+        const limit = Math.max(1, Math.min(50, Number(body.limit ?? 20) || 20));
+        const { data: threads, error: threadError } = await supabase.from("ia_inbox_threads")
+          .select("id,subject,participant_addresses,sender_domains,first_message_at,last_message_at,message_count,latest_summary")
+          .eq("user_id", user.id).order("last_message_at", { ascending: false }).limit(limit);
+        if (threadError) throw new Error(threadError.message);
+        let messages: any[] = [];
+        if (body.thread_id) {
+          const threadId = cleanUuid(body.thread_id, "thread_id");
+          const { data: ownedThread, error: ownedError } = await supabase.from("ia_inbox_threads").select("id")
+            .eq("id", threadId).eq("user_id", user.id).maybeSingle();
+          if (ownedError) throw new Error(ownedError.message);
+          if (!ownedThread) return json({ error: "not found" }, 404);
+          const { data, error } = await supabase.from("ia_inbox_messages")
+            .select("id,direction,source,sender_address,recipient_addresses,subject,body_text,rfc_message_id,in_reply_to,category,summary,occurred_at")
+            .eq("user_id", user.id).eq("thread_id", threadId)
+            .order("occurred_at", { ascending: true }).limit(200);
+          if (error) throw new Error(error.message);
+          messages = data ?? [];
+        }
+        return json({ threads: threads ?? [], messages });
+      }
+
+      case "memory_get": {
+        const { data: observations, error: observationError } = await supabase.from("ia_agent_observations")
+          .select("id,kind,value_text,confidence,status,evidence_count,first_observed_at,last_observed_at,reviewed_at")
+          .eq("user_id", user.id).order("last_observed_at", { ascending: false }).limit(100);
+        if (observationError) throw new Error(observationError.message);
+        const observationIds = (observations ?? []).map((row: any) => row.id);
+        let evidence: any[] = [];
+        if (observationIds.length) {
+          const { data: evidenceRows, error: evidenceError } = await supabase.from("ia_agent_observation_evidence")
+            .select("observation_id,message_id,created_at").eq("user_id", user.id)
+            .in("observation_id", observationIds).order("created_at", { ascending: false }).limit(300);
+          if (evidenceError) throw new Error(evidenceError.message);
+          const messageIds = Array.from(new Set((evidenceRows ?? []).map((row: any) => row.message_id)));
+          const { data: messages, error: messageError } = messageIds.length
+            ? await supabase.from("ia_inbox_messages").select("id,sender_address,subject,body_text,occurred_at")
+              .eq("user_id", user.id).in("id", messageIds)
+            : { data: [], error: null };
+          if (messageError) throw new Error(messageError.message);
+          const byMessage = new Map((messages ?? []).map((row: any) => [row.id, row]));
+          evidence = (evidenceRows ?? []).map((row: any) => {
+            const message: any = byMessage.get(row.message_id);
+            return {
+              observation_id: row.observation_id,
+              message_id: row.message_id,
+              sender_address: message?.sender_address ?? "",
+              subject: message?.subject ?? "",
+              excerpt: String(message?.body_text ?? "").replace(/\s+/g, " ").trim().slice(0, 500),
+              occurred_at: message?.occurred_at ?? row.created_at,
+            };
+          });
+        }
+        return json({ observations: observations ?? [], evidence });
+      }
+
+      case "memory_set_status": {
+        const observationId = cleanUuid(body.id, "id");
+        const status = cleanString(body.status, "status", 20);
+        if (!["confirmed", "rejected"].includes(status)) {
+          return json({ error: "unsupported memory status", code: "invalid_request" }, 400);
+        }
+        const now = new Date().toISOString();
+        const { data, error } = await supabase.from("ia_agent_observations")
+          .update({ status, reviewed_at: now, updated_at: now }).eq("id", observationId)
+          .eq("user_id", user.id).select("id,kind,value_text,confidence,status,evidence_count,reviewed_at").maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!data) return json({ error: "not found" }, 404);
+        return json({ ok: true, observation: data });
+      }
+
+      case "memory_reset": {
+        if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
+        const { error } = await supabase.from("ia_agent_observations").delete().eq("user_id", user.id);
+        if (error) throw new Error(error.message);
+        return json({ ok: true });
+      }
+
+      case "archive_export": {
+        const page = Math.max(0, Math.min(100_000, Number(body.page ?? 0) || 0));
+        const pageSize = 100;
+        const start = page * pageSize;
+        const { data: messages, error: messageError } = await supabase.from("ia_inbox_messages")
+          .select("id,thread_id,direction,source,sender_address,recipient_addresses,sender_domain,subject,body_text,rfc_message_id,in_reply_to,references_header,category,summary,processing_state,occurred_at,normalization_version,safe_metadata")
+          .eq("user_id", user.id).order("occurred_at", { ascending: true }).order("id", { ascending: true })
+          .range(start, start + pageSize);
+        if (messageError) throw new Error(messageError.message);
+        const { data: evidenceRows, error: evidenceError } = await supabase.from("ia_agent_observation_evidence")
+          .select("observation_id,message_id,created_at").eq("user_id", user.id)
+          .order("created_at", { ascending: true }).order("observation_id", { ascending: true })
+          .range(start, start + pageSize);
+        if (evidenceError) throw new Error(evidenceError.message);
+        let profile: any = null;
+        let observations: any[] = [];
+        let threads: any[] = [];
+        if (page === 0) {
+          const [{ data: profileRow, error: profileError }, { data: observationRows, error: observationError },
+            { data: threadRows, error: threadError }] = await Promise.all([
+            supabase.from("ia_voice_profiles")
+              .select("display_name,occupation,services,tone,signoff,always_ask,custom_rules,reply_mode,draft_categories,auto_send_categories,timezone,updated_at")
+              .eq("user_id", user.id).maybeSingle(),
+            supabase.from("ia_agent_observations")
+              .select("id,kind,value_text,confidence,status,evidence_count,first_observed_at,last_observed_at,reviewed_at")
+              .eq("user_id", user.id).order("last_observed_at", { ascending: false }),
+            supabase.from("ia_inbox_threads")
+              .select("id,subject,participant_addresses,sender_domains,first_message_at,last_message_at,message_count,latest_summary")
+              .eq("user_id", user.id).order("last_message_at", { ascending: true }),
+          ]);
+          if (profileError || observationError || threadError) throw new Error("archive export state failed");
+          profile = profileRow;
+          observations = observationRows ?? [];
+          threads = threadRows ?? [];
+        }
+        const rows = messages ?? [];
+        const evidence = evidenceRows ?? [];
+        return json({
+          export_version: 1,
+          generated_at: new Date().toISOString(),
+          account_email: user.email,
+          page,
+          has_more: rows.length > pageSize || evidence.length > pageSize,
+          profile,
+          observations,
+          threads,
+          messages: rows.slice(0, pageSize),
+          evidence: evidence.slice(0, pageSize),
+        });
+      }
+
+      case "caughtup_data_delete": {
+        if (!user.auth_user_id) return json({ error: "verified sign-in required", code: "verified_session_required" }, 403);
+        const confirmation = cleanString(body.confirmation, "confirmation", 320).toLowerCase();
+        if (confirmation !== String(user.email).toLowerCase()) {
+          return json({ error: "email confirmation does not match", code: "confirmation_required" }, 400);
+        }
+        const { error: disconnectError } = await supabase.rpc("ia_disconnect_tiktok_connection", { p_user_id: user.id });
+        if (disconnectError) throw new Error("provider credential deletion failed");
+        const [{ data: accounts, error: accountError }, { data: kits, error: kitError }] = await Promise.all([
+          supabase.from("ia_gmail_accounts").select("refresh_token").eq("user_id", user.id),
+          supabase.from("ia_media_kits").select("storage_path").eq("user_id", user.id),
+        ]);
+        if (accountError || kitError) throw new Error("deletion inventory failed");
+        const storagePaths = (kits ?? []).map((kit: any) => kit.storage_path).filter(Boolean);
+        if (storagePaths.length) {
+          const { error: removeError } = await supabase.storage.from("media-kit").remove(storagePaths);
+          if (removeError) throw new Error("stored file deletion failed");
+        }
+        for (const account of accounts ?? []) {
+          const refreshToken = String(account.refresh_token ?? "");
+          if (refreshToken) {
+            await fetch("https://oauth2.googleapis.com/revoke", {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ token: refreshToken }),
+              signal: AbortSignal.timeout(10_000),
+            }).catch(() => null);
+          }
+        }
+        const { error: authDeleteError } = await supabase.auth.admin.deleteUser(user.auth_user_id, false);
+        if (authDeleteError) throw new Error("authentication identity deletion failed");
+        const { data: deleted, error } = await supabase.from("ia_users").delete()
+          .eq("id", user.id).select("id").maybeSingle();
+        if (error || !deleted) throw new Error("data deletion failed");
+        return json({ ok: true, deleted: true });
       }
 
       case "learning_reset": {

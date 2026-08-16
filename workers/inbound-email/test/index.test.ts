@@ -117,10 +117,30 @@ describe("inbound email envelope", () => {
     expect(payload.text).toContain(url);
   });
 
+  it("decodes quoted-printable URL octets from Google control mail", () => {
+    const url = "https://mail-settings.google.com/mail/vf-%5Bquoted-token%5D-proof";
+    const email: Email = {
+      headers: [{ key: "from", originalKey: "From", value: "Gmail Team <forwarding-noreply@google.com>" }],
+      headerLines: [],
+      subject: "Gmail Forwarding Confirmation - Receive Mail",
+      attachments: [],
+    };
+    const quoted = `Confirmation code=3A 55667788\r\n${url.replace(/%/g, "=25")}`;
+    const raw = new TextEncoder().encode(quoted).buffer as ArrayBuffer;
+    const payload = inboundPayload(
+      message({ from: "forwarding-noreply@google.com" }),
+      email,
+      "abcdefghijklmnopqrstuvwxyz123456",
+      raw,
+    );
+    expect(payload.text).toContain("Confirmation code: 55667788");
+    expect(payload.text).toContain(url);
+  });
+
   it("produces P-256 signatures without exposing the private key", async () => {
     const pair = await crypto.subtle.generateKey(
       { name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"],
-    );
+    ) as CryptoKeyPair;
     const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString("base64");
     const label = "PRIVATE KEY";
     const privateKeyPem = `-----BEGIN ${label}-----\n${pkcs8.match(/.{1,64}/g)?.join("\n")}\n-----END ${label}-----`;

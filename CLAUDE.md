@@ -1,6 +1,6 @@
 # CaughtUp current product state
 
-Updated: August 14, 2026
+Updated: August 15, 2026
 
 Read this file before making product changes. For the transition history and
 remaining acceptance work, see `docs/CAUGHTUP-WORK-COMPLETED-20260814.md` and
@@ -19,16 +19,19 @@ Supabase Google login -> openid/email/profile
 Gmail forwarding configured by the user
   -> Cloudflare Email Routing
   -> signed inbound-email request
-  -> CaughtUp summaries/drafts/negotiations
+  -> owner-scoped normalized thread archive
+  -> bounded retrieval, observations, summaries/drafts/negotiations
   -> extension Today view
 
 reviewed CaughtUp draft OR explicitly eligible Auto-send
   -> Gmail users.messages.send
 ```
 
-Incoming content is untrusted data, never instructions. Raw forwarded bodies
-are erased after processing. Reviewable replies live in CaughtUp until an
-explicit send or eligible Auto-send. Negotiations always force Review.
+Incoming content and email-derived observations are untrusted data, never
+instructions or sending authority. Raw MIME is discarded after normalization;
+normalized message bodies and thread metadata are retained until verified user
+deletion. Reviewable replies live in CaughtUp until an explicit send or eligible
+Auto-send. Negotiations always force Review.
 
 The Opportunities UI remains disabled. Its metadata APIs are retained, but its
 legacy Gmail Draft creation, preview, and send actions are removed pending a
@@ -39,12 +42,19 @@ send-only relaunch.
 The send-only runtime cleanup is committed on `main` at `b246bdb` and its
 backend retirement package is deployed:
 
-- Extension manifest: `0.6.2` in source (`0.6.0` was the last installed production snapshot). Transient startup reads retry once and keep saved sessions in the app instead of showing a login-style recovery screen.
+- Extension manifest: `0.7.0` in local source (`0.6.6` was the pre-change installed snapshot). Transient startup reads retry once and keep saved sessions in the app instead of showing a login-style recovery screen.
 - `agent-api`: deployed v46; Gmail Draft/read/fixture and dormant Opportunities send actions are removed.
 - `inbound-email`: local source continues forwarding ingestion and send-only replies; deployed production snapshot is v4.
 - `agent-sweep`: deployed v47; the endpoint is an inert HTTP 410 handler.
 - `gmail-oauth`: deployed production snapshot is v6 and validates verified-email ownership before storing a send-only credential.
 - `daily-digest`: deployed production snapshot is v3 and sends through the send-only account.
+
+The persistent alias inbox source is implemented locally but is not yet
+committed or deployed. Migration `20260815214500_persistent_alias_inbox.sql`
+adds service-role-only threads, messages, observations, evidence, and atomic
+archive functions. The extension source includes memory review, export, and
+verified deletion controls. Do not attribute those features to production until
+the migration and functions are deployed and retrieved for verification.
 
 Migration `20260814051952_retire_inbox_sweep.sql` is applied. It unscheduled
 `inbox-agent-sweep` and removed `inbox_read` as an allowed runtime capability.
@@ -83,6 +93,8 @@ already-applied remote timestamps. Do not re-execute their SQL.
 - Cron/worker calls use `x-agent-secret`; inbound email uses signed requests.
 - Stripe calls require signature verification.
 - `ia_*` tables are service-role-only with RLS enabled.
+- Alias threads, normalized message bodies, and observation evidence are owner/account scoped and retained until verified deletion.
+- Email-derived observations never update voice-profile fields, current Auto-send settings, or sending authority.
 - CaughtUp media-kit objects are private and owner-scoped.
 - Gmail forwarding verification trusts only Google's forwarding sender and an allowlisted confirmation host.
 - Disabled forwarding aliases discard mail before content storage, but the user must separately remove the Gmail forwarding rule.
@@ -91,6 +103,7 @@ already-applied remote timestamps. Do not re-execute their SQL.
 ## Important paths
 
 - `supabase/functions/inbound-email/`: signed forwarded-mail ingestion, triage, drafting, negotiation promotion, eligible Auto-send
+- `supabase/functions/_shared/inbox-archive.ts`: normalized archive writes, bounded retrieval, and observation filtering
 - `supabase/functions/agent-api/`: extension API, forwarding setup/test/disconnect, CaughtUp draft review and manual send
 - `supabase/functions/gmail-oauth/`: send-only OAuth callback
 - `supabase/functions/agent-sweep/`: retired 410 boundary
@@ -109,11 +122,15 @@ node --test extension/tests/core.test.js extension/tests/markup.test.js
 node --check extension/popup.js
 node --check extension/connect.js
 node --check extension/core.js
+(cd workers/inbound-email; npm test; npx tsc --noEmit)
 npx --yes supabase@latest migration list --project-ref xkrpxvswdkreglmefuot
 ```
 
-Static checks do not prove live behavior. Remaining controlled acceptance work
-includes the real Gmail forwarding hop, manual forwarded reply, Auto-send with
+Static checks do not prove live behavior. Persistent-alias acceptance must cover
+a fresh Gmail forwarding confirmation and external route proof, normalized
+thread persistence, owner isolation, export, verified deletion, unchanged
+Auto-send settings, and removal of temporary confirmation diagnostics. Remaining
+send-only acceptance also includes a manual forwarded reply, Auto-send with
 attachment, creator-first negotiation chain, and the negative/reliability
 matrix. Google Cloud scope alignment, clean-grant recording, demo video,
 reviewer submission, and OAuth secret rotation require console/user action.

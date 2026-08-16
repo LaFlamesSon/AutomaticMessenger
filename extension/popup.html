@@ -432,6 +432,32 @@
         <p id="saveMsg" class="status-text" role="status" aria-live="polite"></p>
       </form>
 
+      <section id="memoryCard" class="form-card memory-card" aria-labelledby="memoryTitle">
+        <div class="memory-head">
+          <div>
+            <h2 id="memoryTitle">Agent memory</h2>
+            <p class="hint">Email patterns are suggestions, not preferences or permission to send.</p>
+          </div>
+          <button id="refreshMemory" type="button" class="ghost compact">Refresh</button>
+        </div>
+        <div id="memoryStatus" class="state-card" role="status" aria-live="polite">Load what CaughtUp has learned.</div>
+        <div id="memoryList" class="memory-list hidden" aria-label="Proposed and confirmed agent memories"></div>
+        <div class="button-row memory-actions">
+          <button id="exportArchive" type="button" class="ghost compact">Export my data</button>
+          <button id="resetMemory" type="button" class="ghost danger compact">Reset learned patterns</button>
+        </div>
+        <p id="memoryActionStatus" class="status-text" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="form-card danger-zone" aria-labelledby="deleteDataTitle">
+        <h2 id="deleteDataTitle">Delete CaughtUp data</h2>
+        <p class="hint">This permanently removes the alias archive, learned patterns, settings, drafts, and uploaded media. Disconnecting intake or signing out does not delete them.</p>
+        <label for="deleteDataConfirmation">Type your signed-in email to confirm</label>
+        <input id="deleteDataConfirmation" type="email" maxlength="320" autocomplete="off">
+        <button id="deleteCaughtUpData" type="button" class="ghost danger">Delete all CaughtUp data</button>
+        <p id="deleteDataStatus" class="status-text" role="status" aria-live="polite"></p>
+      </section>
+
       <hr>
       <p class="hint signout-note">Signing out removes this browser session only. Scheduled CaughtUp and Gmail work continues.</p>
       <button id="signOut" class="ghost danger" type="button">Sign out</button>

@@ -56,6 +56,29 @@ function base64MimeText(rawText: string): string {
   return decoded.join("\n");
 }
 
+function quotedPrintableText(value: string): string {
+  return value
+    .replace(/=\r?\n/g, "")
+    .replace(/=([0-9a-f]{2})/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+}
+
+function attachmentControlText(email: Email): string {
+  const decoded: string[] = [];
+  for (const attachment of email.attachments.slice(0, MAX_ATTACHMENTS)) {
+    if (!/^(?:text\/(?:plain|html)|message\/rfc822)$/i.test(String(attachment.mimeType ?? ""))) continue;
+    if (attachmentSize(attachment.content) > 200_000) continue;
+    try {
+      const bytes = typeof attachment.content === "string"
+        ? new TextEncoder().encode(attachment.content)
+        : attachment.content instanceof ArrayBuffer
+        ? new Uint8Array(attachment.content)
+        : attachment.content;
+      decoded.push(new TextDecoder().decode(bytes));
+    } catch { /* malformed nested text is ignored */ }
+  }
+  return decoded.join("\n");
+}
+
 function googleForwardingControlText(
   message: ForwardableEmailMessage,
   email: Email,
@@ -65,11 +88,11 @@ function googleForwardingControlText(
   const subject = clean(email.subject, 500);
   if (clean(message.from, 320).toLowerCase() !== GOOGLE_FORWARDING_SENDER ||
       !/gmail forwarding confirmation/i.test(subject)) return text;
-  const rawControlText = raw
-    ? new TextDecoder().decode(raw).replace(/=\r?\n/g, "").replace(/=3D/gi, "=").replace(/&amp;/gi, "&")
-    : "";
-  const decodedMimeText = raw ? base64MimeText(new TextDecoder().decode(raw)) : "";
-  const searchable = `${subject}\n${text}\n${String(email.html ?? "").replace(/&amp;/gi, "&")}\n${rawControlText}\n${decodedMimeText}`;
+  const rawText = raw ? new TextDecoder().decode(raw) : "";
+  const rawControlText = quotedPrintableText(rawText).replace(/&amp;/gi, "&");
+  const decodedMimeText = raw ? base64MimeText(rawText) : "";
+  const searchable = `${subject}\n${text}\n${String(email.html ?? "").replace(/&amp;/gi, "&")}\n` +
+    `${attachmentControlText(email)}\n${rawControlText}\n${quotedPrintableText(decodedMimeText)}`;
   const code = subject.match(/^\(#([0-9]{6,20})\)/)?.[1]
     ?? searchable.match(/confirmation\s+code\s*:\s*([0-9]{6,20})/i)?.[1];
   const url = searchable
