@@ -4,7 +4,7 @@ const RULE_NAME = "CaughtUp inbound mailbox";
 const MANAGED_MAILBOX = /^(?:u[a-z0-9]{32,96}|inbox\+[a-z0-9]{32,96})@inbound\.getcaughtup\.io$/i;
 
 type RoutingMatcher = { type?: string; field?: string; value?: string };
-type RoutingRule = { id?: string; name?: string; matchers?: RoutingMatcher[] };
+type RoutingRule = { id?: string; name?: string; matchers?: RoutingMatcher[]; actions?: { type?: string; value?: string[] }[] };
 
 export function cloudflareInboundRoutingConfigured(cfg: Record<string, string>): boolean {
   return Boolean(apiToken(cfg));
@@ -30,6 +30,12 @@ function rulesUrl(cfg: Record<string, string>, suffix = ""): string {
 
 function matcherAddress(rule: RoutingRule): string {
   return (rule.matchers ?? []).find((matcher) => matcher.type === "literal" && matcher.field === "to")?.value?.trim().toLowerCase() ?? "";
+}
+
+function isCatchAllWorkerRule(rule: RoutingRule): boolean {
+  const matcher = (rule.matchers ?? []).some((item) => item.type === "all");
+  const worker = (rule.actions ?? []).some((item) => item.type === "worker" && (item.value ?? []).includes(INBOUND_WORKER));
+  return matcher && worker;
 }
 
 async function cloudflareRequest(cfg: Record<string, string>, url: string, init: RequestInit): Promise<any> {
@@ -60,13 +66,19 @@ async function listRoutingRules(cfg: Record<string, string>): Promise<RoutingRul
   return rules;
 }
 
+export async function diagnoseCloudflareCatchAll(cfg: Record<string, string>): Promise<{ catch_all: boolean }> {
+  if (!apiToken(cfg)) return { catch_all: false };
+  const rules = await listRoutingRules(cfg);
+  return { catch_all: rules.some(isCatchAllWorkerRule) };
+}
+
 export async function ensureCloudflareInboundMailbox(
   cfg: Record<string, string>,
   address: string,
   previousAddress?: string | null,
 ): Promise<void> {
   const mailbox = address.trim().toLowerCase();
-  if (!MANAGED_MAILBOX.test(mailbox)) throw new Error("inbound mailbox routing is unavailable");
+  if (!MANAGED_MAILBOX.test(mailbox)) return;
   const rules = await listRoutingRules(cfg);
   if (!rules.some((rule) => matcherAddress(rule) === mailbox)) {
     await cloudflareRequest(cfg, rulesUrl(cfg), {

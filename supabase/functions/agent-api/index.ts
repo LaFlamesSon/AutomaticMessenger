@@ -12,8 +12,12 @@ import {
   type StableDraftAttachment, stableDraftPreview,
 } from "../_shared/mime.ts";
 import { allowedChromeRedirect } from "../_shared/oauth.ts";
-import { inboundAliasAddress, isLegacyPlusInboundAlias } from "../_shared/inbound-alias.ts";
+import {
+  isLegacyPlusInboundAlias, isOpaqueOrLegacyInboundAlias, isStableInboundAlias,
+  proposedAliasSlug, routeVerifiedStatus, stableAliasAddress,
+} from "../_shared/inbound-alias.ts";
 import { cloudflareInboundRoutingConfigured, ensureCloudflareInboundMailbox } from "../_shared/cloudflare-email-routing.ts";
+import { cloudflareEmailSendingConfigured, sendExternalRouteProbe } from "../_shared/cloudflare-email-sending.ts";
 import {
   matchOpportunity, normalizeOpportunityDomain, normalizeOpportunitySourceUrl,
   OPPORTUNITY_STATUSES, RELATIONSHIP_STATUSES,
@@ -42,9 +46,99 @@ const REQUIRED_QUESTIONS = new Set([
 
 class InputError extends Error {}
 
+const FORWARDING_PUBLIC_SELECT = "status,alias_address,alias_slug,legacy_alias_address,verification_code,confirmation_url,verification_received_at,activated_at,route_verified_at,updated_at";
+
 function gmailForwardingSettingsUrl(address?: string | null): string {
   const account = address ? `?authuser=${encodeURIComponent(address)}` : "";
   return `https://mail.google.com/mail/${account}#settings/fwdandpop`;
+}
+
+async function allocateAliasSlug(supabase: any, userId: string, gmailAddress: string): Promise<string> {
+  const base = proposedAliasSlug(gmailAddress);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const slug = attempt === 0 ? base : `${base.slice(0, 58)}-${(await sha256(`${userId}:${attempt}`)).slice(0, 4)}`;
+    const { data, error } = await supabase.from("ia_forwarding_aliases").select("id").eq("alias_slug", slug).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return slug;
+  }
+  throw new Error("forwarding alias unavailable");
+}
+
+async function forwardingSnapshot(supabase: any, userId: string) {
+  const { data: alias, error } = await supabase.from("ia_forwarding_aliases")
+    .select(`${FORWARDING_PUBLIC_SELECT},gmail_account_id`).eq("user_id", userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const { data: forwardingAccount, error: accountError } = alias
+    ? await supabase.from("ia_gmail_accounts").select("gmail_address").eq("id", alias.gmail_account_id)
+      .eq("user_id", userId).maybeSingle()
+    : { data: null, error: null };
+  if (accountError) throw new Error(accountError.message);
+  const { data: latestTest, error: testError } = await supabase.from("ia_forwarding_test_runs")
+    .select("id,status,kind,allow_auto_send,processed_email_id,created_at,updated_at")
+    .eq("user_id", userId).eq("kind", "controlled_test").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (testError) throw new Error(testError.message);
+  const { data: latestProbe, error: probeError } = await supabase.from("ia_forwarding_test_runs")
+    .select("id,status,kind,created_at,updated_at,expires_at")
+    .eq("user_id", userId).eq("kind", "route_probe").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (probeError) throw new Error(probeError.message);
+  const { data: processedTest, error: processedTestError } = latestTest?.processed_email_id && alias?.gmail_account_id
+    ? await supabase.from("ia_processed_emails")
+      .select("id,delivery_status,auto_sent,human_review_required,ingestion_source")
+      .eq("id", latestTest.processed_email_id).eq("gmail_account_id", alias.gmail_account_id).maybeSingle()
+    : { data: null, error: null };
+  if (processedTestError) throw new Error(processedTestError.message);
+  const { gmail_account_id: _gmailAccountId, ...publicAlias } = alias ?? { gmail_account_id: null, status: "not_started" };
+  return {
+    forwarding: publicAlias,
+    gmail_settings_url: gmailForwardingSettingsUrl(forwardingAccount?.gmail_address),
+    latest_test: latestTest ? {
+      id: latestTest.id, status: latestTest.status, kind: latestTest.kind,
+      mode: latestTest.allow_auto_send ? "auto_send" : "review",
+      created_at: latestTest.created_at, updated_at: latestTest.updated_at, processed: processedTest ?? null,
+    } : null,
+    latest_probe: latestProbe ? {
+      id: latestProbe.id, status: latestProbe.status, kind: latestProbe.kind,
+      created_at: latestProbe.created_at, updated_at: latestProbe.updated_at, expires_at: latestProbe.expires_at,
+    } : null,
+  };
+}
+
+async function startExternalRouteProbe(supabase: any, cfg: Record<string, string>, userId: string): Promise<{ ok: boolean; code?: string }> {
+  const { data: alias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
+    .select("id,gmail_account_id,status").eq("user_id", userId)
+    .in("status", ["awaiting_gmail_enable", "verifying_route"]).maybeSingle();
+  if (aliasError) throw new Error(aliasError.message);
+  if (!alias) return { ok: false, code: "verification_pending" };
+  const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
+    .select("id,gmail_address").eq("id", alias.gmail_account_id).eq("user_id", userId)
+    .eq("oauth_capability", "send_only").maybeSingle();
+  if (accountError) throw new Error(accountError.message);
+  if (!account) return { ok: false, code: "gmail_reconnect_required" };
+  if (!cloudflareEmailSendingConfigured(cfg)) return { ok: false, code: "route_probe_unavailable" };
+  const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+  const { count: recentProbes, error: countError } = await supabase.from("ia_forwarding_test_runs")
+    .select("id", { count: "exact", head: true }).eq("user_id", userId).eq("kind", "route_probe").gte("created_at", oneHourAgo);
+  if (countError) throw new Error(countError.message);
+  if ((recentProbes ?? 0) >= 3) return { ok: false, code: "rate_limited" };
+  const tokenBytes = crypto.getRandomValues(new Uint8Array(24));
+  const probeToken = Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const { data: probe, error: probeError } = await supabase.from("ia_forwarding_test_runs").insert({
+    user_id: userId, gmail_account_id: account.id, forwarding_alias_id: alias.id,
+    token_hash: await sha256(probeToken), kind: "route_probe", allow_auto_send: false,
+    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+  }).select("id").single();
+  if (probeError || !probe) throw new Error(probeError?.message ?? "route probe state unavailable");
+  try {
+    await sendExternalRouteProbe(cfg, { gmailAddress: account.gmail_address, token: probeToken });
+  } catch {
+    await supabase.from("ia_forwarding_test_runs").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", probe.id);
+    return { ok: false, code: "route_probe_unavailable" };
+  }
+  const now = new Date().toISOString();
+  await supabase.from("ia_forwarding_test_runs").update({ status: "sent", updated_at: now }).eq("id", probe.id).eq("status", "pending");
+  await supabase.from("ia_forwarding_aliases").update({ status: "verifying_route", updated_at: now })
+    .eq("id", alias.id).in("status", ["awaiting_gmail_enable", "verifying_route"]);
+  return { ok: true };
 }
 
 function json(body: unknown, status = 200): Response {
@@ -1064,41 +1158,14 @@ Deno.serve(async (req: Request) => {
           gmail_connected: Boolean(gmailAccount),
           gmail_address: gmailAccount?.gmail_address ?? null,
           gmail_access_mode: gmailAccount?.oauth_capability ?? null,
-          inbound_forwarding_ready: forwardingAlias?.status === "active",
+          inbound_forwarding_ready: routeVerifiedStatus(forwardingAlias?.status),
           inbound_forwarding_status: forwardingAlias?.status ?? "not_started",
           learning,
         });
       }
 
       case "forwarding_setup_get": {
-        const { data: alias, error } = await supabase.from("ia_forwarding_aliases")
-          .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at,gmail_account_id")
-          .eq("user_id", user.id).maybeSingle();
-        if (error) throw new Error(error.message);
-        const { data: forwardingAccount, error: accountError } = alias
-          ? await supabase.from("ia_gmail_accounts").select("gmail_address").eq("id", alias.gmail_account_id)
-            .eq("user_id", user.id).maybeSingle()
-          : { data: null, error: null };
-        if (accountError) throw new Error(accountError.message);
-        const { data: latestTest, error: testError } = await supabase.from("ia_forwarding_test_runs")
-          .select("id,status,allow_auto_send,processed_email_id,created_at,updated_at")
-          .eq("user_id", user.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
-        if (testError) throw new Error(testError.message);
-        const { data: processedTest, error: processedTestError } = latestTest?.processed_email_id && alias?.gmail_account_id
-          ? await supabase.from("ia_processed_emails")
-            .select("id,delivery_status,auto_sent,human_review_required,ingestion_source")
-            .eq("id", latestTest.processed_email_id).eq("gmail_account_id", alias.gmail_account_id).maybeSingle()
-          : { data: null, error: null };
-        if (processedTestError) throw new Error(processedTestError.message);
-        const { gmail_account_id: _gmailAccountId, ...publicAlias } = alias ?? { gmail_account_id: null, status: "not_started" };
-        return json({
-          forwarding: publicAlias,
-          gmail_settings_url: gmailForwardingSettingsUrl(forwardingAccount?.gmail_address),
-          latest_test: latestTest ? {
-            id: latestTest.id, status: latestTest.status, mode: latestTest.allow_auto_send ? "auto_send" : "review",
-            created_at: latestTest.created_at, updated_at: latestTest.updated_at, processed: processedTest ?? null,
-          } : null,
-        });
+        return json(await forwardingSnapshot(supabase, user.id));
       }
 
       case "forwarding_setup_start": {
@@ -1108,62 +1175,80 @@ Deno.serve(async (req: Request) => {
         if (accountError) throw new Error(accountError.message);
         if (!account) return json({ error: "connect Gmail first", code: "gmail_reconnect_required" }, 422);
         const { data: existing, error: existingError } = await supabase.from("ia_forwarding_aliases")
-          .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at")
+          .select("id,status,alias_address,alias_slug,legacy_alias_address,verification_code,confirmation_url,verification_received_at,activated_at,route_verified_at,updated_at")
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
-        // Gmail rejects plus-aliases, and Cloudflare Email Routing only accepts
-        // exact mailboxes. Register each minted address as a Worker destination.
-        if (existing && existing.status !== "disabled" && !isLegacyPlusInboundAlias(existing.alias_address)) {
-          if (cloudflareInboundRoutingConfigured(CFG)) {
-            try {
-              await ensureCloudflareInboundMailbox(CFG, existing.alias_address);
-            } catch {
-              return json({ error: "CaughtUp could not prepare a Gmail forwarding address. Try again.", code: "inbound_mailbox_unavailable" }, 503);
-            }
+        if (existing && existing.status !== "disabled" && isStableInboundAlias(existing.alias_address) && existing.alias_slug) {
+          if (cloudflareInboundRoutingConfigured(CFG) && isOpaqueOrLegacyInboundAlias(existing.legacy_alias_address || "")) {
+            try { await ensureCloudflareInboundMailbox(CFG, existing.legacy_alias_address); } catch { /* catch-all owns stable aliases */ }
           }
-          return json({ forwarding: existing, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
+          return json(await forwardingSnapshot(supabase, user.id));
         }
-        const bytes = crypto.getRandomValues(new Uint8Array(24));
-        const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-        const aliasAddress = inboundAliasAddress(token);
-        const aliasValues = {
-          gmail_account_id: account.id, alias_token_hash: await sha256(token), alias_address: aliasAddress,
-          status: "pending", verification_code: null, confirmation_url: null,
-          verification_received_at: null, activated_at: null, updated_at: new Date().toISOString(),
+        const remint = !existing || existing.status === "disabled" || isLegacyPlusInboundAlias(existing.alias_address);
+        const slug = !remint && existing.alias_slug ? existing.alias_slug : await allocateAliasSlug(supabase, user.id, account.gmail_address);
+        const aliasAddress = stableAliasAddress(slug);
+        const keepLegacy = existing && !remint && isOpaqueOrLegacyInboundAlias(existing.alias_address)
+          ? existing.alias_address
+          : existing?.legacy_alias_address ?? null;
+        const aliasValues: Record<string, unknown> = {
+          gmail_account_id: account.id,
+          alias_address: aliasAddress,
+          alias_slug: slug,
+          legacy_alias_address: keepLegacy,
+          status: remint ? "address_ready" : (existing.status === "pending" ? "address_ready" : existing.status),
+          verification_code: remint ? null : existing.verification_code,
+          confirmation_url: remint ? null : existing.confirmation_url,
+          verification_received_at: remint ? null : existing.verification_received_at,
+          activated_at: remint ? null : existing.activated_at,
+          route_verified_at: remint ? null : existing.route_verified_at,
+          alias_token_hash: remint ? await sha256(slug) : undefined,
+          updated_at: new Date().toISOString(),
         };
+        if (aliasValues.alias_token_hash === undefined) delete aliasValues.alias_token_hash;
         const operation = existing
           ? supabase.from("ia_forwarding_aliases").update(aliasValues).eq("user_id", user.id)
-          : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, ...aliasValues });
-        const { data: created, error } = await operation
-          .select("status,alias_address,verification_code,confirmation_url,verification_received_at,activated_at,updated_at").single();
+          : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, alias_token_hash: await sha256(slug), ...aliasValues });
+        const { error } = await operation.select("id").single();
         if (error) throw new Error(error.message);
-        if (cloudflareInboundRoutingConfigured(CFG)) {
-          try {
-            await ensureCloudflareInboundMailbox(CFG, created.alias_address, existing?.alias_address);
-          } catch {
-            return json({ error: "CaughtUp could not prepare a Gmail forwarding address. Try again.", code: "inbound_mailbox_unavailable" }, 503);
-          }
+        if (cloudflareInboundRoutingConfigured(CFG) && isOpaqueOrLegacyInboundAlias(String(keepLegacy || ""))) {
+          try { await ensureCloudflareInboundMailbox(CFG, String(keepLegacy)); } catch { /* stable aliases use catch-all */ }
         }
-        return json({ forwarding: created, gmail_settings_url: gmailForwardingSettingsUrl(account.gmail_address) });
+        return json(await forwardingSnapshot(supabase, user.id));
       }
 
       case "forwarding_setup_activate": {
         if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
         const now = new Date().toISOString();
-        const { data: activated, error } = await supabase.from("ia_forwarding_aliases").update({
-          status: "active", activated_at: now, updated_at: now,
-        }).eq("user_id", user.id).in("status", ["verification_received", "active"])
-          .select("status,alias_address,activated_at").maybeSingle();
+        const { data: marked, error } = await supabase.from("ia_forwarding_aliases").update({
+          status: "awaiting_gmail_enable", google_confirmed_at: now, updated_at: now,
+        }).eq("user_id", user.id).in("status", ["google_verification_received", "awaiting_gmail_enable", "verifying_route"])
+          .select("status,alias_address").maybeSingle();
         if (error) throw new Error(error.message);
-        if (!activated) return json({ error: "Google's forwarding verification has not reached CaughtUp yet", code: "verification_pending" }, 409);
-        return json({ ok: true, forwarding: activated });
+        if (!marked) return json({ error: "Google's forwarding verification has not reached CaughtUp yet", code: "verification_pending" }, 409);
+        const probe = await startExternalRouteProbe(supabase, CFG, user.id);
+        const snapshot = await forwardingSnapshot(supabase, user.id);
+        if (!probe.ok) {
+          return json({ ...snapshot, error: "CaughtUp could not verify Gmail forwarding yet. Retry after Save Changes.", code: probe.code }, probe.code === "rate_limited" ? 429 : 409);
+        }
+        return json({ ok: true, ...snapshot });
+      }
+
+      case "forwarding_route_probe": {
+        if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
+        const probe = await startExternalRouteProbe(supabase, CFG, user.id);
+        const snapshot = await forwardingSnapshot(supabase, user.id);
+        if (!probe.ok) {
+          const status = probe.code === "gmail_reconnect_required" ? 422 : probe.code === "rate_limited" ? 429 : 409;
+          return json({ ...snapshot, error: "CaughtUp could not verify Gmail forwarding yet. Retry after Save Changes.", code: probe.code }, status);
+        }
+        return json({ ok: true, ...snapshot });
       }
 
       case "forwarding_test_send": {
         if (body.confirm !== true) return json({ error: "confirmation required", code: "confirmation_required" }, 400);
         const autoSendTest = body.mode === "auto_send";
         const { data: alias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
-          .select("id,gmail_account_id,status,alias_address").eq("user_id", user.id).eq("status", "active").maybeSingle();
+          .select("id,gmail_account_id,status,alias_address").eq("user_id", user.id).eq("status", "route_verified").maybeSingle();
         if (aliasError) throw new Error(aliasError.message);
         if (!alias) return json({ error: "activate Gmail forwarding first", code: "inbound_forwarding_required" }, 409);
         const deliveryTarget = body.delivery_target === "inbound_alias" ? "inbound_alias" : "gmail_inbox";
@@ -1184,7 +1269,7 @@ Deno.serve(async (req: Request) => {
         }
         const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
         let recentTestQuery = supabase.from("ia_forwarding_test_runs")
-          .select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", oneHourAgo);
+          .select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("kind", "controlled_test").gte("created_at", oneHourAgo);
         if (autoSendTest) recentTestQuery = recentTestQuery.eq("allow_auto_send", true);
         const { count: recentTests, error: countError } = await recentTestQuery;
         if (countError) throw new Error(countError.message);
@@ -1196,7 +1281,7 @@ Deno.serve(async (req: Request) => {
         const testToken = Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
         const { data: testRun, error: testError } = await supabase.from("ia_forwarding_test_runs").insert({
           user_id: user.id, gmail_account_id: account.id, forwarding_alias_id: alias.id,
-          token_hash: await sha256(testToken), allow_auto_send: autoSendTest,
+          token_hash: await sha256(testToken), allow_auto_send: autoSendTest, kind: "controlled_test",
           expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
         }).select("id").single();
         if (testError || !testRun) throw new Error(testError?.message ?? "forwarding test state unavailable");

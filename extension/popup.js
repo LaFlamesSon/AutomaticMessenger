@@ -9,6 +9,7 @@ const MANUAL_SEND_KEYS_STORAGE = "caughtup_manual_send_keys";
 const BOOKING_REQUEST_STORAGE = "caughtup_booking_request";
 const GMAIL_RECONNECT_STORAGE = "caughtup_gmail_reconnect_required";
 const VIEW_CACHE_STORAGE = "caughtup_view_cache_v1";
+const INTAKE_CONFIRM_STORAGE = "caughtup_intake_confirm_alias";
 
 let session = null;
 let currentProfile = null;
@@ -38,6 +39,7 @@ let forwardingGmailSettingsUrl = "https://mail.google.com/mail/#settings/fwdandp
 let forwardingPollTimer = null;
 let intakePollTimer = null;
 let intakeGateActive = false;
+let intakeConfirmAlias = "";
 
 function isForwardedDraft(email) {
   return email?.ingestion_source === "forwarded";
@@ -489,7 +491,7 @@ function showSetup(show, message = "", mode = "app") {
     $("connectGoogle").dataset.action = "connect";
   } else if (show && mode === "forwarding") {
     $("setupTitle").textContent = "Turn on email intake";
-    $("setupCopy").textContent = "CaughtUp needs Gmail forwarding to see new messages. Replies still wait for your review unless you turn on Auto-send later.";
+      $("setupCopy").textContent = "Add this CaughtUp address in Gmail, then confirm and verify the connection.";
   } else if (show) {
     $("setupTitle").textContent = "Your inbox, handled";
     $("setupCopy").textContent = "Sign in with Google, then connect Gmail so CaughtUp can prepare replies. Nothing sends automatically unless you turn it on later.";
@@ -561,7 +563,7 @@ $("connectGoogle").addEventListener("click", async () => {
   }
 });
 
-$("signOut").addEventListener("click", async () => {
+async function signOutCaughtUp() {
   session = null;
   currentProfile = null;
   manualSendKeys = {};
@@ -578,16 +580,20 @@ $("signOut").addEventListener("click", async () => {
   currentOpportunityState = null;
   appEmail = "";
   gmailAddress = "";
+  intakeConfirmAlias = "";
   await Promise.all([
     chrome.storage.local.remove("caughtup_session"),
     chrome.storage.local.remove(MANUAL_SEND_KEYS_STORAGE),
     chrome.storage.local.remove(BOOKING_REQUEST_STORAGE),
     chrome.storage.local.remove(GMAIL_RECONNECT_STORAGE),
     chrome.storage.local.remove(VIEW_CACHE_STORAGE),
+    chrome.storage.local.remove(INTAKE_CONFIRM_STORAGE),
     chrome.storage.sync.remove("token"),
   ]);
   showSetup(true, "", "app");
-});
+}
+
+$("signOut").addEventListener("click", () => { void signOutCaughtUp(); });
 
 function stateCard(id, message, kind = "", retry) {
   const container = $(id);
@@ -1692,89 +1698,66 @@ function fillProfile(raw) {
     : "Review mode is active. Replies will be saved as drafts.", "success");
 }
 
+const Forwarding = globalThis.CaughtUpForwarding;
+
 function forwardingTestPassed(latestTest) {
   if (!latestTest) return false;
   return latestTest.processed?.delivery_status === "sent" || latestTest.status === "processed";
 }
 
-function forwardingTestInProgress(latestTest) {
-  return ["pending", "sent", "processing"].includes(latestTest?.status);
+function forwardingTestInProgress(test) {
+  return ["pending", "sent", "processing"].includes(test?.status);
 }
 
-function shouldPollForwarding(state, latestTest) {
-  return state === "pending" || state === "verification_received" || forwardingTestInProgress(latestTest);
+function intakeConfirmOpened(alias) {
+  return Boolean(alias) && intakeConfirmAlias === alias;
 }
 
-function intakeTestButtonLabel() {
-  return currentProfile?.reply_mode === "auto_send" && currentProfile?.auto_send === true
-    ? "Test Auto-send to me" : "Create Review test";
+async function rememberIntakeConfirm(alias) {
+  intakeConfirmAlias = alias || "";
+  try {
+    if (intakeConfirmAlias) await chrome.storage.local.set({ [INTAKE_CONFIRM_STORAGE]: intakeConfirmAlias });
+    else await chrome.storage.local.remove(INTAKE_CONFIRM_STORAGE);
+  } catch { /* in-memory flag still drives this popup */ }
 }
 
-function intakePrimaryNeedsConfirm(state) {
-  return state === "verification_received" && forwardingConfirmationUrl;
+function currentIntakeView(result = {}) {
+  return Forwarding.wizardView(result, {
+    confirmOpened: intakeConfirmOpened(result.forwarding?.alias_address),
+  });
 }
 
-function updateIntakePrimary(state, latestTest) {
-  const button = $("setupIntakeAction");
-  let label = "";
-  let hidden = false;
-  if (["not_started", "disabled"].includes(state)) {
-    label = "Turn on CaughtUp";
-  } else if (state === "pending" || forwardingTestInProgress(latestTest)) {
-    hidden = true;
-  } else if (state === "verification_received") {
-    label = forwardingConfirmationUrl ? "Confirm with Google" : "I enabled forwarding";
-  } else if (state === "active") {
-    if (forwardingTestPassed(latestTest)) hidden = true;
-    else label = intakeTestButtonLabel();
-  } else {
-    hidden = true;
+function applyIntakeView(view) {
+  forwardingState = view.forwarding;
+  forwardingConfirmationUrl = view.confirmationUrl;
+  forwardingGmailSettingsUrl = view.gmailSettingsUrl;
+  $("setupIntakeAddressRow").classList.toggle("hidden", !view.forwarding.alias_address);
+  $("setupIntakeAddress").textContent = view.forwarding.alias_address || "";
+  $("setupIntakeCopy").textContent = view.copy;
+  $("setupIntakeNewAddress").classList.add("hidden");
+  $("setupIntakeAction").classList.toggle("hidden", view.hiddenPrimary);
+  if (!view.hiddenPrimary) {
+    $("setupIntakeAction").textContent = view.label;
+    $("setupIntakeAction").dataset.label = view.label;
+    $("setupIntakeAction").dataset.action = view.action;
   }
-  button.classList.toggle("hidden", hidden);
-  if (!hidden) {
-    button.textContent = label;
-    button.dataset.label = label;
-  }
+  $("setupTitle").textContent = view.heading;
+  $("setupCopy").textContent = view.summary;
 }
 
-function intakeCopyForState(state) {
-  if (["not_started", "disabled"].includes(state)) {
-    return "One step turns on forwarding so CaughtUp can process new Gmail.";
-  }
-  if (state === "pending") {
-    return "The forwarding address is copied. Paste it in Gmail forwarding settings, then Save. We'll continue automatically.";
-  }
-  if (state === "verification_received") {
-    return forwardingConfirmationUrl
-      ? "Google reached CaughtUp. Confirm the address, enable forwarding in Gmail, then Save. We'll continue here."
-      : "Enable forwarding to the copied address in Gmail, then Save. When you're done, continue here.";
-  }
-  if (state === "active") {
-    return "Forwarding is active. Run one controlled test so CaughtUp can finish setup.";
-  }
-  return "";
+function scheduleIntakePoll(view) {
+  if (intakePollTimer) clearTimeout(intakePollTimer);
+  if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
+  if (!Forwarding.shouldPoll(view) || !intakeGateActive) return;
+  intakePollTimer = setTimeout(() => { void refreshIntakeGate({ quiet: true }); }, 5000);
 }
 
 function renderIntakeSetup(result = {}) {
-  const forwarding = result.forwarding || { status: "not_started" };
-  forwardingState = forwarding;
-  forwardingConfirmationUrl = allowlistedHttpsUrl(forwarding.confirmation_url, "mail-settings.google.com", "/");
-  forwardingGmailSettingsUrl = allowlistedHttpsUrl(result.gmail_settings_url, "mail.google.com", "/mail/")
-    || forwardingGmailSettingsUrl;
-  const state = forwarding.status || "not_started";
-  const latestTest = result.latest_test || null;
-  $("setupIntakeAddressRow").classList.toggle("hidden", !forwarding.alias_address);
-  $("setupIntakeAddress").textContent = forwarding.alias_address || "";
-  $("setupIntakeCopy").textContent = intakeCopyForState(state);
-  updateIntakePrimary(state, latestTest);
-  renderForwarding(result);
-  if (intakePollTimer) clearTimeout(intakePollTimer);
-  if (shouldPollForwarding(state, latestTest)) {
-    intakePollTimer = setTimeout(() => { void refreshIntakeGate({ quiet: true }); }, 5000);
-  }
-  if (state === "active" && forwardingTestPassed(latestTest)) {
-    void unlockApp();
-  }
+  const view = currentIntakeView(result);
+  applyIntakeView(view);
+  if (settingsLoaded) applySettingsForwarding(result, { poll: false });
+  scheduleIntakePoll(view);
+  if (view.status === "route_verified") void unlockApp();
 }
 
 async function refreshIntakeGate({ quiet = false } = {}) {
@@ -1782,27 +1765,6 @@ async function refreshIntakeGate({ quiet = false } = {}) {
     renderIntakeSetup(await api("forwarding_setup_get"));
   } catch (error) {
     if (!quiet) setStatus("setupStatus", Core.safeErrorMessage(error), "error");
-  }
-}
-
-async function runIntakeForwardingTest() {
-  const autoSendTest = currentProfile?.reply_mode === "auto_send" && currentProfile?.auto_send === true;
-  const explanation = autoSendTest
-    ? "This sends a test message into CaughtUp and permits one safe reply back to your own connected Gmail account. No third party will receive it. Continue?"
-    : "This sends a test message into CaughtUp and creates a non-sendable Review card in Today. Continue?";
-  if (!confirm(explanation)) return;
-  const button = $("setupIntakeAction");
-  setBusy(button, true, "Starting…");
-  try {
-    await api("forwarding_test_send", {
-      confirm: true, mode: autoSendTest ? "auto_send" : "review", delivery_target: "inbound_alias",
-    }, { timeout: 30000 });
-    setStatus("setupStatus", "Test started. This will update when processing finishes.", "success");
-    await refreshIntakeGate({ quiet: true });
-  } catch (error) {
-    setStatus("setupStatus", Core.safeErrorMessage(error), "error");
-  } finally {
-    setBusy(button, false);
   }
 }
 
@@ -1819,55 +1781,42 @@ async function unlockApp() {
 }
 
 async function beginIntakeWizard(prefetched = null) {
+  intakeGateActive = true;
   showSetup(true, "", "forwarding");
   try {
-    renderIntakeSetup(prefetched || await api("forwarding_setup_get"));
+    renderIntakeSetup(prefetched || await api("forwarding_setup_start"));
   } catch (error) {
     setStatus("setupStatus", Core.safeErrorMessage(error), "error");
+    try { renderIntakeSetup(await api("forwarding_setup_get")); } catch { /* keep the recoverable intake screen */ }
   }
 }
 
-function forwardingButtons(state) {
-  $("startForwarding").classList.toggle("hidden", state !== "not_started" && state !== "disabled");
-  $("openGmailForwarding").classList.toggle("hidden", !["pending", "verification_received", "active"].includes(state));
-  $("openForwardingConfirmation").classList.toggle("hidden", state !== "verification_received" || !forwardingConfirmationUrl);
-  $("activateForwarding").classList.toggle("hidden", state !== "verification_received");
-  $("runForwardingTest").classList.toggle("hidden", state !== "active");
-  $("disableForwarding").classList.toggle("hidden", !["pending", "verification_received", "active"].includes(state));
-  $("runForwardingTest").textContent = currentProfile?.reply_mode === "auto_send" && currentProfile?.auto_send === true
-    ? "Test Auto-send to me" : "Create Review test";
+function forwardingButtons(view) {
+  const status = view.status;
+  $("startForwarding").classList.toggle("hidden", !["not_started", "disabled"].includes(status));
+  $("openGmailForwarding").classList.toggle("hidden", !["address_ready", "google_verification_received", "awaiting_gmail_enable", "verifying_route", "route_verified"].includes(status));
+  $("openForwardingConfirmation").classList.toggle("hidden", view.action !== "confirm_google");
+  $("activateForwarding").classList.toggle("hidden", view.action !== "verify_route");
+  $("runForwardingTest").classList.add("hidden");
+  $("disableForwarding").classList.toggle("hidden", ["not_started", "disabled"].includes(status));
+  $("activateForwarding").textContent = view.label === "Retry verification" ? "Retry verification" : "Verify connection";
 }
 
-function allowlistedHttpsUrl(value, hostname, pathPrefix) {
-  try {
-    const url = new URL(String(value || ""));
-    return url.protocol === "https:" && url.hostname === hostname && url.pathname.startsWith(pathPrefix)
-      ? url.toString() : null;
-  } catch { return null; }
-}
-
-function renderForwarding(result = {}) {
-  const forwarding = result.forwarding || { status: "not_started" };
-  forwardingState = forwarding;
-  forwardingConfirmationUrl = allowlistedHttpsUrl(forwarding.confirmation_url, "mail-settings.google.com", "/");
-  forwardingGmailSettingsUrl = allowlistedHttpsUrl(result.gmail_settings_url, "mail.google.com", "/mail/")
-    || "https://mail.google.com/mail/#settings/fwdandpop";
-  const state = forwarding.status || "not_started";
-  const active = state === "active";
+function applySettingsForwarding(result = {}, { poll = true } = {}) {
+  const view = currentIntakeView(result);
+  forwardingState = view.forwarding;
+  forwardingConfirmationUrl = view.confirmationUrl;
+  forwardingGmailSettingsUrl = view.gmailSettingsUrl;
+  const forwarding = view.forwarding;
+  const active = view.status === "route_verified";
   $("forwardingCard").classList.remove("hidden");
-  $("forwardingBadge").textContent = active ? "Automatic" : state === "verification_received" ? "Confirm" : state === "pending" ? "Waiting" : "Not connected";
-  $("forwardingBadge").className = `badge${active ? " sent" : state === "verification_received" ? " draft" : ""}`;
+  $("forwardingBadge").textContent = active ? "Automatic" : view.status === "verifying_route" ? "Checking" : view.status === "google_verification_received" ? "Confirm" : view.status === "address_ready" ? "Waiting" : "Not connected";
+  $("forwardingBadge").className = `badge${active ? " sent" : view.status === "google_verification_received" ? " draft" : ""}`;
   $("forwardingAddressRow").classList.toggle("hidden", !forwarding.alias_address);
   $("forwardingAddress").textContent = forwarding.alias_address || "";
   $("forwardingCode").classList.toggle("hidden", !forwarding.verification_code);
   $("forwardingCode").textContent = forwarding.verification_code ? `Google confirmation code: ${forwarding.verification_code}` : "";
-  $("forwardingSummary").textContent = active
-    ? "New Gmail messages are forwarded to CaughtUp, filtered, and prepared automatically. Review replies still wait for you."
-    : state === "verification_received"
-    ? "Google reached CaughtUp. Confirm the address, enable forwarding in Gmail, then finish here."
-    : state === "pending"
-    ? "Add this address in Gmail's Forwarding settings. CaughtUp will detect Google's confirmation email automatically."
-    : "Connect one forwarding address so new Gmail can be processed automatically.";
+  $("forwardingSummary").textContent = view.copy || view.summary;
   const latestTest = result.latest_test || null;
   const testSummary = $("forwardingTestSummary");
   testSummary.classList.toggle("hidden", !latestTest);
@@ -1875,18 +1824,24 @@ function renderForwarding(result = {}) {
     testSummary.textContent = "Test passed: CaughtUp processed the message and sent one safe reply to your own Gmail account.";
   } else if (latestTest?.status === "processed") {
     testSummary.textContent = "Test passed: the Review card is available in Today. Test cards cannot be sent.";
-  } else if (["pending", "sent", "processing"].includes(latestTest?.status)) {
+  } else if (forwardingTestInProgress(latestTest)) {
     testSummary.textContent = "Test in progress. CaughtUp is waiting for the message to finish processing.";
   } else if (latestTest?.status === "failed") {
     testSummary.textContent = "The last test failed safely. No unconfirmed reply will be retried automatically.";
   } else if (latestTest?.status === "expired") {
     testSummary.textContent = "The last test expired before processing. You can run a new test.";
   }
-  forwardingButtons(state);
-  if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
-  if (shouldPollForwarding(state, latestTest)) {
-    forwardingPollTimer = setTimeout(() => { void loadForwarding({ quiet: true }); }, 5000);
+  forwardingButtons(view);
+  if (poll && !intakeGateActive) {
+    if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
+    if (Forwarding.shouldPoll(view)) {
+      forwardingPollTimer = setTimeout(() => { void loadForwarding({ quiet: true }); }, 5000);
+    }
   }
+}
+
+function renderForwarding(result = {}) {
+  applySettingsForwarding(result, { poll: true });
 }
 
 async function loadForwarding({ quiet = false } = {}) {
@@ -1931,12 +1886,17 @@ $("openForwardingConfirmation").addEventListener("click", () => {
 
 $("activateForwarding").addEventListener("click", async () => {
   const button = $("activateForwarding");
-  setBusy(button, true, "Finishing...");
+  setBusy(button, true, "Checking...");
   try {
-    const result = await api("forwarding_setup_activate", { confirm: true });
+    void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
+    const status = Forwarding.canonicalStatus(forwardingState?.status);
+    const result = status === "google_verification_received"
+      ? await api("forwarding_setup_activate", { confirm: true })
+      : await api("forwarding_route_probe", { confirm: true });
     renderForwarding(result);
-    setStatus("forwardingStatus", "Automatic intake is active. New forwarded Gmail is processed as it arrives.", "success");
+    setStatus("forwardingStatus", "CaughtUp is waiting for Gmail forwarding to return the connection check.", "success");
   } catch (error) {
+    try { renderForwarding(await api("forwarding_setup_get")); } catch { /* keep current forwarding card */ }
     setStatus("forwardingStatus", Core.safeErrorMessage(error), "error");
   } finally { setBusy(button, false); }
 });
@@ -1975,29 +1935,52 @@ $("disableForwarding").addEventListener("click", async () => {
   } finally { setBusy(button, false); }
 });
 
+$("setupIntakeNewAddress").addEventListener("click", () => {
+  setStatus("setupStatus", "CaughtUp keeps this address. Finish Confirm and Verify connection instead of creating a new one.", "");
+});
+
+$("setupIntakeSignOut").addEventListener("click", () => { void signOutCaughtUp(); });
+
 $("setupIntakeAction").addEventListener("click", async () => {
   const button = $("setupIntakeAction");
-  const state = forwardingState?.status || "not_started";
-  if (intakePrimaryNeedsConfirm(state)) {
+  const view = currentIntakeView({
+    forwarding: forwardingState || { status: "not_started" },
+    gmail_settings_url: forwardingGmailSettingsUrl,
+    latest_probe: null,
+  });
+  const action = button.dataset.action || view.action;
+  if (action === "confirm_google" && forwardingConfirmationUrl) {
     void chrome.tabs.create({ url: forwardingConfirmationUrl });
-    setStatus("setupStatus", "Finish confirming in Gmail, then return here.", "success");
+    await rememberIntakeConfirm(forwardingState?.alias_address || "");
+    renderIntakeSetup({ forwarding: forwardingState, gmail_settings_url: forwardingGmailSettingsUrl, latest_probe: null });
+    setStatus("setupStatus", "Now enable Forward a copy in Gmail, Save Changes, then verify the connection.", "success");
     return;
   }
   setBusy(button, true);
   setStatus("setupStatus", "");
   try {
-    if (["not_started", "disabled"].includes(state)) {
+    if (action === "start" || ["not_started", "disabled"].includes(view.status)) {
       const result = await api("forwarding_setup_start");
       renderIntakeSetup(result);
       if (result.forwarding?.alias_address) await navigator.clipboard.writeText(result.forwarding.alias_address);
       void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
-      setStatus("setupStatus", "Address copied. Paste it in Gmail forwarding settings, then Save.", "success");
-    } else if (state === "verification_received") {
-      const result = await api("forwarding_setup_activate", { confirm: true });
-      renderIntakeSetup({ ...result, gmail_settings_url: forwardingGmailSettingsUrl });
-      setStatus("setupStatus", "Automatic intake is active. Run the test to finish setup.", "success");
-    } else if (state === "active") {
-      await runIntakeForwardingTest();
+      setStatus("setupStatus", "Paste this address in Gmail. Wait here until Confirm appears — Gmail can list the address before CaughtUp receives Google's email.", "success");
+    } else if (action === "open_gmail" || view.status === "address_ready") {
+      if (forwardingState?.alias_address) await navigator.clipboard.writeText(forwardingState.alias_address);
+      void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
+      setStatus("setupStatus", "Paste this address in Gmail. Wait here until Confirm appears — Gmail can list the address before CaughtUp receives Google's email.", "success");
+    } else if (action === "verify_route") {
+      void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
+      try {
+        const result = Forwarding.canonicalStatus(forwardingState?.status) === "google_verification_received"
+          ? await api("forwarding_setup_activate", { confirm: true })
+          : await api("forwarding_route_probe", { confirm: true });
+        renderIntakeSetup(result);
+        setStatus("setupStatus", "CaughtUp is checking that Gmail forwarded the connection message.", "success");
+      } catch (error) {
+        try { renderIntakeSetup(await api("forwarding_setup_get")); } catch { /* keep wizard */ }
+        throw error;
+      }
     }
   } catch (error) {
     setStatus("setupStatus", Core.safeErrorMessage(error), "error");
@@ -2218,7 +2201,7 @@ async function initializePopup() {
       showSetup(true);
       return;
     }
-    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE, VIEW_CACHE_STORAGE]);
+    const local = await chrome.storage.local.get(["caughtup_session", MANUAL_SEND_KEYS_STORAGE, BOOKING_REQUEST_STORAGE, GMAIL_RECONNECT_STORAGE, VIEW_CACHE_STORAGE, INTAKE_CONFIRM_STORAGE]);
     const storedSession = local.caughtup_session || null;
     session = Core.normalizeAuthSession(local.caughtup_session);
     viewCache = local[VIEW_CACHE_STORAGE] && typeof local[VIEW_CACHE_STORAGE] === "object" ? local[VIEW_CACHE_STORAGE] : {};
@@ -2226,6 +2209,7 @@ async function initializePopup() {
       ? local[MANUAL_SEND_KEYS_STORAGE]
       : {};
     gmailReconnectRequired = local[GMAIL_RECONNECT_STORAGE] === true;
+    intakeConfirmAlias = typeof local[INTAKE_CONFIRM_STORAGE] === "string" ? local[INTAKE_CONFIRM_STORAGE] : "";
     pendingBookingRequest = local[BOOKING_REQUEST_STORAGE] && typeof local[BOOKING_REQUEST_STORAGE] === "object"
       ? local[BOOKING_REQUEST_STORAGE]
       : null;
@@ -2249,11 +2233,11 @@ async function initializePopup() {
     $("settingsStatus").classList.add("hidden");
     $("settingsForm").classList.remove("hidden");
     settingsLoaded = true;
-    void loadForwarding();
     if (profileResult.inbound_forwarding_ready !== true) {
       await beginIntakeWizard();
       return;
     }
+    void loadForwarding();
     showSetup(false);
     const hydrated = hydrateViewCache();
     const digestRefresh = loadDigest({ quiet: hydrated.digest });

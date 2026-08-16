@@ -37,6 +37,10 @@
         </div>
         <p id="setupIntakeCopy" class="hint"></p>
         <button id="setupIntakeAction" class="primary" type="button">Turn on CaughtUp</button>
+        <div class="setup-intake-actions">
+          <button id="setupIntakeNewAddress" class="ghost compact hidden" type="button" hidden>Use a new address</button>
+          <button id="setupIntakeSignOut" class="ghost danger compact" type="button">Sign out</button>
+        </div>
       </div>
       <p id="setupStatus" class="status-text" role="status" aria-live="polite"></p>
     </section>
@@ -505,6 +509,7 @@
   </dialog>
 
   <script src="core.js"></script>
+  <script src="forwarding.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -5,31 +5,39 @@ import test from "node:test";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const ingest = read("../functions/inbound-email/index.ts");
 const api = read("../functions/agent-api/index.ts");
+const aliasHelper = read("../functions/_shared/inbound-alias.ts");
+const sending = read("../functions/_shared/cloudflare-email-sending.ts");
 const migration = read("../migrations/20260814032552_inbound_forwarding_pipeline.sql");
+const stableMigration = read("../migrations/20260815200000_stable_forwarding_aliases.sql");
 const hardening = read("../migrations/20260814041500_inbound_forwarding_post_deploy_hardening.sql");
 const acceptanceTest = read("../migrations/20260814042820_forwarding_acceptance_test.sql");
 const acceptanceThread = read("../migrations/20260814043733_allow_forwarding_acceptance_test_threads.sql");
 const autoSendAcceptance = read("../migrations/20260814045411_forwarding_auto_send_acceptance.sql");
 const worker = read("../../workers/inbound-email/src/index.ts");
+const recipient = read("../../workers/inbound-email/src/recipient.ts");
 
-test("Gmail-safe inbound aliases do not use plus-addressing", () => {
-  assert.match(api, /inboundAliasAddress\(token\)/);
-  assert.match(api, /isLegacyPlusInboundAlias\(existing\.alias_address\)/);
+test("stable aliases use the Gmail local part on getcaughtup.io without plus-addressing", () => {
+  assert.match(aliasHelper, /STABLE_INBOUND_HOST = "getcaughtup\.io"/);
+  assert.match(aliasHelper, /proposedAliasSlug/);
+  assert.match(aliasHelper, /gmail\.com|googlemail\.com/);
+  assert.match(api, /stableAliasAddress\(slug\)/);
+  assert.match(api, /allocateAliasSlug/);
   assert.doesNotMatch(api, /inbox\+\$\{token\}@inbound\.getcaughtup\.io/);
-  assert.match(ingest, /envelopeMatchesAliasToken\(envelopeTo, token\)/);
-  assert.match(worker, /\^\(\?:inbox\\\+\|u\)\(\[a-z0-9\]\{32,96\}\)/);
+  assert.match(ingest, /parseInboundRecipient\(envelopeTo\)/);
+  assert.match(recipient, /STABLE_ALIAS_RE/);
+  assert.match(recipient, /RESERVED_ALIAS_SLUGS/);
 });
 
-test("each inbound alias is registered as an exact Cloudflare Email Routing mailbox", () => {
+test("catch-all Email Routing owns stable aliases; opaque inbound mailboxes stay dual-format", () => {
   const routing = read("../functions/_shared/cloudflare-email-routing.ts");
   assert.match(routing, /ia_cloudflare_api_token/);
   assert.match(routing, /email\/routing\/rules/);
-  assert.match(routing, /type: "literal"/);
+  assert.match(routing, /diagnoseCloudflareCatchAll/);
+  assert.match(routing, /item\.type === "all"/);
   assert.match(routing, /caughtup-inbound-email/);
   assert.match(routing, /ensureCloudflareInboundMailbox/);
-  assert.match(api, /ensureCloudflareInboundMailbox\(CFG, existing\.alias_address\)/);
-  assert.match(api, /ensureCloudflareInboundMailbox\(CFG, created\.alias_address, existing\?\.alias_address\)/);
-  assert.match(api, /code: "inbound_mailbox_unavailable"/);
+  assert.match(api, /isOpaqueOrLegacyInboundAlias/);
+  assert.doesNotMatch(api, /ensureCloudflareInboundMailbox\(CFG, created\.alias_address, existing\?\.alias_address\)/);
   assert.doesNotMatch(routing, /console\.(?:log|error|info|debug)/);
 });
 
@@ -43,23 +51,31 @@ test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body"
   assert.match(worker, /crypto\.subtle\.sign\(\{ name: "ECDSA", hash: "SHA-256" \}/);
   assert.match(worker, /`\$\{timestamp\}\.\$\{body\}`/);
   assert.match(worker, /await fetch\(env\.SUPABASE_INGEST_URL/);
+  assert.match(worker, /parseInboundRecipient/);
 });
 
 test("ingest rejects unsigned or stale calls before resolving an alias", () => {
   assert.match(ingest, /Math\.abs\(Date\.now\(\) \/ 1000 - seconds\) > 300/);
   assert.match(ingest, /crypto\.subtle\.verify\(\{ name: "ECDSA", hash: "SHA-256" \}/);
-  assert.ok(ingest.indexOf("validSignature(req, rawBody)") < ingest.indexOf('from("ia_forwarding_aliases")'));
-  assert.match(ingest, /alias_token_hash", tokenHash/);
+  const serve = ingest.slice(ingest.indexOf("Deno.serve"));
+  assert.ok(serve.indexOf("validSignature(req, rawBody)") < serve.indexOf('from("ia_forwarding_aliases")'));
+  assert.match(ingest, /lookupForwardingAlias/);
+  assert.match(ingest, /eq\("alias_address", recipient\.address\)/);
+  assert.match(ingest, /eq\("legacy_alias_address", recipient\.address\)/);
   assert.doesNotMatch(ingest, /console\.(?:log|error)\([^\n]*(?:payload\.text|rawBody|alias_token)/);
 });
 
 test("forwarding verification trusts only Google's sender and allowlisted confirmation host", () => {
   assert.match(ingest, /GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google\.com"/);
   assert.match(ingest, /payload\.envelope_from !== GOOGLE_FORWARDING_SENDER \|\| parseStrictRecipient\(payload\.from\) !== GOOGLE_FORWARDING_SENDER/);
-  assert.match(ingest, /parsed\.hostname === "mail-settings\.google\.com"/);
-  assert.match(ingest, /status: "verification_received"/);
+  assert.match(ingest, /parsed\.hostname !== "mail-settings\.google\.com"/);
+  assert.match(ingest, /pathname\.replace\(\/%5B\/gi, "\["\)/);
+  assert.match(ingest, /path\.startsWith\("\/mail\/vf-"\)/);
+  assert.doesNotMatch(ingest, /parsed\.toString\(\)/);
+  assert.match(ingest, /status: "google_verification_received"/);
   assert.match(api, /case "forwarding_setup_activate"/);
-  assert.match(api, /\.in\("status", \["verification_received", "active"\]\)/);
+  assert.match(api, /status: "awaiting_gmail_enable"/);
+  assert.doesNotMatch(api, /\.in\("status", \["verification_received", "active"\]\)/);
 });
 
 test("forwarded content is deduplicated, bounded, and erased after processing", () => {
@@ -109,7 +125,7 @@ test("forwarding acceptance tests are self-addressed, one-use, and impossible to
   assert.match(api, /case "forwarding_test_send"/);
   const action = api.match(/case "forwarding_test_send": \{([\s\S]*?)\n      case "forwarding_setup_disable"/)?.[1] ?? "";
   assert.match(action, /body\.confirm !== true/);
-  assert.match(action, /\.eq\("status", "active"\)/);
+  assert.match(action, /\.eq\("status", "route_verified"\)/);
   assert.match(action, /profile\?\.auto_send === true && profile\?\.reply_mode === "auto_send"/);
   assert.match(action, /deliveryTarget === "inbound_alias" \? alias\.alias_address : account\.gmail_address/);
   assert.match(action, /`test\+\$\{testToken\}@inbound\.getcaughtup\.io`/);
@@ -155,4 +171,23 @@ test("new forwarding tables are service-role-only under RLS", () => {
   assert.match(hardening, /ia_inbound_messages\(user_id, created_at desc\)/);
   assert.match(hardening, /ia_inbound_messages\(processed_email_id\)/);
   assert.match(hardening, /revoke execute on function public\.rls_auto_enable\(\) from public, anon, authenticated/);
+});
+
+test("route verification requires an external probe through Gmail, not a user click", () => {
+  assert.match(stableMigration, /status in \(\s*'address_ready'/);
+  assert.match(stableMigration, /alias_slug/);
+  assert.match(stableMigration, /legacy_alias_address/);
+  assert.match(stableMigration, /kind in \('controlled_test', 'route_probe'\)/);
+  assert.match(api, /case "forwarding_route_probe"/);
+  assert.match(api, /startExternalRouteProbe/);
+  assert.match(api, /sendExternalRouteProbe/);
+  assert.match(api, /kind: "route_probe"/);
+  assert.match(sending, /setup-probe@getcaughtup\.io/);
+  assert.match(sending, /email\/sending\/send/);
+  assert.match(ingest, /ROUTE_PROBE_SENDER/);
+  assert.match(ingest, /claimRouteProbe/);
+  assert.match(ingest, /status: "route_verified"/);
+  assert.match(api, /inbound_forwarding_ready: routeVerifiedStatus/);
+  assert.doesNotMatch(api, /status: "active", activated_at: now/);
+  assert.match(ingest, /routeVerifiedStatus\(alias\.status\)/);
 });

@@ -17,11 +17,13 @@ function message(overrides: Partial<ForwardableEmailMessage> = {}): ForwardableE
 }
 
 describe("inbound email envelope", () => {
-  it("accepts tokenized CaughtUp mailboxes and rejects unknown addresses", () => {
+  it("accepts tokenized CaughtUp mailboxes, stable aliases, and rejects unknown addresses", () => {
     expect(aliasToken("uabcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io"))
       .toBe("abcdefghijklmnopqrstuvwxyz123456");
     expect(aliasToken("inbox+abcdefghijklmnopqrstuvwxyz123456@inbound.getcaughtup.io"))
       .toBe("abcdefghijklmnopqrstuvwxyz123456");
+    expect(aliasToken("yafet2132@getcaughtup.io")).toBe("yafet2132");
+    expect(aliasToken("support@getcaughtup.io")).toBeNull();
     expect(aliasToken("inbox@inbound.getcaughtup.io")).toBeNull();
     expect(aliasToken("inbox+abc@example.com")).toBeNull();
   });

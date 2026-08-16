@@ -151,7 +151,7 @@ test("client targets the audited send-only API actions", () => {
     "opportunity_preferences_set", "brand_relationship_set", "opportunity_create", "opportunity_update",
     "affiliate_metric_upsert", "affiliate_metric_delete", "affiliate_opportunity_create",
     "tiktok_connect_start", "tiktok_disconnect", "negotiation_dismiss",
-    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_setup_disable",
+    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_route_probe", "forwarding_setup_disable",
     "forwarding_test_send", "forwarded_draft_get", "forwarded_draft_update", "forwarded_send",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
   assert.doesNotMatch(allScripts, /"(?:draft_get|draft_update|send_draft|sweep|opportunity_draft_get|opportunity_send|negotiation_test_draft_create)"/);
@@ -301,6 +301,7 @@ test("selecting Auto-send immediately enters the save and confirmation flow", ()
 });
 
 test("forwarding setup, controlled test, and disconnect are complete guided flows", () => {
+  const forwardingScript = fs.readFileSync(path.join(extensionDir, "forwarding.js"), "utf8");
   for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding", "runForwardingTest", "disableForwarding"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
@@ -308,24 +309,37 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /id="setupIntakeAction"[^>]*>Turn on CaughtUp</);
-  assert.match(connectHtml, /id="intakePrimary"[^>]*>Turn on CaughtUp</);
+  assert.match(html, /src="forwarding\.js"/);
+  assert.match(connectHtml, /src="forwarding\.js"/);
   assert.match(script, /inbound_forwarding_ready !== true/);
   assert.doesNotMatch(script, /inbound_forwarding_ready !== true[\s\S]*forwardingTestPassed\(forwardingSnapshot/);
   assert.match(script, /showSetup\(true, "", "forwarding"\)/);
-  assert.match(script, /Turn on CaughtUp/);
+  assert.match(html, /Turn on CaughtUp/);
+  assert.match(forwardingScript, /CaughtUpForwarding/);
+  assert.match(forwardingScript, /address_ready/);
+  assert.match(forwardingScript, /route_verified/);
+  assert.match(forwardingScript, /Gmail may show it as saved before CaughtUp receives Google's confirmation email/);
+  assert.match(forwardingScript, /pathname\.replace\(\/%5B\/gi, "\["\)/);
+  assert.match(forwardingScript, /path\.startsWith\("\/mail\/vf-"\)/);
   assert.match(script, /api\("forwarding_setup_start"\)/);
+  assert.match(script, /prefetched \|\| await api\("forwarding_setup_start"\)/);
   assert.match(script, /navigator\.clipboard\.writeText/);
   assert.match(script, /api\("forwarding_setup_activate", \{ confirm: true \}\)/);
-  assert.match(script, /api\("forwarding_test_send"/);
-  assert.match(script, /delivery_target: "inbound_alias"/);
-  assert.match(script, /shouldPollForwarding/);
-  assert.match(script, /verification_received/);
+  assert.match(script, /api\("forwarding_route_probe"/);
   assert.match(script, /api\("forwarding_setup_disable", \{ confirm: true \}\)/);
+  assert.match(script, /scheduleIntakePoll/);
+  assert.match(script, /view\.status === "route_verified"/);
+  assert.doesNotMatch(script, /runIntakeForwardingTest/);
+  assert.match(script, /api\("forwarding_test_send"/);
   assert.match(connectScript, /beginForwardingSetup/);
   assert.match(connectScript, /api\("forwarding_setup_start"\)/);
-  assert.match(connectScript, /Turn on CaughtUp/);
-  assert.match(connectScript, /api\("forwarding_test_send"/);
+  assert.match(connectHtml, /Turn on CaughtUp/);
+  assert.match(connectScript, /api\("forwarding_route_probe"/);
+  assert.match(forwardingScript, /Open Gmail settings/);
   assert.doesNotMatch(connectHtml, /id="openGmailForwarding"/);
+  assert.match(html, /id="setupIntakeNewAddress"/);
+  assert.match(script, /Finish Confirm and Verify connection instead of creating a new one/);
+  assert.match(connectScript, /Finish Confirm and Verify connection instead of creating a new one/);
 });
 
 test("Chat writing-style updates are reflected in extension state", () => {
@@ -339,7 +353,7 @@ test("Chat writing-style updates are reflected in extension state", () => {
 test("manifest requests only the extension capabilities used by this UI", () => {
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "identity", "storage"]);
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.6.3");
+  assert.equal(manifest.version, "0.6.6");
   assert.equal(manifest.background.service_worker, "background.js");
 });
 

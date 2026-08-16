@@ -90,6 +90,7 @@ h2 { font-size: 16px; line-height: 1.3; }
 .setup-intake-address { margin: 10px 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .setup-intake-address code { display: block; overflow-wrap: anywhere; font-size: 10.5px; }
 .setup-intake .hint { margin: 0 0 10px; text-align: left; }
+.setup-intake-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
 button {
   min-height: 36px;

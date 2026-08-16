@@ -98,7 +98,7 @@ test("current extension-facing action contract is present and legacy Gmail actio
   const api = await read("functions/agent-api/index.ts");
   for (const action of [
     "digest", "chat", "profile_get", "profile_set", "auto_send_prepare", "auto_send_confirm", "auto_send_disable",
-    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_test_send", "forwarding_setup_disable",
+    "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_route_probe", "forwarding_test_send", "forwarding_setup_disable",
     "forwarded_draft_get", "forwarded_draft_update", "forwarded_send", "media_kit_list", "learning_reset", "gmail_connect_start",
     "calendar_get", "calendar_set", "booking_create", "booking_delete",
   ]) assert.match(api, new RegExp(`case "${action}"`));

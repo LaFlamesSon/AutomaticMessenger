@@ -2,7 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { inboundSystemPrompt, triageInbound, type TriageResult } from "../_shared/inbound-triage.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
-import { envelopeMatchesAliasToken } from "../_shared/inbound-alias.ts";
+import {
+  envelopeMatchesAliasToken, parseInboundRecipient, ROUTE_PROBE_SENDER, routeVerifiedStatus,
+} from "../_shared/inbound-alias.ts";
 import {
   applyContactPreference, collaborationMediaKitRelevant, contactSafetyViolations, deliveryDecision,
   draftSafetyViolations, enforceConfiguredSignoff, explicitPortfolioRequest, finalizePortfolioDraft,
@@ -77,7 +79,8 @@ async function validSignature(req: Request, body: string): Promise<boolean> {
 function validatePayload(raw: any): InboundPayload | null {
   const token = clean(raw?.alias_token, 96).toLowerCase();
   const envelopeTo = clean(raw?.envelope_to, 320).toLowerCase();
-  if (!/^[a-z0-9]{32,96}$/.test(token) || !envelopeMatchesAliasToken(envelopeTo, token)) return null;
+  const recipient = parseInboundRecipient(envelopeTo);
+  if (!recipient || recipient.aliasToken !== token || !envelopeMatchesAliasToken(envelopeTo, token)) return null;
   const received = new Date(String(raw?.received_at ?? ""));
   const rawSize = Number(raw?.raw_size);
   if (!Number.isFinite(received.getTime()) || !Number.isInteger(rawSize) || rawSize < 1 || rawSize > 10_000_000) return null;
@@ -102,6 +105,18 @@ function replyAddress(payload: InboundPayload): string | null {
   return parseStrictRecipient(payload.reply_to) ?? parseStrictRecipient(payload.from) ?? parseStrictRecipient(payload.envelope_from);
 }
 
+function canonicalGoogleConfirmationUrl(candidate: string): string | null {
+  try {
+    const parsed = new URL(candidate.replace(/[).,]+$/, ""));
+    if (parsed.protocol !== "https:" || parsed.hostname !== "mail-settings.google.com") return null;
+    const path = parsed.pathname.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
+    if (!path.startsWith("/mail/vf-")) return null;
+    return `https://mail-settings.google.com${path}`.slice(0, 2000);
+  } catch {
+    return null;
+  }
+}
+
 function googleForwardingConfirmation(payload: InboundPayload): { code: string | null; url: string | null } | null {
   if (payload.envelope_from !== GOOGLE_FORWARDING_SENDER || parseStrictRecipient(payload.from) !== GOOGLE_FORWARDING_SENDER) return null;
   if (!/gmail forwarding confirmation/i.test(payload.subject)) return null;
@@ -109,10 +124,8 @@ function googleForwardingConfirmation(payload: InboundPayload): { code: string |
   const urls = payload.text.match(/https:\/\/mail-settings\.google\.com\/[^\s<>'"]+/gi) ?? [];
   let url: string | null = null;
   for (const candidate of urls) {
-    try {
-      const parsed = new URL(candidate.replace(/[).,]+$/, ""));
-      if (parsed.protocol === "https:" && parsed.hostname === "mail-settings.google.com") { url = parsed.toString().slice(0, 2000); break; }
-    } catch { /* ignore malformed candidate */ }
+    url = canonicalGoogleConfirmationUrl(candidate);
+    if (url) break;
   }
   return code || url ? { code, url } : null;
 }
@@ -200,6 +213,55 @@ async function resolveThread(supabase: any, accountId: string, payload: InboundP
   return refs[0] ?? (payload.message_id || fallback);
 }
 
+function routeProbeToken(payload: InboundPayload): string | null {
+  if (payload.envelope_from !== ROUTE_PROBE_SENDER || parseStrictRecipient(payload.from) !== ROUTE_PROBE_SENDER) return null;
+  return payload.subject.match(/CaughtUp connection check ([0-9a-f]{48})/i)?.[1]?.toLowerCase() ?? null;
+}
+
+async function lookupForwardingAlias(supabase: any, recipient: { kind: string; address: string }, aliasToken: string): Promise<{ data: any; error: any }> {
+  if (recipient.kind === "stable") {
+    const byAddress = await supabase.from("ia_forwarding_aliases")
+      .select("id,user_id,gmail_account_id,status,alias_address,legacy_alias_address")
+      .eq("alias_address", recipient.address).maybeSingle();
+    if (byAddress.error || byAddress.data) return byAddress;
+    return supabase.from("ia_forwarding_aliases")
+      .select("id,user_id,gmail_account_id,status,alias_address,legacy_alias_address")
+      .eq("legacy_alias_address", recipient.address).maybeSingle();
+  }
+  return supabase.from("ia_forwarding_aliases")
+    .select("id,user_id,gmail_account_id,status,alias_address,legacy_alias_address")
+    .eq("alias_token_hash", await sha256(aliasToken)).maybeSingle();
+}
+
+async function claimRouteProbe(
+  supabase: any,
+  alias: { id: string; user_id: string; gmail_account_id: string },
+  token: string,
+  messageId: string,
+): Promise<"ok" | "invalid" | "error"> {
+  if (!messageId) return "invalid";
+  const { data: testRun, error: testRunError } = await supabase.from("ia_forwarding_test_runs")
+    .select("id,status,inbound_rfc_message_id,expires_at")
+    .eq("token_hash", await sha256(token)).eq("user_id", alias.user_id).eq("gmail_account_id", alias.gmail_account_id)
+    .eq("forwarding_alias_id", alias.id).eq("kind", "route_probe").maybeSingle();
+  if (testRunError) return "error";
+  if (!testRun) return "invalid";
+  if (["processing", "processed"].includes(testRun.status) && testRun.inbound_rfc_message_id === messageId) return "ok";
+  if (["pending", "sent"].includes(testRun.status) && new Date(testRun.expires_at).getTime() > Date.now()) {
+    const { data: claimed, error: claimError } = await supabase.from("ia_forwarding_test_runs").update({
+      status: "processed", inbound_rfc_message_id: messageId, updated_at: new Date().toISOString(),
+    }).eq("id", testRun.id).in("status", ["pending", "sent"]).gt("expires_at", new Date().toISOString())
+      .select("id").maybeSingle();
+    if (claimError) return "error";
+    return claimed ? "ok" : "invalid";
+  }
+  if (["pending", "sent"].includes(testRun.status)) {
+    await supabase.from("ia_forwarding_test_runs").update({ status: "expired", updated_at: new Date().toISOString() })
+      .eq("id", testRun.id).in("status", ["pending", "sent"]);
+  }
+  return "invalid";
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
   const rawBody = await req.text();
@@ -209,23 +271,36 @@ Deno.serve(async (req: Request) => {
   if (!payload) return json({ error: "invalid payload" }, 400);
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const tokenHash = await sha256(payload.alias_token);
-  const { data: alias, error: aliasError } = await supabase.from("ia_forwarding_aliases")
-    .select("id,user_id,gmail_account_id,status").eq("alias_token_hash", tokenHash).maybeSingle();
+  const recipient = parseInboundRecipient(payload.envelope_to);
+  if (!recipient) return json({ ok: true, discarded: "unknown_alias" }, 202);
+  const { data: alias, error: aliasError } = await lookupForwardingAlias(supabase, recipient, payload.alias_token);
   if (aliasError) return json({ error: "alias lookup failed" }, 503);
   if (!alias || alias.status === "disabled") return json({ ok: true, discarded: "unknown_alias" }, 202);
 
   const confirmation = googleForwardingConfirmation(payload);
   if (confirmation) {
     const update: Record<string, unknown> = {
-      status: "verification_received", verification_received_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      status: "google_verification_received", verification_received_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     };
     if (confirmation.code) update.verification_code = confirmation.code;
     if (confirmation.url) update.confirmation_url = confirmation.url;
-    const { error } = await supabase.from("ia_forwarding_aliases").update(update).eq("id", alias.id);
+    const { error } = await supabase.from("ia_forwarding_aliases").update(update).eq("id", alias.id)
+      .in("status", ["address_ready", "google_verification_received"]);
     return error ? json({ error: "verification state failed" }, 503) : json({ ok: true, verification_received: true });
   }
-  if (alias.status !== "active") return json({ ok: true, discarded: "forwarding_not_active" }, 202);
+
+  const probeToken = routeProbeToken(payload);
+  if (probeToken) {
+    const verified = await claimRouteProbe(supabase, alias, probeToken, payload.message_id);
+    if (verified === "error") return json({ error: "route probe state failed" }, 503);
+    if (verified === "invalid") return json({ ok: true, discarded: "invalid_route_probe" }, 202);
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("ia_forwarding_aliases").update({
+      status: "route_verified", route_verified_at: now, activated_at: now, updated_at: now,
+    }).eq("id", alias.id).neq("status", "disabled");
+    return error ? json({ error: "route verification state failed" }, 503) : json({ ok: true, route_verified: true });
+  }
+  if (!routeVerifiedStatus(alias.status)) return json({ ok: true, discarded: "forwarding_not_active" }, 202);
 
   const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
     .select("id,user_id,gmail_address,refresh_token,oauth_capability").eq("id", alias.gmail_account_id)
@@ -241,7 +316,8 @@ Deno.serve(async (req: Request) => {
     const testTokenHash = await sha256(forwardingTestMatch[1]);
     const { data: testRun, error: testRunError } = await supabase.from("ia_forwarding_test_runs")
       .select("id,status,inbound_rfc_message_id,expires_at,allow_auto_send").eq("token_hash", testTokenHash)
-      .eq("user_id", alias.user_id).eq("gmail_account_id", account.id).eq("forwarding_alias_id", alias.id).maybeSingle();
+      .eq("user_id", alias.user_id).eq("gmail_account_id", account.id).eq("forwarding_alias_id", alias.id)
+      .eq("kind", "controlled_test").maybeSingle();
     if (testRunError) return json({ error: "forwarding test lookup failed" }, 503);
     if (!testRun) return json({ ok: true, discarded: "invalid_forwarding_test" }, 202);
     if (["processing", "processed"].includes(testRun.status) && testRun.inbound_rfc_message_id === payload.message_id) {
