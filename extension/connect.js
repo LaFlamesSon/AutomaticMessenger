@@ -218,7 +218,6 @@ async function handleIntakePrimaryClick() {
       chrome.tabs.create({ url: forwardingGmailSettingsUrl });
       $("forwardingTestStatus").textContent = "Paste this address in Gmail. Wait here until Confirm appears.";
     } else if (action === "verify_route") {
-      chrome.tabs.create({ url: forwardingGmailSettingsUrl });
       const status = Forwarding.canonicalStatus(forwardingState?.status);
       const result = status === "google_verification_received"
         ? await api("forwarding_setup_activate", { confirm: true })

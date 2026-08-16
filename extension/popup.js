@@ -1894,7 +1894,6 @@ $("activateForwarding").addEventListener("click", async () => {
   const button = $("activateForwarding");
   setBusy(button, true, "Checking...");
   try {
-    void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
     const status = Forwarding.canonicalStatus(forwardingState?.status);
     const result = status === "google_verification_received"
       ? await api("forwarding_setup_activate", { confirm: true })
@@ -1976,7 +1975,6 @@ $("setupIntakeAction").addEventListener("click", async () => {
       void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
       setStatus("setupStatus", "Paste this address in Gmail. Wait here until Confirm appears — Gmail can list the address before CaughtUp receives Google's email.", "success");
     } else if (action === "verify_route") {
-      void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
       try {
         const result = Forwarding.canonicalStatus(forwardingState?.status) === "google_verification_received"
           ? await api("forwarding_setup_activate", { confirm: true })

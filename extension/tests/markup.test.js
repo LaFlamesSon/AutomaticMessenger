@@ -341,6 +341,10 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
   assert.match(script, /navigator\.clipboard\.writeText/);
   assert.match(script, /api\("forwarding_setup_activate", \{ confirm: true \}\)/);
   assert.match(script, /api\("forwarding_route_probe"/);
+  const popupVerifyStart = script.indexOf('} else if (action === "verify_route") {');
+  const popupVerifyEnd = script.indexOf("\n    }\n  } catch", popupVerifyStart);
+  const popupVerifyBlock = script.slice(popupVerifyStart, popupVerifyEnd);
+  assert.doesNotMatch(popupVerifyBlock, /chrome\.tabs\.create/);
   assert.match(script, /api\("forwarding_setup_disable", \{ confirm: true \}\)/);
   assert.match(script, /scheduleIntakePoll/);
   assert.match(script, /view\.status === "route_verified"/);
@@ -350,6 +354,10 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
   assert.match(connectScript, /api\("forwarding_setup_start"\)/);
   assert.match(connectHtml, /Turn on CaughtUp/);
   assert.match(connectScript, /api\("forwarding_route_probe"/);
+  const connectVerifyStart = connectScript.indexOf('} else if (action === "verify_route") {');
+  const connectVerifyEnd = connectScript.indexOf("\n    }\n  } catch", connectVerifyStart);
+  const connectVerifyBlock = connectScript.slice(connectVerifyStart, connectVerifyEnd);
+  assert.doesNotMatch(connectVerifyBlock, /chrome\.tabs\.create/);
   assert.match(forwardingScript, /Open Gmail settings/);
   assert.doesNotMatch(connectHtml, /id="openGmailForwarding"/);
   assert.match(html, /id="setupIntakeNewAddress"/);
