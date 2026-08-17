@@ -78,7 +78,8 @@ test("forwarding verification trusts only Google's sender and allowlisted confir
   assert.match(ingest, /pathname\.replace\(\/%5B\/gi, "\["\)/);
   assert.match(ingest, /path\.startsWith\("\/mail\/vf-"\)/);
   assert.doesNotMatch(ingest, /parsed\.toString\(\)/);
-  assert.match(ingest, /status: "google_verification_received"/);
+  assert.match(ingest, /update\.status = "google_verification_received"/);
+  assert.match(ingest, /awaiting_gmail_enable", "verifying_route"/);
   assert.match(api, /case "forwarding_setup_activate"/);
   assert.match(api, /status: "awaiting_gmail_enable"/);
   assert.doesNotMatch(api, /\.in\("status", \["verification_received", "active"\]\)/);

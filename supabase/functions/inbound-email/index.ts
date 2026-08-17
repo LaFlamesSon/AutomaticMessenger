@@ -360,8 +360,11 @@ Deno.serve(async (req: Request) => {
   if (confirmation) {
     const now = new Date().toISOString();
     const update: Record<string, unknown> = {
-      status: "google_verification_received", verification_received_at: now, updated_at: now,
+      verification_received_at: now, updated_at: now,
     };
+    if (alias.status === "address_ready" || alias.status === "google_verification_received") {
+      update.status = "google_verification_received";
+    }
     if (confirmation.code) update.verification_code = confirmation.code;
     if (confirmation.url) update.confirmation_url = confirmation.url;
     if (confirmation.url && await autoConfirmGoogleForwarding(confirmation.url)) {
@@ -370,7 +373,7 @@ Deno.serve(async (req: Request) => {
       update.confirmation_url = null;
     }
     const { error } = await supabase.from("ia_forwarding_aliases").update(update).eq("id", alias.id)
-      .in("status", ["address_ready", "google_verification_received"]);
+      .in("status", ["address_ready", "google_verification_received", "awaiting_gmail_enable", "verifying_route"]);
     return error ? json({ error: "verification state failed" }, 503) : json({
       ok: true, verification_received: true, google_confirmed: Boolean(update.google_confirmed_at),
     });
