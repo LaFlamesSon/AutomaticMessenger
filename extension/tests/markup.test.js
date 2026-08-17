@@ -333,7 +333,8 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
   assert.match(forwardingScript, /CaughtUpForwarding/);
   assert.match(forwardingScript, /address_ready/);
   assert.match(forwardingScript, /route_verified/);
-  assert.match(forwardingScript, /CaughtUp will confirm Google's email automatically/);
+  assert.doesNotMatch(forwardingScript, /confirm Google's email automatically/);
+  assert.match(forwardingScript, /Google only accepts your logged-in click/);
   assert.match(forwardingScript, /pathname\.replace\(\/%5B\/gi, "\["\)/);
   assert.match(forwardingScript, /path\.startsWith\("\/mail\/vf-"\)/);
   assert.match(script, /api\("forwarding_setup_start"\)/);

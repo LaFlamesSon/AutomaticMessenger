@@ -68,7 +68,10 @@ test("ingest rejects unsigned or stale calls before resolving an alias", () => {
 test("forwarding verification trusts only Google's sender and allowlisted confirmation host", () => {
   assert.match(ingest, /GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google\.com"/);
   assert.match(ingest, /googleForwardingSenderTrusted/);
-  assert.match(ingest, /autoConfirmGoogleForwarding/);
+  assert.doesNotMatch(ingest, /autoConfirmGoogleForwarding/);
+  assert.match(ingest, /update\.google_confirmed_at = null/);
+  assert.doesNotMatch(ingest, /google_confirmed_at[:=] now/);
+  assert.match(api, /google_confirmed_at: now/);
   assert.match(ingest, /parseStrictRecipient\(payload\.from\) !== GOOGLE_FORWARDING_SENDER/);
   assert.match(ingest, /subject\.match\(\/\\\(#\\s\*\(\[0-9\]\{6,20\}\)\\s\*\\\)/);
   assert.match(worker, /googleForwardingControlText/);

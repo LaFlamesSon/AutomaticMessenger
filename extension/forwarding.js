@@ -22,7 +22,9 @@
   }
 
   function probeInProgress(probe) {
-    return ["pending", "sent", "processing"].includes(probe?.status);
+    if (!["pending", "sent", "processing"].includes(probe?.status)) return false;
+    const expires = Date.parse(probe?.expires_at || "");
+    return !Number.isFinite(expires) || expires > Date.now();
   }
 
   function wizardView(result = {}, local = {}) {
@@ -48,12 +50,12 @@
       label = "Open Gmail settings";
       action = "open_gmail";
       poll = true;
-      copy = "Paste this address in Gmail. Leave this popup open — CaughtUp will confirm Google's email automatically. Gmail can list the address before that happens.";
-    } else if (status === "google_verification_received" && confirmationUrl && !confirmOpened && !forwarding.google_confirmed_at) {
+      copy = "Paste this address in Gmail. Leave this popup open — Google's confirmation will appear here as a Confirm step. Gmail can list the address before that happens.";
+    } else if (["google_verification_received", "awaiting_gmail_enable", "verifying_route"].includes(status) && confirmationUrl && !confirmOpened && !forwarding.google_confirmed_at) {
       label = "Confirm";
       action = "confirm_google";
       poll = true;
-      copy = "Google emailed CaughtUp. Hit Confirm, then enable Forward a copy in Gmail and Save Changes.";
+      copy = "Google emailed CaughtUp. Hit Confirm — Google only accepts your logged-in click — then enable Forward a copy in Gmail and Save Changes.";
       summary = "Google reached CaughtUp. Confirm the address, then enable forwarding.";
     } else if (status === "google_verification_received" || status === "awaiting_gmail_enable") {
       label = "Verify connection";

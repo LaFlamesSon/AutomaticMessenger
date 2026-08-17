@@ -134,25 +134,6 @@ function googleForwardingSenderTrusted(payload: InboundPayload): boolean {
   return envelope === GOOGLE_FORWARDING_SENDER || /@(?:google|googlemail)\.com$/.test(envelope);
 }
 
-async function autoConfirmGoogleForwarding(url: string): Promise<boolean> {
-  const variants = [url];
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "mail-settings.google.com") {
-      variants.push(`https://mail.google.com${parsed.pathname}`.slice(0, 2000));
-    }
-  } catch { /* keep the allowlisted original */ }
-  for (const candidate of variants) {
-    for (const method of ["GET", "POST"] as const) {
-      try {
-        const response = await fetch(candidate, { method, redirect: "follow", signal: AbortSignal.timeout(15_000) });
-        if (response.ok) return true;
-      } catch { /* try the next allowlisted confirm method */ }
-    }
-  }
-  return false;
-}
-
 function googleForwardingConfirmation(payload: InboundPayload): { code: string | null; url: string | null } | null {
   if (!googleForwardingSenderTrusted(payload)) return null;
   if (!/gmail forwarding confirmation/i.test(payload.subject)) return null;
@@ -367,16 +348,13 @@ Deno.serve(async (req: Request) => {
     }
     if (confirmation.code) update.verification_code = confirmation.code;
     if (confirmation.url) update.confirmation_url = confirmation.url;
-    if (confirmation.url && await autoConfirmGoogleForwarding(confirmation.url)) {
-      update.google_confirmed_at = now;
-      update.verification_code = null;
-      update.confirmation_url = null;
-    }
+    // Fetching Google's vf- page is not confirmation; only the owner's logged-in
+    // Confirm click is. Google re-sends this mail only while the destination is
+    // unverified, so any prior confirmed mark is stale.
+    update.google_confirmed_at = null;
     const { error } = await supabase.from("ia_forwarding_aliases").update(update).eq("id", alias.id)
       .in("status", ["address_ready", "google_verification_received", "awaiting_gmail_enable", "verifying_route"]);
-    return error ? json({ error: "verification state failed" }, 503) : json({
-      ok: true, verification_received: true, google_confirmed: Boolean(update.google_confirmed_at),
-    });
+    return error ? json({ error: "verification state failed" }, 503) : json({ ok: true, verification_received: true });
   }
 
   const probeToken = routeProbeToken(payload, alias);
