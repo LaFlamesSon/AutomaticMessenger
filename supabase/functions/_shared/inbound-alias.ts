@@ -120,7 +120,7 @@ export function proposedAliasSlug(gmailAddress: string, identityEmail = ""): str
 
 export function gmailCafForwardedAlias(envelopeFrom: string): string | null {
   const match = String(envelopeFrom || "").trim().toLowerCase()
-    .match(/^[^+@]+\+caf_=([^=]+)=([^@]+)@(?:gmail|googlemail)\.com$/);
+    .match(/^[^+@]+\+caf_=([^=]+)=([^@]+)@[^@]+$/);
   if (!match) return null;
   return `${match[1]}@${match[2]}`;
 }
