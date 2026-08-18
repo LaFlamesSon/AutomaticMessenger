@@ -49,7 +49,6 @@ export function parseInboundRecipient(envelopeTo: string): ParsedInboundRecipien
   const stable = address.match(STABLE_ALIAS_RE);
   if (stable) {
     const slug = stable[1].toLowerCase();
-    if (RESERVED_ALIAS_SLUGS.has(slug)) return null;
     return { kind: "stable", address, aliasToken: slug, slug };
   }
   return null;
