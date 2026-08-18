@@ -24,8 +24,9 @@ describe("inbound email envelope", () => {
       .toBe("abcdefghijklmnopqrstuvwxyz123456");
     expect(aliasToken("yafet2132@getcaughtup.io")).toBe("yafet2132");
     expect(aliasToken("yafet2132@inbound.getcaughtup.io")).toBe("yafet2132");
+    expect(aliasToken("support@inbound.getcaughtup.io")).toBe("support");
     expect(aliasToken("support@getcaughtup.io")).toBeNull();
-    expect(aliasToken("inbox@inbound.getcaughtup.io")).toBeNull();
+    expect(aliasToken("inbox@inbound.getcaughtup.io")).toBe("inbox");
     expect(aliasToken("inbox+abc@example.com")).toBeNull();
   });
 

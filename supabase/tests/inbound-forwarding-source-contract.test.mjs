@@ -25,11 +25,14 @@ test("stable aliases use the Gmail local part on inbound.getcaughtup.io without 
   assert.match(api, /stableAliasAddress\(slug\)/);
   assert.match(api, /allocateAliasSlug/);
   assert.match(api, /neq\("user_id", userId\)/);
-  assert.match(api, /preferredSlug/);
+  assert.match(api, /maybeRemigrateForwardingAlias/);
+  assert.match(api, /forwarding_setup_get[\s\S]*maybeRemigrateForwardingAlias/);
   assert.doesNotMatch(api, /inbox\+\$\{token\}@inbound\.getcaughtup\.io/);
   assert.match(ingest, /parseInboundRecipient\(envelopeTo\)/);
   assert.match(recipient, /STABLE_ALIAS_RE/);
   assert.match(recipient, /RESERVED_ALIAS_SLUGS/);
+  assert.match(recipient, /@inbound\.getcaughtup\.io/);
+  assert.match(recipient, /RESERVED_ALIAS_SLUGS\.has\(slug\) && !address\.endsWith\("@inbound\.getcaughtup\.io"\)/);
 });
 
 test("catch-all Email Routing owns stable aliases; opaque inbound mailboxes stay dual-format", () => {

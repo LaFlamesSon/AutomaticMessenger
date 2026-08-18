@@ -70,6 +70,53 @@ async function allocateAliasSlug(supabase: any, userId: string, gmailAddress: st
   throw new Error("forwarding alias unavailable");
 }
 
+async function maybeRemigrateForwardingAlias(
+  supabase: any,
+  userId: string,
+  identityEmail: string,
+  cfg: Record<string, string>,
+): Promise<void> {
+  const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
+    .select("id,gmail_address").eq("user_id", userId).eq("oauth_capability", "send_only")
+    .order("connected_at", { ascending: false }).limit(1).maybeSingle();
+  if (accountError) throw new Error(accountError.message);
+  if (!account) return;
+  const { data: existing, error: existingError } = await supabase.from("ia_forwarding_aliases")
+    .select("id,status,alias_address,alias_slug,legacy_alias_address")
+    .eq("user_id", userId).maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+  if (!existing || existing.status === "disabled" || !isStableInboundAlias(existing.alias_address) || !existing.alias_slug) return;
+  const preferredSlug = proposedAliasSlug(account.gmail_address, identityEmail);
+  let keepSlug = existing.alias_slug;
+  if (existing.alias_slug !== preferredSlug && (existing.alias_slug === "user" || existing.alias_slug.startsWith("inbox-"))) {
+    const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
+      .eq("alias_slug", preferredSlug).neq("user_id", userId).maybeSingle();
+    if (!taken) keepSlug = preferredSlug;
+  } else if (existing.alias_slug === preferredSlug || existing.alias_slug.startsWith(`${preferredSlug}-`)) {
+    const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
+      .eq("alias_slug", preferredSlug).neq("user_id", userId).maybeSingle();
+    if (!taken) keepSlug = preferredSlug;
+  }
+  const advertised = stableAliasAddress(keepSlug);
+  if (existing.alias_address === advertised && existing.alias_slug === keepSlug) return;
+  const { error: migrateError } = await supabase.from("ia_forwarding_aliases").update({
+    alias_address: advertised,
+    alias_slug: keepSlug,
+    alias_token_hash: await sha256(keepSlug),
+    updated_at: new Date().toISOString(),
+  }).eq("user_id", userId).eq("id", existing.id);
+  if (migrateError) throw new Error(migrateError.message);
+  if (cloudflareInboundRoutingConfigured(cfg)) {
+    try {
+      await ensureCloudflareCatchAll(cfg);
+      await ensureInboundAliasRouting(cfg, advertised);
+      if (isOpaqueOrLegacyInboundAlias(existing.legacy_alias_address || "")) {
+        await ensureCloudflareInboundMailbox(cfg, existing.legacy_alias_address);
+      }
+    } catch { /* routing remains platform-managed */ }
+  }
+}
+
 async function forwardingSnapshot(supabase: any, userId: string) {
   const { data: alias, error } = await supabase.from("ia_forwarding_aliases")
     .select(`${FORWARDING_PUBLIC_SELECT},gmail_account_id`).eq("user_id", userId).maybeSingle();
@@ -1212,6 +1259,7 @@ Deno.serve(async (req: Request) => {
       }
 
       case "forwarding_setup_get": {
+        await maybeRemigrateForwardingAlias(supabase, user.id, user.email, CFG);
         return json(await forwardingSnapshot(supabase, user.id));
       }
 
@@ -1226,36 +1274,7 @@ Deno.serve(async (req: Request) => {
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
         if (existing && existing.status !== "disabled" && isStableInboundAlias(existing.alias_address) && existing.alias_slug) {
-          const preferredSlug = proposedAliasSlug(account.gmail_address, user.email);
-          let keepSlug = existing.alias_slug;
-          if (existing.alias_slug !== preferredSlug && (existing.alias_slug === "user" || existing.alias_slug.startsWith("inbox-"))) {
-            const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
-              .eq("alias_slug", preferredSlug).neq("user_id", user.id).maybeSingle();
-            if (!taken) keepSlug = preferredSlug;
-          } else if (existing.alias_slug === preferredSlug || existing.alias_slug.startsWith(`${preferredSlug}-`)) {
-            const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
-              .eq("alias_slug", preferredSlug).neq("user_id", user.id).maybeSingle();
-            if (!taken) keepSlug = preferredSlug;
-          }
-          const advertised = stableAliasAddress(keepSlug);
-          if (existing.alias_address !== advertised || existing.alias_slug !== keepSlug) {
-            const { error: migrateError } = await supabase.from("ia_forwarding_aliases").update({
-              alias_address: advertised,
-              alias_slug: keepSlug,
-              alias_token_hash: await sha256(keepSlug),
-              updated_at: new Date().toISOString(),
-            }).eq("user_id", user.id).eq("id", existing.id);
-            if (migrateError) throw new Error(migrateError.message);
-          }
-          if (cloudflareInboundRoutingConfigured(CFG)) {
-            try {
-              await ensureCloudflareCatchAll(CFG);
-              await ensureInboundAliasRouting(CFG, advertised);
-              if (isOpaqueOrLegacyInboundAlias(existing.legacy_alias_address || "")) {
-                await ensureCloudflareInboundMailbox(CFG, existing.legacy_alias_address);
-              }
-            } catch { /* routing remains platform-managed */ }
-          }
+          await maybeRemigrateForwardingAlias(supabase, user.id, user.email, CFG);
           return json(await forwardingSnapshot(supabase, user.id));
         }
         const remint = !existing || existing.status === "disabled" || isLegacyPlusInboundAlias(existing.alias_address);

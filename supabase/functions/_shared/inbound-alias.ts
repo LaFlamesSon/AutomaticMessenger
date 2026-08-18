@@ -106,12 +106,15 @@ function deterministicAliasSlug(seed: string): string {
   return `inbox-${suffix}`;
 }
 
-/** Prefer the connected Gmail local part (same path as yafet2132@gmail.com → yafet2132). */
+/** Prefer the connected Gmail local part (same path as yafet2132@gmail.com → yafet2132).
+ *  Reserved slugs (support, admin, info, …) are prefixed with cu- so the
+ *  first mint produces a receivable address and Google's confirmation email
+ *  is never bounced by the Worker. */
 export function proposedAliasSlug(gmailAddress: string, identityEmail = ""): string {
   const fromGmail = slugFromEmailAddress(gmailAddress, true);
-  if (fromGmail) return fromGmail;
+  if (fromGmail) return isReservedAliasSlug(fromGmail) ? `cu-${fromGmail}` : fromGmail;
   const fromIdentity = slugFromEmailAddress(identityEmail, true);
-  if (fromIdentity) return fromIdentity;
+  if (fromIdentity) return isReservedAliasSlug(fromIdentity) ? `cu-${fromIdentity}` : fromIdentity;
   return deterministicAliasSlug(String(gmailAddress || identityEmail || "caughtup"));
 }
 

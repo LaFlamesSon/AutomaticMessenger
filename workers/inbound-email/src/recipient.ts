@@ -23,7 +23,9 @@ export function parseInboundRecipient(envelopeTo: string): ParsedInboundRecipien
   const stable = address.match(STABLE_ALIAS_RE);
   if (stable?.[1]) {
     const slug = stable[1].toLowerCase();
-    if (RESERVED_ALIAS_SLUGS.has(slug)) return null;
+    // Reserved names are mint-blocked on the apex domain only. Owned aliases
+    // such as support@inbound.getcaughtup.io must still be receivable.
+    if (RESERVED_ALIAS_SLUGS.has(slug) && !address.endsWith("@inbound.getcaughtup.io")) return null;
     return { kind: "stable", address, aliasToken: slug };
   }
   return null;

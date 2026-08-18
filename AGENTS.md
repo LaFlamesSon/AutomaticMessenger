@@ -1,7 +1,9 @@
-# CaughtUp Codex / Cursor Guide
+# CaughtUp Codex / Cursor / Antigravity Guide
 
-Read `CLAUDE.md` first. It is the current product-state snapshot. The Cursor
-chat Yafet is talking to IS the Executive Assistant (EA).
+Read `CLAUDE.md` first. It is the current product-state snapshot. The chat
+Yafet is talking to IS the Executive Assistant (EA), in Cursor or Google
+Antigravity. Overlay: `GEMINI.md`, `.agents/rules/caughtup-ea.md`,
+`.agents/workflows/`. Recipe: `context-vault/wiki/how-to/antigravity-migration.md`.
 
 On `/startup`, continue, or recall: read `CLAUDE.md`,
 `context-vault/ops/ea-briefings/resume-next-session.md`, the newest
@@ -95,7 +97,8 @@ Canonical names only:
 - `qa-agent`: read-oriented verification and evidence; does not fix production code
 - `research-agent`: external/API research; does not write production code
 
-**Cursor Task `model`:** coding workers → `composer-2.5-fast`; `qa-agent` →
+**Cursor Task `model`:** coding workers (`database-agent`, `backend-dev`,
+`frontend-dev`) → `cursor-grok-4.6-high-fast`; `qa-agent` →
 `cursor-grok-4.6-high-fast`; `research-agent` and EA → `inherit`. Codex uses
 `.codex/agents/*.toml`; vault `latest-*` handoffs are the Cursor↔Codex bus.
 
