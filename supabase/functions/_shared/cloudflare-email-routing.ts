@@ -73,7 +73,7 @@ export async function diagnoseCloudflareCatchAll(cfg: Record<string, string>): P
   return { catch_all: rules.some(isCatchAllWorkerRule) };
 }
 
-async function ensureLiteralWorkerRule(cfg: Record<string, string>, mailbox: string, rules = await listRoutingRules(cfg)): Promise<void> {
+async function ensureLiteralWorkerRule(cfg: Record<string, string>, mailbox: string, rules: RoutingRule[]): Promise<void> {
   if (rules.some((rule) => matcherAddress(rule) === mailbox)) return;
   await cloudflareRequest(cfg, rulesUrl(cfg), {
     method: "POST",
