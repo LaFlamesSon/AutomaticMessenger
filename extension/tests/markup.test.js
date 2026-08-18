@@ -317,35 +317,44 @@ test("selecting Auto-send immediately enters the save and confirmation flow", ()
 
 test("forwarding setup, controlled test, and disconnect are complete guided flows", () => {
   const forwardingScript = fs.readFileSync(path.join(extensionDir, "forwarding.js"), "utf8");
-  for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding", "runForwardingTest", "disableForwarding"]) {
+  for (const id of ["forwardingCard", "forwardingAddress", "startForwarding", "openGmailForwarding", "openForwardingConfirmation", "activateForwarding", "runForwardingTest", "disableForwarding", "forwardingInbox", "forwardingInboxConfirm"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   for (const id of ["setupIntake", "setupIntakeAction", "setupIntakeAddress"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /id="setupIntakeAction"[^>]*>Turn on CaughtUp</);
+  assert.match(html, /Confirm with Google/);
+  assert.match(html, /Alias inbox/);
   assert.match(html, /src="forwarding\.js"/);
   assert.match(connectHtml, /src="forwarding\.js"/);
   assert.match(script, /inbound_forwarding_ready !== true/);
   assert.doesNotMatch(script, /inbound_forwarding_ready !== true[\s\S]*forwardingTestPassed\(forwardingSnapshot/);
+  assert.match(script, /activateTab\("settings", false\)/);
   assert.match(script, /showSetup\(true, "", "forwarding"\)/);
   assert.match(html, /Turn on CaughtUp/);
   assert.match(forwardingScript, /CaughtUpForwarding/);
   assert.match(forwardingScript, /address_ready/);
   assert.match(forwardingScript, /route_verified/);
+  assert.match(forwardingScript, /Confirm with Google/);
+  assert.match(forwardingScript, /Alias inbox/);
   assert.doesNotMatch(forwardingScript, /confirm Google's email automatically/);
-  assert.match(forwardingScript, /Google only accepts your logged-in click/);
+  assert.match(forwardingScript, /The next new message Gmail forwards to this address will turn CaughtUp on/);
+  assert.match(forwardingScript, /Alias inbox below/);
+  assert.match(forwardingScript, /!confirmOpened && !forwarding.google_confirmed_at/);
+  assert.match(script, /view.action === "confirm_google"/);
+  assert.match(html, /signed into the Gmail account/);
   assert.match(forwardingScript, /pathname\.replace\(\/%5B\/gi, "\["\)/);
+  assert.match(forwardingScript, /path\.replace\(\/\\\[\/g, "%5B"\)/);
   assert.match(forwardingScript, /path\.startsWith\("\/mail\/vf-"\)/);
   assert.match(script, /api\("forwarding_setup_start"\)/);
   assert.match(script, /prefetched \|\| await api\("forwarding_setup_start"\)/);
   assert.match(script, /navigator\.clipboard\.writeText/);
+  assert.match(forwardingScript, /no separate webmail page/);
+  assert.match(script, /renderAliasInbox/);
+  assert.match(script, /openGoogleConfirmationFromSettings/);
   assert.match(script, /api\("forwarding_setup_activate", \{ confirm: true \}\)/);
   assert.match(script, /api\("forwarding_route_probe"/);
-  const popupVerifyStart = script.indexOf('} else if (action === "verify_route") {');
-  const popupVerifyEnd = script.indexOf("\n    }\n  } catch", popupVerifyStart);
-  const popupVerifyBlock = script.slice(popupVerifyStart, popupVerifyEnd);
-  assert.doesNotMatch(popupVerifyBlock, /chrome\.tabs\.create/);
   assert.match(script, /api\("forwarding_setup_disable", \{ confirm: true \}\)/);
   assert.match(script, /scheduleIntakePoll/);
   assert.match(script, /view\.status === "route_verified"/);
@@ -354,16 +363,12 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
   assert.match(connectScript, /beginForwardingSetup/);
   assert.match(connectScript, /api\("forwarding_setup_start"\)/);
   assert.match(connectHtml, /Turn on CaughtUp/);
-  assert.match(connectScript, /api\("forwarding_route_probe"/);
-  const connectVerifyStart = connectScript.indexOf('} else if (action === "verify_route") {');
-  const connectVerifyEnd = connectScript.indexOf("\n    }\n  } catch", connectVerifyStart);
-  const connectVerifyBlock = connectScript.slice(connectVerifyStart, connectVerifyEnd);
-  assert.doesNotMatch(connectVerifyBlock, /chrome\.tabs\.create/);
+  assert.doesNotMatch(connectScript, /api\("forwarding_route_probe"/);
   assert.match(forwardingScript, /Open Gmail settings/);
   assert.doesNotMatch(connectHtml, /id="openGmailForwarding"/);
   assert.match(html, /id="setupIntakeNewAddress"/);
-  assert.match(script, /Finish Confirm and Verify connection instead of creating a new one/);
-  assert.match(connectScript, /Finish Confirm and Verify connection instead of creating a new one/);
+  assert.match(script, /renderAliasInbox/);
+  assert.match(connectScript, /Google's Confirm page opened/);
 });
 
 test("Chat writing-style updates are reflected in extension state", () => {

@@ -22,6 +22,8 @@ test("stable aliases use the Gmail local part on inbound.getcaughtup.io without 
   assert.match(aliasHelper, /gmail\.com|googlemail\.com/);
   assert.match(api, /stableAliasAddress\(slug\)/);
   assert.match(api, /allocateAliasSlug/);
+  assert.match(api, /neq\("user_id", userId\)/);
+  assert.match(api, /preferredSlug/);
   assert.doesNotMatch(api, /inbox\+\$\{token\}@inbound\.getcaughtup\.io/);
   assert.match(ingest, /parseInboundRecipient\(envelopeTo\)/);
   assert.match(recipient, /STABLE_ALIAS_RE/);
@@ -79,6 +81,7 @@ test("forwarding verification trusts only Google's sender and allowlisted confir
   assert.match(worker, /mail-settings\|mail\)\\\.google\\\.com\\\/mail\\\/vf-/);
   assert.match(ingest, /mail-settings\.google\.com", "mail\.google\.com"/);
   assert.match(ingest, /pathname\.replace\(\/%5B\/gi, "\["\)/);
+  assert.match(ingest, /path\.replace\(\/\\\[\/g, "%5B"\)/);
   assert.match(ingest, /path\.startsWith\("\/mail\/vf-"\)/);
   assert.doesNotMatch(ingest, /parsed\.toString\(\)/);
   assert.match(ingest, /update\.status = "google_verification_received"/);
@@ -184,7 +187,7 @@ test("new forwarding tables are service-role-only under RLS", () => {
   assert.match(hardening, /revoke execute on function public\.rls_auto_enable\(\) from public, anon, authenticated/);
 });
 
-test("route verification requires an external probe through Gmail, not a user click", () => {
+test("route verification accepts the first Gmail CAF hop, and still keeps the optional probe", () => {
   assert.match(stableMigration, /status in \(\s*'address_ready'/);
   assert.match(stableMigration, /alias_slug/);
   assert.match(stableMigration, /legacy_alias_address/);
@@ -198,7 +201,10 @@ test("route verification requires an external probe through Gmail, not a user cl
   assert.match(ingest, /routeProbeClaimToken/);
   assert.match(ingest, /claimRouteProbe/);
   assert.match(aliasHelper, /gmailCafForwardedAlias/);
+  assert.match(aliasHelper, /cafForwardToAlias/);
   assert.match(aliasHelper, /routeProbeClaimToken/);
+  assert.match(ingest, /cafForwardToAlias\(payload\.envelope_from, alias\)/);
+  assert.ok(ingest.indexOf("cafForwardToAlias") < ingest.indexOf('discarded: "forwarding_not_active"'));
   assert.match(ingest, /status: "route_verified"/);
   assert.match(api, /inbound_forwarding_ready: routeVerifiedStatus/);
   assert.doesNotMatch(api, /status: "active", activated_at: now/);

@@ -3,7 +3,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { inboundSystemPrompt, triageInbound, type TriageResult } from "../_shared/inbound-triage.ts";
 import { parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds } from "../_shared/mime.ts";
 import {
-  envelopeMatchesAliasToken, parseInboundRecipient, routeProbeClaimToken, routeVerifiedStatus,
+  cafActivationStatuses, cafForwardToAlias, envelopeMatchesAliasToken, parseInboundRecipient,
+  routeProbeClaimToken, routeVerifiedStatus,
 } from "../_shared/inbound-alias.ts";
 import {
   applyContactPreference, collaborationMediaKitRelevant, contactSafetyViolations, deliveryDecision,
@@ -122,7 +123,7 @@ function canonicalGoogleConfirmationUrl(candidate: string): string | null {
     }
     const path = parsed.pathname.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
     if (!path.startsWith("/mail/vf-")) return null;
-    return `https://mail-settings.google.com${path}`.slice(0, 2000);
+    return `https://mail-settings.google.com${path.replace(/\[/g, "%5B").replace(/\]/g, "%5D")}`.slice(0, 2000);
   } catch {
     return null;
   }
@@ -368,7 +369,18 @@ Deno.serve(async (req: Request) => {
     }).eq("id", alias.id).neq("status", "disabled");
     return error ? json({ error: "route verification state failed" }, 503) : json({ ok: true, route_verified: true });
   }
-  if (!routeVerifiedStatus(alias.status)) return json({ ok: true, discarded: "forwarding_not_active" }, 202);
+  if (!routeVerifiedStatus(alias.status)) {
+    if (!cafForwardToAlias(payload.envelope_from, alias)) {
+      return json({ ok: true, discarded: "forwarding_not_active" }, 202);
+    }
+    const now = new Date().toISOString();
+    const { data: activated, error } = await supabase.from("ia_forwarding_aliases").update({
+      status: "route_verified", route_verified_at: now, activated_at: now, updated_at: now,
+    }).eq("id", alias.id).in("status", cafActivationStatuses()).select("id").maybeSingle();
+    if (error) return json({ error: "route verification state failed" }, 503);
+    if (!activated) return json({ ok: true, discarded: "forwarding_not_active" }, 202);
+    alias.status = "route_verified";
+  }
 
   const { data: account, error: accountError } = await supabase.from("ia_gmail_accounts")
     .select("id,user_id,gmail_address,refresh_token,oauth_capability").eq("id", alias.gmail_account_id)

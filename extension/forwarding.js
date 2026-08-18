@@ -15,7 +15,8 @@
       if (url.protocol !== "https:" || url.hostname !== hostname || !url.pathname.startsWith(pathPrefix)) return null;
       if (hostname === "mail-settings.google.com") {
         const path = url.pathname.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
-        return path.startsWith("/mail/vf-") ? `https://mail-settings.google.com${path}` : null;
+        if (!path.startsWith("/mail/vf-")) return null;
+        return `https://mail-settings.google.com${path.replace(/\[/g, "%5B").replace(/\]/g, "%5D")}`;
       }
       return url.toString();
     } catch { return null; }
@@ -39,38 +40,35 @@
     let action = "none";
     let copy = "";
     let poll = false;
-    let heading = "Turn on email intake";
-    let summary = "Add this CaughtUp address in Gmail, then confirm and verify the connection.";
+    let heading = "Add a forwarding address";
+    let summary = "Add this CaughtUp address in Gmail. Google's confirmation link then appears in Settings.";
+    void confirmOpened;
+    void probe;
 
     if (["not_started", "disabled"].includes(status)) {
       label = "Turn on CaughtUp";
       action = "start";
-      copy = "CaughtUp will copy a short forwarding address and open Gmail.";
+      copy = "CaughtUp copies a short address and opens Gmail so you can add it as a forwarding destination.";
+    } else if (confirmationUrl && status !== "route_verified" && !confirmOpened && !forwarding.google_confirmed_at) {
+      label = "Confirm with Google";
+      action = "confirm_google";
+      poll = true;
+      heading = "Google confirmation received";
+      copy = "Google emailed your CaughtUp alias. Open the confirmation from Alias inbox below, then turn on Forward a copy in Gmail and Save.";
+      summary = "Your alias inbox in Settings shows what Google sent. There is no separate webmail page for this address.";
     } else if (status === "address_ready") {
       label = "Open Gmail settings";
       action = "open_gmail";
       poll = true;
-      copy = "Paste this address in Gmail. Leave this popup open — Google's confirmation will appear here as a Confirm step. Gmail can list the address before that happens.";
-    } else if (["google_verification_received", "awaiting_gmail_enable", "verifying_route"].includes(status) && confirmationUrl && !confirmOpened && !forwarding.google_confirmed_at) {
-      label = "Confirm";
-      action = "confirm_google";
+      heading = "Add this address in Gmail";
+      copy = "Paste this address in Gmail. When Google confirms it, the link appears here in Settings.";
+    } else if (["google_verification_received", "awaiting_gmail_enable", "verifying_route"].includes(status)) {
+      label = "Open Gmail settings";
+      action = "open_gmail";
       poll = true;
-      copy = "Google emailed CaughtUp. Hit Confirm — Google only accepts your logged-in click — then enable Forward a copy in Gmail and Save Changes.";
-      summary = "Google reached CaughtUp. Confirm the address, then enable forwarding.";
-    } else if (status === "google_verification_received" || status === "awaiting_gmail_enable") {
-      label = "Verify connection";
-      action = "verify_route";
-      poll = true;
-      copy = "In Gmail, turn forwarding on to this address and Save Changes. Then verify the connection. Do not mint a new address.";
-      summary = "Enable forwarding in Gmail, save, then let CaughtUp prove the route.";
-    } else if (status === "verifying_route") {
-      label = probeInProgress(probe) ? "" : "Retry verification";
-      action = probeInProgress(probe) ? "none" : "verify_route";
-      poll = true;
-      copy = probeInProgress(probe)
-        ? "CaughtUp sent a check to your Gmail inbox. Waiting for that message to come back through forwarding."
-        : "The connection check did not return. After Save Changes in Gmail, retry verification. CaughtUp will keep this same address.";
-      summary = "Waiting for Gmail forwarding to return CaughtUp's connection check.";
+      heading = "Waiting for forwarded mail";
+      copy = "The next new message Gmail forwards to this address will turn CaughtUp on.";
+      summary = "Send one new message from another account to your Gmail inbox. Mail already sitting there will not hop.";
     } else if (status === "route_verified") {
       label = "";
       action = "none";

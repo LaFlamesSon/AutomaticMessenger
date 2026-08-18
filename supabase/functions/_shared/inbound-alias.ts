@@ -103,6 +103,15 @@ export function gmailCafForwardedAlias(envelopeFrom: string): string | null {
   return `${match[1]}@${match[2]}`;
 }
 
+export function cafActivationStatuses(): string[] {
+  return ["address_ready", "google_verification_received", "awaiting_gmail_enable", "verifying_route"];
+}
+
+export function cafForwardToAlias(envelopeFrom: string, alias: AliasLookupRow): boolean {
+  const forwardedTo = gmailCafForwardedAlias(envelopeFrom);
+  return Boolean(forwardedTo && envelopeMatchesAlias(forwardedTo, alias));
+}
+
 export function routeProbeSubjectToken(subject: string): string | null {
   return String(subject || "").match(/CaughtUp connection check ([0-9a-f]{48})/i)?.[1]?.toLowerCase() ?? null;
 }
