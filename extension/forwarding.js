@@ -49,7 +49,7 @@
       label = "Turn on CaughtUp";
       action = "start";
       copy = "CaughtUp copies a short address and opens Gmail so you can add it as a forwarding destination.";
-    } else if (confirmationUrl && status !== "route_verified" && !confirmOpened && !forwarding.google_confirmed_at) {
+    } else if (confirmationUrl && status !== "route_verified" && !forwarding.google_confirmed_at) {
       label = "Confirm with Google";
       action = "confirm_google";
       poll = true;

@@ -83,19 +83,20 @@ export function isReservedAliasSlug(slug: string): boolean {
   return RESERVED_ALIAS_SLUGS.has(slug.trim().toLowerCase());
 }
 
-function normalizeAliasLocalPart(localPart: string, domain: string): string | null {
+function normalizeAliasLocalPart(localPart: string, domain: string, allowOwnedReserved = false): string | null {
   let local = String(localPart || "").trim().toLowerCase().replace(/\+.*$/, "");
   if (domain === "gmail.com" || domain === "googlemail.com") local = local.replace(/\./g, "");
   local = local.replace(/[^a-z0-9-]/g, "").replace(/^-+|-+$/g, "");
   if (local.length > 64) local = local.slice(0, 64).replace(/-+$/g, "");
-  if (!local || isReservedAliasSlug(local)) return null;
+  if (!local) return null;
+  if (isReservedAliasSlug(local) && !allowOwnedReserved) return null;
   return local;
 }
 
-function slugFromEmailAddress(address: string): string | null {
+function slugFromEmailAddress(address: string, allowOwnedReserved = false): string | null {
   const match = String(address || "").trim().toLowerCase().match(/^([^@]+)@([^@]+)$/);
   if (!match) return null;
-  return normalizeAliasLocalPart(match[1], match[2]);
+  return normalizeAliasLocalPart(match[1], match[2], allowOwnedReserved);
 }
 
 function deterministicAliasSlug(seed: string): string {
@@ -105,11 +106,11 @@ function deterministicAliasSlug(seed: string): string {
   return `inbox-${suffix}`;
 }
 
-/** Prefer the connected Gmail local part; fall back to signup identity email; never mint generic "user". */
+/** Prefer the connected Gmail local part (same path as yafet2132@gmail.com → yafet2132). */
 export function proposedAliasSlug(gmailAddress: string, identityEmail = ""): string {
-  const fromGmail = slugFromEmailAddress(gmailAddress);
+  const fromGmail = slugFromEmailAddress(gmailAddress, true);
   if (fromGmail) return fromGmail;
-  const fromIdentity = slugFromEmailAddress(identityEmail);
+  const fromIdentity = slugFromEmailAddress(identityEmail, true);
   if (fromIdentity) return fromIdentity;
   return deterministicAliasSlug(String(gmailAddress || identityEmail || "caughtup"));
 }

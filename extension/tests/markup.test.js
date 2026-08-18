@@ -341,8 +341,8 @@ test("forwarding setup, controlled test, and disconnect are complete guided flow
   assert.doesNotMatch(forwardingScript, /confirm Google's email automatically/);
   assert.match(forwardingScript, /The next new message Gmail forwards to this address will turn CaughtUp on/);
   assert.match(forwardingScript, /Alias inbox below/);
-  assert.match(forwardingScript, /!confirmOpened && !forwarding.google_confirmed_at/);
-  assert.match(script, /view.action === "confirm_google"/);
+  assert.match(forwardingScript, /confirmationUrl && status !== "route_verified" && !forwarding.google_confirmed_at/);
+  assert.match(script, /forwardingInboxMessage"\)\.classList\.toggle\("hidden", waiting\)/);
   assert.match(html, /signed into the Gmail account/);
   assert.match(forwardingScript, /pathname\.replace\(\/%5B\/gi, "\["\)/);
   assert.match(forwardingScript, /path\.replace\(\/\\\[\/g, "%5B"\)/);

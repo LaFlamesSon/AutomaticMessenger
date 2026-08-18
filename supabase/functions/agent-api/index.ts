@@ -1228,8 +1228,10 @@ Deno.serve(async (req: Request) => {
         if (existing && existing.status !== "disabled" && isStableInboundAlias(existing.alias_address) && existing.alias_slug) {
           const preferredSlug = proposedAliasSlug(account.gmail_address, user.email);
           let keepSlug = existing.alias_slug;
-          if (existing.alias_slug === "user" || existing.alias_slug.startsWith("inbox-")) {
-            keepSlug = preferredSlug;
+          if (existing.alias_slug !== preferredSlug && (existing.alias_slug === "user" || existing.alias_slug.startsWith("inbox-"))) {
+            const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
+              .eq("alias_slug", preferredSlug).neq("user_id", user.id).maybeSingle();
+            if (!taken) keepSlug = preferredSlug;
           } else if (existing.alias_slug === preferredSlug || existing.alias_slug.startsWith(`${preferredSlug}-`)) {
             const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
               .eq("alias_slug", preferredSlug).neq("user_id", user.id).maybeSingle();

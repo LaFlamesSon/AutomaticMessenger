@@ -19,9 +19,8 @@ const recipient = read("../../workers/inbound-email/src/recipient.ts");
 test("stable aliases use the Gmail local part on inbound.getcaughtup.io without plus-addressing", () => {
   assert.match(aliasHelper, /STABLE_INBOUND_HOST = "inbound\.getcaughtup\.io"/);
   assert.match(aliasHelper, /proposedAliasSlug/);
-  assert.match(aliasHelper, /identityEmail/);
-  assert.match(aliasHelper, /"user"/);
-  assert.match(aliasHelper, /deterministicAliasSlug/);
+  assert.match(aliasHelper, /allowOwnedReserved/);
+  assert.match(aliasHelper, /slugFromEmailAddress\(gmailAddress, true\)/);
   assert.match(aliasHelper, /gmail\.com|googlemail\.com/);
   assert.match(api, /stableAliasAddress\(slug\)/);
   assert.match(api, /allocateAliasSlug/);

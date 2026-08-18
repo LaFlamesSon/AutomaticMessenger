@@ -1813,14 +1813,16 @@ function formatAliasReceivedAt(value) {
 }
 
 function renderAliasInbox(view, forwarding) {
-  const showInbox = Boolean(view.confirmationUrl)
-    && view.status !== "route_verified"
-    && view.action === "confirm_google"
-    && !forwarding.google_confirmed_at;
+  const waiting = view.status === "address_ready" && !view.confirmationUrl;
+  const ready = Boolean(view.confirmationUrl) && view.status !== "route_verified" && !forwarding.google_confirmed_at;
+  const showInbox = waiting || ready;
   $("forwardingInbox").classList.toggle("hidden", !showInbox);
   if (!showInbox) return;
-  $("forwardingInboxHint").textContent = `Mail for ${forwarding.alias_address} — what CaughtUp received from Google:`;
-  $("forwardingInboxMessage").classList.remove("hidden");
+  $("forwardingInboxHint").textContent = waiting
+    ? `After you add ${forwarding.alias_address} in Gmail forwarding, Google will email that alias. CaughtUp polls every few seconds and will show the Confirm button here when the message arrives.`
+    : `Mail for ${forwarding.alias_address} — what CaughtUp received from Google:`;
+  $("forwardingInboxMessage").classList.toggle("hidden", waiting);
+  if (waiting) return;
   $("forwardingInboxTime").textContent = formatAliasReceivedAt(forwarding.verification_received_at) || "Just now";
   $("forwardingInboxConfirm").disabled = !view.confirmationUrl;
   $("forwardingInboxConfirm").textContent = "Confirm with Google";
@@ -1832,6 +1834,9 @@ function applySettingsForwarding(result = {}, { poll = true } = {}) {
   forwardingConfirmationUrl = view.confirmationUrl;
   forwardingGmailSettingsUrl = view.gmailSettingsUrl;
   const forwarding = view.forwarding;
+  if (forwarding.alias_address && intakeConfirmAlias && intakeConfirmAlias !== forwarding.alias_address) {
+    void rememberIntakeConfirm("");
+  }
   const active = view.status === "route_verified";
   $("forwardingCard").classList.remove("hidden");
   $("forwardingBadge").textContent = active ? "Automatic" : view.confirmationUrl ? "Confirm" : view.status === "address_ready" ? "Waiting" : ["google_verification_received", "awaiting_gmail_enable", "verifying_route"].includes(view.status) ? "Waiting" : "Not connected";
