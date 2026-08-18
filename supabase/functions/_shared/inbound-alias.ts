@@ -6,7 +6,7 @@ export const RESERVED_ALIAS_SLUGS = new Set([
   "abuse", "admin", "administrator", "api", "app", "billing", "caughtup", "contact", "email",
   "help", "hello", "inbound", "inbox", "info", "jobs", "legal", "mail", "marketing", "no-reply", "noreply",
   "postmaster", "privacy", "probe", "root", "sales", "security", "setup", "setup-probe", "status",
-  "support", "team", "test", "webmaster", "www",
+  "support", "team", "test", "user", "webmaster", "www",
 ]);
 
 export const STABLE_ALIAS_RE = /^([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)@(?:inbound\.)?getcaughtup\.io$/i;
@@ -84,16 +84,35 @@ export function isReservedAliasSlug(slug: string): boolean {
   return RESERVED_ALIAS_SLUGS.has(slug.trim().toLowerCase());
 }
 
-export function proposedAliasSlug(gmailAddress: string): string {
-  const match = String(gmailAddress || "").trim().toLowerCase().match(/^([^@]+)@([^@]+)$/);
-  if (!match) return "user";
-  let local = match[1].replace(/\+.*$/, "");
-  const domain = match[2];
+function normalizeAliasLocalPart(localPart: string, domain: string): string | null {
+  let local = String(localPart || "").trim().toLowerCase().replace(/\+.*$/, "");
   if (domain === "gmail.com" || domain === "googlemail.com") local = local.replace(/\./g, "");
   local = local.replace(/[^a-z0-9-]/g, "").replace(/^-+|-+$/g, "");
   if (local.length > 64) local = local.slice(0, 64).replace(/-+$/g, "");
-  if (!local || isReservedAliasSlug(local)) return "user";
+  if (!local || isReservedAliasSlug(local)) return null;
   return local;
+}
+
+function slugFromEmailAddress(address: string): string | null {
+  const match = String(address || "").trim().toLowerCase().match(/^([^@]+)@([^@]+)$/);
+  if (!match) return null;
+  return normalizeAliasLocalPart(match[1], match[2]);
+}
+
+function deterministicAliasSlug(seed: string): string {
+  let hash = 0;
+  for (const character of seed) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  const suffix = Math.abs(hash).toString(36).slice(0, 8).padEnd(8, "0");
+  return `inbox-${suffix}`;
+}
+
+/** Prefer the connected Gmail local part; fall back to signup identity email; never mint generic "user". */
+export function proposedAliasSlug(gmailAddress: string, identityEmail = ""): string {
+  const fromGmail = slugFromEmailAddress(gmailAddress);
+  if (fromGmail) return fromGmail;
+  const fromIdentity = slugFromEmailAddress(identityEmail);
+  if (fromIdentity) return fromIdentity;
+  return deterministicAliasSlug(String(gmailAddress || identityEmail || "caughtup"));
 }
 
 export function gmailCafForwardedAlias(envelopeFrom: string): string | null {

@@ -19,6 +19,9 @@ const recipient = read("../../workers/inbound-email/src/recipient.ts");
 test("stable aliases use the Gmail local part on inbound.getcaughtup.io without plus-addressing", () => {
   assert.match(aliasHelper, /STABLE_INBOUND_HOST = "inbound\.getcaughtup\.io"/);
   assert.match(aliasHelper, /proposedAliasSlug/);
+  assert.match(aliasHelper, /identityEmail/);
+  assert.match(aliasHelper, /"user"/);
+  assert.match(aliasHelper, /deterministicAliasSlug/);
   assert.match(aliasHelper, /gmail\.com|googlemail\.com/);
   assert.match(api, /stableAliasAddress\(slug\)/);
   assert.match(api, /allocateAliasSlug/);
@@ -35,11 +38,14 @@ test("catch-all Email Routing owns stable aliases; opaque inbound mailboxes stay
   assert.match(routing, /ia_cloudflare_api_token/);
   assert.match(routing, /email\/routing\/rules/);
   assert.match(routing, /diagnoseCloudflareCatchAll/);
+  assert.match(routing, /ensureCloudflareCatchAll/);
+  assert.match(routing, /ensureInboundAliasRouting/);
   assert.match(routing, /item\.type === "all"/);
   assert.match(routing, /caughtup-inbound-email/);
   assert.match(routing, /ensureCloudflareInboundMailbox/);
+  assert.match(api, /ensureCloudflareCatchAll\(CFG\)/);
+  assert.match(api, /ensureInboundAliasRouting\(CFG, aliasAddress\)/);
   assert.match(api, /isOpaqueOrLegacyInboundAlias/);
-  assert.doesNotMatch(api, /ensureCloudflareInboundMailbox\(CFG, created\.alias_address, existing\?\.alias_address\)/);
   assert.doesNotMatch(routing, /console\.(?:log|error|info|debug)/);
 });
 

@@ -16,7 +16,7 @@ import {
   isLegacyPlusInboundAlias, isOpaqueOrLegacyInboundAlias, isStableInboundAlias,
   proposedAliasSlug, routeVerifiedStatus, stableAliasAddress,
 } from "../_shared/inbound-alias.ts";
-import { cloudflareInboundRoutingConfigured, ensureCloudflareInboundMailbox } from "../_shared/cloudflare-email-routing.ts";
+import { cloudflareInboundRoutingConfigured, ensureCloudflareCatchAll, ensureCloudflareInboundMailbox, ensureInboundAliasRouting } from "../_shared/cloudflare-email-routing.ts";
 import { cloudflareEmailSendingConfigured, sendExternalRouteProbe } from "../_shared/cloudflare-email-sending.ts";
 import {
   matchOpportunity, normalizeOpportunityDomain, normalizeOpportunitySourceUrl,
@@ -58,8 +58,8 @@ function gmailForwardingSettingsUrl(address?: string | null): string {
   return `https://mail.google.com/mail/${account}#settings/fwdandpop`;
 }
 
-async function allocateAliasSlug(supabase: any, userId: string, gmailAddress: string): Promise<string> {
-  const base = proposedAliasSlug(gmailAddress);
+async function allocateAliasSlug(supabase: any, userId: string, gmailAddress: string, identityEmail = ""): Promise<string> {
+  const base = proposedAliasSlug(gmailAddress, identityEmail);
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const slug = attempt === 0 ? base : `${base.slice(0, 58)}-${(await sha256(`${userId}:${attempt}`)).slice(0, 4)}`;
     const { data, error } = await supabase.from("ia_forwarding_aliases").select("id")
@@ -1226,9 +1226,11 @@ Deno.serve(async (req: Request) => {
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
         if (existing && existing.status !== "disabled" && isStableInboundAlias(existing.alias_address) && existing.alias_slug) {
-          const preferredSlug = proposedAliasSlug(account.gmail_address);
+          const preferredSlug = proposedAliasSlug(account.gmail_address, user.email);
           let keepSlug = existing.alias_slug;
-          if (existing.alias_slug === preferredSlug || existing.alias_slug.startsWith(`${preferredSlug}-`)) {
+          if (existing.alias_slug === "user" || existing.alias_slug.startsWith("inbox-")) {
+            keepSlug = preferredSlug;
+          } else if (existing.alias_slug === preferredSlug || existing.alias_slug.startsWith(`${preferredSlug}-`)) {
             const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
               .eq("alias_slug", preferredSlug).neq("user_id", user.id).maybeSingle();
             if (!taken) keepSlug = preferredSlug;
@@ -1243,13 +1245,21 @@ Deno.serve(async (req: Request) => {
             }).eq("user_id", user.id).eq("id", existing.id);
             if (migrateError) throw new Error(migrateError.message);
           }
-          if (cloudflareInboundRoutingConfigured(CFG) && isOpaqueOrLegacyInboundAlias(existing.legacy_alias_address || "")) {
-            try { await ensureCloudflareInboundMailbox(CFG, existing.legacy_alias_address); } catch { /* catch-all owns stable aliases */ }
+          if (cloudflareInboundRoutingConfigured(CFG)) {
+            try {
+              await ensureCloudflareCatchAll(CFG);
+              await ensureInboundAliasRouting(CFG, advertised);
+              if (isOpaqueOrLegacyInboundAlias(existing.legacy_alias_address || "")) {
+                await ensureCloudflareInboundMailbox(CFG, existing.legacy_alias_address);
+              }
+            } catch { /* routing remains platform-managed */ }
           }
           return json(await forwardingSnapshot(supabase, user.id));
         }
         const remint = !existing || existing.status === "disabled" || isLegacyPlusInboundAlias(existing.alias_address);
-        const slug = !remint && existing.alias_slug ? existing.alias_slug : await allocateAliasSlug(supabase, user.id, account.gmail_address);
+        const slug = !remint && existing.alias_slug && existing.alias_slug !== "user" && !existing.alias_slug.startsWith("inbox-")
+          ? existing.alias_slug
+          : await allocateAliasSlug(supabase, user.id, account.gmail_address, user.email);
         const aliasAddress = stableAliasAddress(slug);
         const keepLegacy = existing && !remint && isOpaqueOrLegacyInboundAlias(existing.alias_address)
           ? existing.alias_address
@@ -1273,8 +1283,14 @@ Deno.serve(async (req: Request) => {
           : supabase.from("ia_forwarding_aliases").insert({ user_id: user.id, ...aliasValues });
         const { error } = await operation.select("id").single();
         if (error) throw new Error(error.message);
-        if (cloudflareInboundRoutingConfigured(CFG) && isOpaqueOrLegacyInboundAlias(String(keepLegacy || ""))) {
-          try { await ensureCloudflareInboundMailbox(CFG, String(keepLegacy)); } catch { /* stable aliases use catch-all */ }
+        if (cloudflareInboundRoutingConfigured(CFG)) {
+          try {
+            await ensureCloudflareCatchAll(CFG);
+            await ensureInboundAliasRouting(CFG, aliasAddress);
+            if (isOpaqueOrLegacyInboundAlias(String(keepLegacy || ""))) {
+              await ensureCloudflareInboundMailbox(CFG, String(keepLegacy));
+            }
+          } catch { /* stable aliases can still rely on pre-existing catch-all */ }
         }
         return json(await forwardingSnapshot(supabase, user.id));
       }
