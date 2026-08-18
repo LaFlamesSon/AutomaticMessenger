@@ -338,10 +338,23 @@
           <code id="forwardingAddress"></code>
           <button id="copyForwardingAddress" type="button" class="ghost compact">Copy</button>
         </div>
+        <div id="forwardingInbox" class="forwarding-inbox hidden" aria-labelledby="forwardingInboxTitle">
+          <h3 id="forwardingInboxTitle" class="forwarding-inbox-title">Alias inbox</h3>
+          <p id="forwardingInboxHint" class="hint"></p>
+          <article id="forwardingInboxMessage" class="forwarding-inbox-message hidden">
+            <div class="forwarding-inbox-meta">
+              <strong id="forwardingInboxFrom">forwarding-noreply@google.com</strong>
+              <time id="forwardingInboxTime"></time>
+            </div>
+            <p id="forwardingInboxSubject" class="forwarding-inbox-subject">Gmail forwarding confirmation</p>
+            <p id="forwardingInboxBody" class="hint">Google sent this to your CaughtUp alias. Click Confirm while signed into the Gmail account that added forwarding.</p>
+            <button id="forwardingInboxConfirm" type="button" class="primary compact">Confirm with Google</button>
+          </article>
+        </div>
         <p id="forwardingCode" class="forwarding-code hidden"></p>
         <div class="button-row forwarding-actions">
           <button id="startForwarding" type="button" class="primary compact">Set up forwarding</button>
-          <button id="openForwardingConfirmation" type="button" class="ghost compact hidden">Confirm with Google</button>
+          <button id="openForwardingConfirmation" type="button" class="primary compact hidden">Confirm with Google</button>
           <button id="openGmailForwarding" type="button" class="ghost compact hidden">Open Gmail settings</button>
           <button id="activateForwarding" type="button" class="primary compact hidden">I enabled forwarding</button>
           <button id="runForwardingTest" type="button" class="primary compact hidden">Test CaughtUp</button>

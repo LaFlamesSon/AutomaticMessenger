@@ -172,13 +172,12 @@ function renderForwardingSetup(result = {}) {
     $("forwardingTestStatus").textContent = view.copy;
     $("close").classList.remove("hidden");
   } else {
-    setProgress(view.status === "verifying_route" ? 98 : view.status === "google_verification_received" ? 96 : 92, "Finish the forwarding steps below.");
+    setProgress(view.confirmationUrl ? 96 : 92, view.confirmationUrl
+      ? "Open the confirmation link below, then finish in Gmail."
+      : "Add the address in Gmail. The confirmation link appears here next.");
     $("title").textContent = view.heading;
     $("message").textContent = view.summary;
-    $("forwardingTestStatus").textContent = view.probe?.status === "failed"
-      ? "The connection check did not return yet. After Save Changes, retry verification."
-      : "";
-    $("close").classList.add("hidden");
+    $("close").classList.toggle("hidden", !forwarding.alias_address);
   }
   if (forwardingPollTimer) clearTimeout(forwardingPollTimer);
   if (Forwarding.shouldPoll(view)) {
@@ -198,7 +197,7 @@ async function handleIntakePrimaryClick() {
     chrome.tabs.create({ url: forwardingConfirmationUrl });
     await rememberIntakeConfirm(forwardingState?.alias_address || "");
     renderForwardingSetup({ forwarding: forwardingState, gmail_settings_url: forwardingGmailSettingsUrl });
-    $("forwardingTestStatus").textContent = "Now enable Forward a copy in Gmail, Save Changes, then verify the connection.";
+    $("forwardingTestStatus").textContent = "Google's Confirm page opened. Click Confirm, then in Gmail turn on Forward a copy and Save.";
     return;
   }
   button.disabled = true;
@@ -210,20 +209,13 @@ async function handleIntakePrimaryClick() {
         try { await navigator.clipboard.writeText(result.forwarding.alias_address); } catch { /* Copy remains available */ }
       }
       chrome.tabs.create({ url: forwardingGmailSettingsUrl });
-      $("forwardingTestStatus").textContent = "Paste this address in Gmail. Wait here until Confirm appears.";
+      $("forwardingTestStatus").textContent = "Paste this address in Gmail. The confirmation link appears here when Google emails CaughtUp.";
     } else if (action === "open_gmail") {
       if (forwardingState?.alias_address) {
         try { await navigator.clipboard.writeText(forwardingState.alias_address); } catch { /* Copy remains available */ }
       }
       chrome.tabs.create({ url: forwardingGmailSettingsUrl });
-      $("forwardingTestStatus").textContent = "Paste this address in Gmail. Wait here until Confirm appears.";
-    } else if (action === "verify_route") {
-      const status = Forwarding.canonicalStatus(forwardingState?.status);
-      const result = status === "google_verification_received"
-        ? await api("forwarding_setup_activate", { confirm: true })
-        : await api("forwarding_route_probe", { confirm: true });
-      renderForwardingSetup(result);
-      $("forwardingTestStatus").textContent = "CaughtUp is checking that Gmail forwarded the connection message.";
+      $("forwardingTestStatus").textContent = "Paste this address in Gmail. The confirmation link appears here when Google emails CaughtUp.";
     }
   } catch (error) {
     try { renderForwardingSetup(await api("forwarding_setup_get")); } catch { /* keep wizard */ }
@@ -357,6 +349,6 @@ $("copyForwarding").addEventListener("click", async () => {
 });
 $("intakePrimary").addEventListener("click", () => { void handleIntakePrimaryClick(); });
 $("intakeNewAddress").addEventListener("click", () => {
-  $("forwardingTestStatus").textContent = "CaughtUp keeps this address. Finish Confirm and Verify connection instead of creating a new one.";
+  $("forwardingTestStatus").textContent = "CaughtUp keeps this address. Open the confirmation link in Settings.";
 });
 connect();

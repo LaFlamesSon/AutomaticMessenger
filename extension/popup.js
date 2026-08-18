@@ -492,8 +492,8 @@ function showSetup(show, message = "", mode = "app") {
     $("connectGoogle").dataset.label = "Connect Gmail";
     $("connectGoogle").dataset.action = "connect";
   } else if (show && mode === "forwarding") {
-    $("setupTitle").textContent = "Turn on email intake";
-      $("setupCopy").textContent = "Add this CaughtUp address in Gmail, then confirm and verify the connection.";
+    $("setupTitle").textContent = "Add a forwarding address";
+      $("setupCopy").textContent = "Add this CaughtUp address in Gmail. Google's confirmation link then appears in Settings.";
   } else if (show) {
     $("setupTitle").textContent = "Your inbox, handled";
     $("setupCopy").textContent = "Sign in with Google, then connect Gmail so CaughtUp can prepare replies. Nothing sends automatically unless you turn it on later.";
@@ -1801,11 +1801,29 @@ function forwardingButtons(view) {
   const status = view.status;
   $("startForwarding").classList.toggle("hidden", !["not_started", "disabled"].includes(status));
   $("openGmailForwarding").classList.toggle("hidden", !["address_ready", "google_verification_received", "awaiting_gmail_enable", "verifying_route", "route_verified"].includes(status));
-  $("openForwardingConfirmation").classList.toggle("hidden", view.action !== "confirm_google");
-  $("activateForwarding").classList.toggle("hidden", view.action !== "verify_route");
+  $("openForwardingConfirmation").classList.add("hidden");
+  $("activateForwarding").classList.add("hidden");
   $("runForwardingTest").classList.add("hidden");
   $("disableForwarding").classList.toggle("hidden", ["not_started", "disabled"].includes(status));
-  $("activateForwarding").textContent = view.label === "Retry verification" ? "Retry verification" : "Verify connection";
+}
+
+function formatAliasReceivedAt(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+
+function renderAliasInbox(view, forwarding) {
+  const showInbox = Boolean(view.confirmationUrl)
+    && view.status !== "route_verified"
+    && view.action === "confirm_google"
+    && !forwarding.google_confirmed_at;
+  $("forwardingInbox").classList.toggle("hidden", !showInbox);
+  if (!showInbox) return;
+  $("forwardingInboxHint").textContent = `Mail for ${forwarding.alias_address} — what CaughtUp received from Google:`;
+  $("forwardingInboxMessage").classList.remove("hidden");
+  $("forwardingInboxTime").textContent = formatAliasReceivedAt(forwarding.verification_received_at) || "Just now";
+  $("forwardingInboxConfirm").disabled = !view.confirmationUrl;
+  $("forwardingInboxConfirm").textContent = "Confirm with Google";
 }
 
 function applySettingsForwarding(result = {}, { poll = true } = {}) {
@@ -1816,13 +1834,14 @@ function applySettingsForwarding(result = {}, { poll = true } = {}) {
   const forwarding = view.forwarding;
   const active = view.status === "route_verified";
   $("forwardingCard").classList.remove("hidden");
-  $("forwardingBadge").textContent = active ? "Automatic" : view.status === "verifying_route" ? "Checking" : view.status === "google_verification_received" ? "Confirm" : view.status === "address_ready" ? "Waiting" : "Not connected";
-  $("forwardingBadge").className = `badge${active ? " sent" : view.status === "google_verification_received" ? " draft" : ""}`;
+  $("forwardingBadge").textContent = active ? "Automatic" : view.confirmationUrl ? "Confirm" : view.status === "address_ready" ? "Waiting" : ["google_verification_received", "awaiting_gmail_enable", "verifying_route"].includes(view.status) ? "Waiting" : "Not connected";
+  $("forwardingBadge").className = `badge${active ? " sent" : view.confirmationUrl ? " draft" : ""}`;
   $("forwardingAddressRow").classList.toggle("hidden", !forwarding.alias_address);
   $("forwardingAddress").textContent = forwarding.alias_address || "";
-  $("forwardingCode").classList.toggle("hidden", !forwarding.verification_code);
+  $("forwardingCode").classList.toggle("hidden", !forwarding.verification_code || view.action !== "confirm_google");
   $("forwardingCode").textContent = forwarding.verification_code ? `Google confirmation code: ${forwarding.verification_code}` : "";
   $("forwardingSummary").textContent = view.copy || view.summary;
+  renderAliasInbox(view, forwarding);
   const latestTest = result.latest_test || null;
   const testSummary = $("forwardingTestSummary");
   testSummary.classList.toggle("hidden", !latestTest);
@@ -1886,9 +1905,15 @@ $("openGmailForwarding").addEventListener("click", () => {
   void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
 });
 
-$("openForwardingConfirmation").addEventListener("click", () => {
-  if (forwardingConfirmationUrl) void chrome.tabs.create({ url: forwardingConfirmationUrl });
-});
+async function openGoogleConfirmationFromSettings() {
+  if (!forwardingConfirmationUrl) return;
+  void chrome.tabs.create({ url: forwardingConfirmationUrl });
+  await rememberIntakeConfirm(forwardingState?.alias_address || "");
+  setStatus("forwardingStatus", "Google's Confirm page opened. Click Confirm, then in Gmail turn on Forward a copy and Save.", "success");
+}
+
+$("openForwardingConfirmation").addEventListener("click", () => { void openGoogleConfirmationFromSettings(); });
+$("forwardingInboxConfirm").addEventListener("click", () => { void openGoogleConfirmationFromSettings(); });
 
 $("activateForwarding").addEventListener("click", async () => {
   const button = $("activateForwarding");
@@ -1941,7 +1966,7 @@ $("disableForwarding").addEventListener("click", async () => {
 });
 
 $("setupIntakeNewAddress").addEventListener("click", () => {
-  setStatus("setupStatus", "CaughtUp keeps this address. Finish Confirm and Verify connection instead of creating a new one.", "");
+  setStatus("setupStatus", "CaughtUp keeps this address. Open the confirmation link in Settings.", "");
 });
 
 $("setupIntakeSignOut").addEventListener("click", () => { void signOutCaughtUp(); });
@@ -1958,7 +1983,7 @@ $("setupIntakeAction").addEventListener("click", async () => {
     void chrome.tabs.create({ url: forwardingConfirmationUrl });
     await rememberIntakeConfirm(forwardingState?.alias_address || "");
     renderIntakeSetup({ forwarding: forwardingState, gmail_settings_url: forwardingGmailSettingsUrl, latest_probe: null });
-    setStatus("setupStatus", "Now enable Forward a copy in Gmail, Save Changes, then verify the connection.", "success");
+    setStatus("setupStatus", "Google's Confirm page opened. Click Confirm, then in Gmail turn on Forward a copy and Save.", "success");
     return;
   }
   setBusy(button, true);
@@ -1969,22 +1994,11 @@ $("setupIntakeAction").addEventListener("click", async () => {
       renderIntakeSetup(result);
       if (result.forwarding?.alias_address) await navigator.clipboard.writeText(result.forwarding.alias_address);
       void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
-      setStatus("setupStatus", "Paste this address in Gmail. Wait here until Confirm appears — Gmail can list the address before CaughtUp receives Google's email.", "success");
+      setStatus("setupStatus", "Paste this address in Gmail. The confirmation link appears in Settings when Google emails CaughtUp.", "success");
     } else if (action === "open_gmail" || view.status === "address_ready") {
       if (forwardingState?.alias_address) await navigator.clipboard.writeText(forwardingState.alias_address);
       void chrome.tabs.create({ url: forwardingGmailSettingsUrl });
-      setStatus("setupStatus", "Paste this address in Gmail. Wait here until Confirm appears — Gmail can list the address before CaughtUp receives Google's email.", "success");
-    } else if (action === "verify_route") {
-      try {
-        const result = Forwarding.canonicalStatus(forwardingState?.status) === "google_verification_received"
-          ? await api("forwarding_setup_activate", { confirm: true })
-          : await api("forwarding_route_probe", { confirm: true });
-        renderIntakeSetup(result);
-        setStatus("setupStatus", "CaughtUp is checking that Gmail forwarded the connection message.", "success");
-      } catch (error) {
-        try { renderIntakeSetup(await api("forwarding_setup_get")); } catch { /* keep wizard */ }
-        throw error;
-      }
+      setStatus("setupStatus", "Paste this address in Gmail. The confirmation link appears in Settings when Google emails CaughtUp.", "success");
     }
   } catch (error) {
     setStatus("setupStatus", Core.safeErrorMessage(error), "error");
@@ -2401,11 +2415,13 @@ async function initializePopup() {
     $("settingsForm").classList.remove("hidden");
     settingsLoaded = true;
     if (profileResult.inbound_forwarding_ready !== true) {
-      await beginIntakeWizard();
-      return;
+      void loadForwarding();
+      showSetup(false);
+      activateTab("settings", false);
+    } else {
+      void loadForwarding();
+      showSetup(false);
     }
-    void loadForwarding();
-    showSetup(false);
     const hydrated = hydrateViewCache();
     const digestRefresh = loadDigest({ quiet: hydrated.digest });
     void loadKits({ quiet: hydrated.kits });

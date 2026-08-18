@@ -266,6 +266,11 @@ input[type="file"] { width: 100%; padding: 7px; border: 1px dashed var(--line); 
 .forwarding-address code { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: 10.5px; }
 .forwarding-code { margin-top: 9px; color: var(--ink); font-size: 12px; font-weight: 700; }
 .forwarding-actions { justify-content: flex-start; flex-wrap: wrap; }
+.forwarding-inbox { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.forwarding-inbox-title { margin: 0 0 4px; font-size: 13px; }
+.forwarding-inbox-message { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.forwarding-inbox-meta { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.forwarding-inbox-subject { margin: 8px 0 4px; font-size: 13px; font-weight: 700; color: var(--ink); }
 .check-row { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-weight: 500; }
 .check-row input { flex: 0 0 auto; margin-top: 3px; }
 progress { width: 100%; margin-top: 10px; accent-color: var(--accent); }

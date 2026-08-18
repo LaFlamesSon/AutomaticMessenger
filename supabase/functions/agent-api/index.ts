@@ -62,7 +62,8 @@ async function allocateAliasSlug(supabase: any, userId: string, gmailAddress: st
   const base = proposedAliasSlug(gmailAddress);
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const slug = attempt === 0 ? base : `${base.slice(0, 58)}-${(await sha256(`${userId}:${attempt}`)).slice(0, 4)}`;
-    const { data, error } = await supabase.from("ia_forwarding_aliases").select("id").eq("alias_slug", slug).maybeSingle();
+    const { data, error } = await supabase.from("ia_forwarding_aliases").select("id")
+      .eq("alias_slug", slug).neq("user_id", userId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return slug;
   }
@@ -1225,10 +1226,20 @@ Deno.serve(async (req: Request) => {
           .eq("user_id", user.id).maybeSingle();
         if (existingError) throw new Error(existingError.message);
         if (existing && existing.status !== "disabled" && isStableInboundAlias(existing.alias_address) && existing.alias_slug) {
-          const advertised = stableAliasAddress(existing.alias_slug);
-          if (existing.alias_address !== advertised) {
+          const preferredSlug = proposedAliasSlug(account.gmail_address);
+          let keepSlug = existing.alias_slug;
+          if (existing.alias_slug === preferredSlug || existing.alias_slug.startsWith(`${preferredSlug}-`)) {
+            const { data: taken } = await supabase.from("ia_forwarding_aliases").select("id")
+              .eq("alias_slug", preferredSlug).neq("user_id", user.id).maybeSingle();
+            if (!taken) keepSlug = preferredSlug;
+          }
+          const advertised = stableAliasAddress(keepSlug);
+          if (existing.alias_address !== advertised || existing.alias_slug !== keepSlug) {
             const { error: migrateError } = await supabase.from("ia_forwarding_aliases").update({
-              alias_address: advertised, alias_token_hash: await sha256(existing.alias_slug), updated_at: new Date().toISOString(),
+              alias_address: advertised,
+              alias_slug: keepSlug,
+              alias_token_hash: await sha256(keepSlug),
+              updated_at: new Date().toISOString(),
             }).eq("user_id", user.id).eq("id", existing.id);
             if (migrateError) throw new Error(migrateError.message);
           }
