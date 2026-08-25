@@ -22,10 +22,16 @@ import {
 
 const MAX_DAILY_MESSAGES = 200;
 const GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google.com";
-const INBOUND_SIGNING_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+const INBOUND_SIGNING_PUBLIC_KEYS = [
+  `-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4irDIJJdfOXyRjJ7+zHZ/JAhLPIL
+5YFBt3Ni2pVjES/YW+f3Agyjq1Bm55d8pBW6p7dMFWBW5XtMcCrpWzaeEw==
+-----END PUBLIC KEY-----`,
+  `-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELdC8NihD9qwarrH+/pG8wb4SRYdj
 xqAgFbXAzbPE6WM9xonKXEjWBMzN6mrss5AqGUdyypvHi+FowO3jeTk1EA==
------END PUBLIC KEY-----`;
+-----END PUBLIC KEY-----`,
+];
 
 interface InboundPayload {
   alias_token: string;
@@ -74,11 +80,16 @@ async function validSignature(req: Request, body: string): Promise<boolean> {
   const seconds = Number(timestamp);
   if (!/^[0-9]{10}$/.test(timestamp) || !/^[0-9a-f]{128}$/.test(supplied) ||
       !Number.isFinite(seconds) || Math.abs(Date.now() / 1000 - seconds) > 300) return false;
-  const publicKey = publicKeyBytes(INBOUND_SIGNING_PUBLIC_KEY);
-  const key = await crypto.subtle.importKey("spki", publicKey.buffer as ArrayBuffer,
-    { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
   const signature = Uint8Array.from(supplied.match(/.{2}/g) ?? [], (hex) => Number.parseInt(hex, 16));
-  return crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signature, new TextEncoder().encode(`${timestamp}.${body}`));
+  const message = new TextEncoder().encode(`${timestamp}.${body}`);
+  for (const pem of INBOUND_SIGNING_PUBLIC_KEYS) {
+    try {
+      const key = await crypto.subtle.importKey("spki", publicKeyBytes(pem).buffer as ArrayBuffer,
+        { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      if (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signature, message)) return true;
+    } catch { /* try next key */ }
+  }
+  return false;
 }
 
 function validatePayload(raw: any): InboundPayload | null {
