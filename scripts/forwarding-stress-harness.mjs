@@ -37,6 +37,8 @@ const FLAGS = {
   dryRun: false,
   allowAutoSend: false,
   allowSend: false,
+  allowFixtures: false,
+  allowAgedFixtures: false,
   verbose: false,
   pause: false,
   resume: false,
@@ -52,6 +54,8 @@ for (const arg of args) {
   else if (arg === '--dry-run') FLAGS.dryRun = true;
   else if (arg === '--allow-auto-send') FLAGS.allowAutoSend = true;
   else if (arg === '--allow-send') FLAGS.allowSend = true;
+  else if (arg === '--allow-fixtures') FLAGS.allowFixtures = true;
+  else if (arg === '--allow-aged-fixtures') FLAGS.allowAgedFixtures = true;
   else if (arg === '--verbose') FLAGS.verbose = true;
   else if (arg === '--pause') FLAGS.pause = true;
   else if (arg === '--resume') FLAGS.resume = true;
@@ -225,7 +229,10 @@ async function runtime(targetName = FLAGS.target, options = {}) {
       sender_gmail_token: "dry_run_sender_token",
       alias: { alias_address: accountInfo.alias, status: "route_verified" },
       profile: { reply_mode: "draft_only", auto_send: false },
-      media_kits: [],
+      media_kits: [
+        { id: "dry_skincare_kit", label: "[HARNESS] Skincare Kit", is_default: false, status: "active" },
+        { id: "dry_default_kit", label: "Existing default kit", is_default: true, status: "active" },
+      ],
       paths: getStatePaths(targetName),
     };
   }
@@ -517,9 +524,41 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function evaluate(scenarioId, scenario, subject, processed, inbound, digestEmail) {
+function zonedLocalToIso(value, timeZone) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const desired = match.slice(1).map(Number);
+  const desiredUtc = Date.UTC(desired[0], desired[1] - 1, desired[2], desired[3], desired[4]);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone, hour12: false, hourCycle: 'h23', year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+  let instant = desiredUtc;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
+    const observed = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour) % 24, Number(parts.minute));
+    const adjustment = desiredUtc - observed;
+    instant += adjustment;
+    if (adjustment === 0) break;
+  }
+  return new Date(instant).toISOString();
+}
+
+function nextWeekdayAtIso(weekday, hour, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+  const localDate = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+  const offset = ((weekday - localDate.getUTCDay() + 7) % 7) || 7;
+  localDate.setUTCDate(localDate.getUTCDate() + offset);
+  const date = `${localDate.getUTCFullYear()}-${String(localDate.getUTCMonth() + 1).padStart(2, '0')}-${String(localDate.getUTCDate()).padStart(2, '0')}`;
+  return zonedLocalToIso(`${date}T${String(hour).padStart(2, '0')}:00`, timeZone);
+}
+
+function evaluate(scenarioId, scenario, subject, processed, inbound, digestEmail, mediaKits = [], fixture = null) {
   const expect = scenario.expects ?? {};
   const checks = [];
+  const skips = [];
   const safetyViolations = [];
   const pass = (name, ok, detail) => {
     checks.push({ name, ok, detail });
@@ -538,19 +577,39 @@ function evaluate(scenarioId, scenario, subject, processed, inbound, digestEmail
     }
     if (expect.draft === true) pass("draft_present", Boolean(processed.draft_text?.trim()), "Draft found/missing");
     if (expect.draft === false) pass("no_draft", !processed.draft_text?.trim(), "Draft absent/found");
-    if (expect.negotiation) pass("negotiation_linked", Boolean(processed.negotiation_id), processed.negotiation_id ?? "none");
+    if (expect.negotiation === true) pass("negotiation_linked", Boolean(processed.negotiation_id), processed.negotiation_id ?? "none");
+    if (expect.negotiation === false) pass("negotiation_not_linked", !processed.negotiation_id, processed.negotiation_id ?? "none");
     if (expect.kit) pass("kit_linked", processed.selected_media_kit_id === expect.kit, `kit=${processed.selected_media_kit_id}`);
+
+    if (scenario.kitAssert) {
+      const selectedKit = mediaKits.find((kit) => kit.id === processed.selected_media_kit_id);
+      const expected = scenario.kitAssert.expectedKitLabel
+        ? selectedKit?.label === scenario.kitAssert.expectedKitLabel
+        : scenario.kitAssert.expectedDefault === true
+          ? selectedKit?.is_default === true
+          : Boolean(selectedKit);
+      pass("media_kit_match", expected, `selected=${selectedKit?.label ?? "none"}`);
+    }
     
     // Rule delivery override check
     if (expect.delivery) {
       pass("delivery_override", processed.delivery_status === expect.delivery, `delivery=${processed.delivery_status}`);
+    }
+    if (scenario.ruleAssert?.delivery) {
+      const allowed = scenario.ruleAssert.delivery === "auto_send_or_draft"
+        ? ["auto_send", "draft"]
+        : [scenario.ruleAssert.delivery];
+      pass("sender_rule_delivery", allowed.includes(processed.delivery_status), `delivery=${processed.delivery_status}`);
     }
 
     // Safety violations
     if (processed.draft_text) {
       for (const [name, regexes] of Object.entries(SAFETY_PATTERNS || {})) {
         for (const regex of (Array.isArray(regexes) ? regexes : [regexes])) {
-          if (regex.test(processed.draft_text)) {
+          const match = processed.draft_text.match(regex);
+          const allowedConfiguredPhone = name === 'no_contact_leak' && match && fixture?.phone_number &&
+            match[0].replace(/\D/g, '') === fixture.phone_number.replace(/\D/g, '');
+          if (match && !allowedConfiguredPhone) {
             safetyViolations.push(name);
             break;
           }
@@ -568,6 +627,25 @@ function evaluate(scenarioId, scenario, subject, processed, inbound, digestEmail
     if (expect.hostile) {
       pass("hostile_rejected", processed.category === "spam_or_poor_fit" && !processed.draft_text?.trim(), `category=${processed.category}`);
     }
+
+    if (scenario.calendarAssert) {
+      const draft = String(processed.draft_text ?? "");
+      if (scenario.calendarAssert.mustContain === "booking_url_or_slots") {
+        pass("calendar_contact", /https:\/\/|\b(?:Mon|Tue|Wed|Thu|Fri|Saturday|Sunday)\b.*\b(?:AM|PM)\b/i.test(draft), "booking URL or offered slot");
+      } else if (scenario.calendarAssert.mustContain === "phone_number") {
+        pass("calendar_contact", Boolean(fixture?.phone_number) && draft.includes(fixture.phone_number), `phone=${fixture?.phone_number ?? "missing fixture"}`);
+      }
+      if (scenario.calendarAssert.mustNotContain) {
+        pass("calendar_contact_hidden", !/(?:https:\/\/|\+?1?[\s().-]*\d{3}[\s().-]*\d{3}[\s.-]*\d{4})/i.test(draft), "no phone number or booking URL");
+      }
+      if (scenario.calendarAssert.mustExclude === "tuesday_10am_conflict") {
+        pass("booking_conflict_excluded", !/(?:Tue(?:sday)?[^\n.]{0,45})?\b10(?::00)?\s*(?:AM|a\.m\.)\b/i.test(draft), "Tuesday 10 AM is not offered");
+      }
+    }
+  }
+
+  if (scenario.negotiationAssert?.requiresCreatorReply) {
+    skips.push({ name: "creator_first_negotiation", reason: "requires a real creator send before a brand reply" });
   }
 
   const inDigest = digestEmail
@@ -588,6 +666,7 @@ function evaluate(scenarioId, scenario, subject, processed, inbound, digestEmail
     scenarioId,
     status,
     checks,
+    skips,
     processed,
     inbound,
     draftWordCount,
@@ -609,6 +688,14 @@ async function cmdSetup() {
     console.log(`[DRY-RUN] Would install fixtures: ${phaseFixtures.join(', ')}`);
     return;
   }
+
+  if (!FLAGS.allowFixtures) {
+    throw new Error('Fixture setup changes account settings and requires --allow-fixtures.');
+  }
+  if (ACCOUNTS[rt.targetName].type === 'aged' && !FLAGS.allowAgedFixtures) {
+    throw new Error('Fixture setup on an aged account also requires --allow-aged-fixtures.');
+  }
+  await ensureFixtureSnapshot(rt);
 
   if (phaseFixtures.includes('voice_profile')) {
     console.log('  Installing voice profile (display_name, signoff, tone)...');
@@ -735,19 +822,17 @@ async function cmdSetup() {
 
   if (phaseFixtures.includes('booking')) {
     console.log('  Creating booking conflict (next Tuesday 10 AM)...');
-    const now = new Date();
-    const nextTuesday = new Date(now);
-    nextTuesday.setDate(now.getDate() + ((2 - now.getDay() + 7) % 7 || 7));
-    nextTuesday.setHours(10, 0, 0, 0);
-    const endTime = new Date(nextTuesday.getTime() + 3600000);
+    const startAt = nextWeekdayAtIso(2, 10, 'America/Los_Angeles');
+    if (!startAt) throw new Error('Could not calculate the timezone-aware booking conflict.');
+    const endAt = new Date(new Date(startAt).getTime() + 3600000).toISOString();
     const saved = await rest('ia_bookings', { on_conflict: 'user_id,request_id' }, {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
       body: {
         user_id: rt.user.id,
         title: '[HARNESS] Tuesday 10 AM Conflict',
-        start_at: nextTuesday.toISOString(),
-        end_at: endTime.toISOString(),
+        start_at: startAt,
+        end_at: endAt,
         status: 'held',
         request_id: `harness:${RUN_TAG}:phase3`,
         updated_at: new Date().toISOString(),
@@ -757,6 +842,37 @@ async function cmdSetup() {
   }
 
   console.log('Setup complete.');
+}
+
+async function ensureFixtureSnapshot(rt) {
+  if (FLAGS.dryRun) return null;
+  const state = readJson(rt.paths.state, { runs: [], chains: {} });
+  if (state.fixtureSnapshot) return state.fixtureSnapshot;
+  const [voiceRows, calendarRows, senderRuleRows] = await Promise.all([
+    rest('ia_voice_profiles', {
+      select: 'display_name,signoff,tone,occupation,services,custom_rules,settings_version',
+      user_id: `eq.${rt.user.id}`,
+      limit: '1',
+    }),
+    rest('ia_calendar_preferences', {
+      select: 'contact_mode,phone_number,booking_url,timezone,weekly_availability',
+      user_id: `eq.${rt.user.id}`,
+      limit: '1',
+    }),
+    rest('ia_sender_rules', {
+      select: 'match_type,match_value,action,priority,enabled',
+      user_id: `eq.${rt.user.id}`,
+      match_value: 'in.(vip-brand.com,blocked-spam.net,review-brand.com)',
+    }),
+  ]);
+  state.fixtureSnapshot = {
+    captured_at: new Date().toISOString(),
+    voice_profile: voiceRows[0] ?? null,
+    calendar_preferences: calendarRows[0] ?? null,
+    sender_rules: senderRuleRows,
+  };
+  writeJson(rt.paths.state, state);
+  return state.fixtureSnapshot;
 }
 
 async function cmdTeardown() {
@@ -770,16 +886,96 @@ async function cmdTeardown() {
   const kits = await rest("ia_media_kits", { user_id: `eq.${rt.user.id}` });
   for (const kit of kits) {
     if (kit.label?.includes("[HARNESS]")) {
-      await api(rt, "media_kit_delete", { id: kit.id }).catch(e => console.error(e.message));
+      await api(rt, "media_kit_delete", { id: kit.id });
       console.log(`Deleted kit: ${kit.label}`);
     }
   }
 
-  // If there are specific booking delete APIs, we call them here.
-  // For now, reset calendar:
-  await api(rt, "calendar_set", { preferences: {} }).catch(e => console.error(e.message));
+  const state = readJson(rt.paths.state, { runs: [], chains: {} });
+  const snapshot = state.fixtureSnapshot ?? null;
+
+  await rest('ia_sender_rules', {
+    user_id: `eq.${rt.user.id}`,
+    match_value: 'in.(vip-brand.com,blocked-spam.net,review-brand.com)',
+  }, { method: 'DELETE' });
+  if (snapshot?.sender_rules?.length) {
+    await rest('ia_sender_rules', { on_conflict: 'user_id,match_type,match_value,action' }, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: snapshot.sender_rules.map((rule) => ({ user_id: rt.user.id, ...rule })),
+    });
+  }
+  await rest('ia_bookings', {
+    user_id: `eq.${rt.user.id}`,
+    request_id: `eq.harness:${RUN_TAG}:phase3`,
+  }, { method: 'DELETE' });
+
+  if (snapshot?.calendar_preferences) {
+    await rest('ia_calendar_preferences', { on_conflict: 'user_id' }, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: { user_id: rt.user.id, ...snapshot.calendar_preferences, updated_at: new Date().toISOString() },
+    });
+  } else if (snapshot) {
+    await rest('ia_calendar_preferences', { user_id: `eq.${rt.user.id}` }, { method: 'DELETE' });
+  }
+
+  if (snapshot?.voice_profile) {
+    const current = await rest('ia_voice_profiles', {
+      select: 'settings_version', user_id: `eq.${rt.user.id}`, limit: '1',
+    });
+    await rest('ia_voice_profiles', { user_id: `eq.${rt.user.id}` }, {
+      method: 'PATCH',
+      body: {
+        ...snapshot.voice_profile,
+        settings_version: Number(current[0]?.settings_version ?? snapshot.voice_profile.settings_version ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  if (snapshot) {
+    delete state.fixtureSnapshot;
+    writeJson(rt.paths.state, state);
+    console.log('Restored the pre-harness voice, calendar, and sender-rule snapshot.');
+  } else {
+    console.warn('No pre-harness snapshot exists; original voice and calendar settings cannot be restored automatically.');
+  }
 
   console.log("Teardown complete.");
+}
+
+function calendarFixtureFor(scenario) {
+  const base = {
+    contact_mode: scenario.calendarAssert?.mode ?? 'email_only',
+    phone_number: null,
+    booking_url: null,
+    timezone: 'America/Los_Angeles',
+    weekly_availability: [1, 2, 3, 4, 5].map((day) => ({ day, start: '09:00', end: '17:00' })),
+  };
+  if (scenario.id === 'F1_scheduled_call') base.booking_url = 'https://cal.com/carolynpaez/30min';
+  if (scenario.id === 'F3_phone_mode') base.phone_number = '+14155550199';
+  return base;
+}
+
+async function prepareScenarioFixture(rt, scenario) {
+  if (!scenario.calendarAssert) return null;
+  const fixture = calendarFixtureFor(scenario);
+  if (FLAGS.dryRun) return fixture;
+  if (!FLAGS.allowFixtures) {
+    throw new Error(`Calendar scenario ${scenario.id} changes account settings and requires --allow-fixtures.`);
+  }
+  if (ACCOUNTS[rt.targetName].type === 'aged' && !FLAGS.allowAgedFixtures) {
+    throw new Error(`Calendar scenario ${scenario.id} on an aged account also requires --allow-aged-fixtures.`);
+  }
+  await ensureFixtureSnapshot(rt);
+  const saved = await rest('ia_calendar_preferences', { on_conflict: 'user_id' }, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: { user_id: rt.user.id, ...fixture, updated_at: new Date().toISOString() },
+  });
+  if (saved.length !== 1) throw new Error(`Calendar fixture failed for ${scenario.id}.`);
+  return fixture;
 }
 
 async function cmdReset() {
@@ -917,6 +1113,7 @@ async function cmdFire() {
   writeJson(rt.paths.state, {
     runs: FLAGS.resume ? previousState.runs ?? [] : [],
     chains: previousState.chains ?? {},
+    ...(previousState.fixtureSnapshot ? { fixtureSnapshot: previousState.fixtureSnapshot } : {}),
   });
   const rawTargets = FLAGS.group ? FLAGS.group.split(',') : Object.keys(GROUPS).filter(g => !GROUPS[g].apiOnly);
   
@@ -933,12 +1130,21 @@ async function cmdFire() {
     }
   }
 
+  const changesCalendar = scenariosToFire.some((scenarioId) => SCENARIOS[scenarioId]?.calendarAssert);
+  if (!FLAGS.dryRun && changesCalendar && !FLAGS.allowFixtures) {
+    throw new Error('Calendar scenarios change account settings and require --allow-fixtures.');
+  }
+  if (!FLAGS.dryRun && changesCalendar && ACCOUNTS[rt.targetName].type === 'aged' && !FLAGS.allowAgedFixtures) {
+    throw new Error('Calendar scenarios on an aged account also require --allow-aged-fixtures.');
+  }
+
   let count = 0;
   for (const scenarioId of scenariosToFire) {
     const scenario = SCENARIOS[scenarioId];
     if (!scenario || scenario.apiOnly) continue;
     
     const isSequential = ['D', 'F'].includes(scenario.group) || CHAINS.negotiation_main?.steps?.includes(scenarioId);
+    const fixture = await prepareScenarioFixture(rt, scenario);
     const stateBeforeSend = readJson(rt.paths.state, { runs: [], chains: {} });
     const chainId = scenario.chainId;
     const chainHeaders = chainId && scenario.chainStep !== 0
@@ -961,6 +1167,12 @@ async function cmdFire() {
         inReplyTo: row.messageId,
         references: [chainHeaders.references, row.messageId].filter(Boolean).join(' '),
       };
+      writeJson(rt.paths.state, stateAfterSend);
+    }
+    if (fixture) {
+      const stateAfterSend = readJson(rt.paths.state, { runs: [], chains: {} });
+      const recorded = stateAfterSend.runs.find((run) => run.messageId === row.messageId);
+      if (recorded) recorded.fixture = fixture;
       writeJson(rt.paths.state, stateAfterSend);
     }
     count++;
@@ -1000,15 +1212,27 @@ async function cmdWait() {
       console.log(`[DRY-RUN] Simulating wait/poll for ${run.subject}…`);
       inbound = { id: `dry_${run.scenarioId}`, subject: run.subject, processing_status: 'processed', received_at: new Date().toISOString() };
       const cat = Array.isArray(scenario.expects?.category) ? scenario.expects.category[0] : (scenario.expects?.category || 'action_needed');
+      const selectedKit = scenario.kitAssert?.expectedKitLabel === '[HARNESS] Skincare Kit'
+        ? 'dry_skincare_kit'
+        : scenario.kitAssert ? 'dry_default_kit' : null;
+      let draftText = scenario.expects?.draft === false ? null : 'Thanks for reaching out! I would love to collaborate. Best, Test Creator';
+      if (scenario.id === 'F1_scheduled_call') draftText = `Please choose a time at ${run.fixture?.booking_url}. Best, Test Creator`;
+      if (scenario.id === 'F2_email_only') draftText = 'Email is the best way to continue. Best, Test Creator';
+      if (scenario.id === 'F3_phone_mode') draftText = `You can reach me at ${run.fixture?.phone_number}. Best, Test Creator`;
+      if (scenario.id === 'F4_booking_conflict') draftText = 'Would Tuesday at 11:00 AM PT work for you? Best, Test Creator';
+      const assertedDelivery = scenario.ruleAssert?.delivery === 'auto_send_or_draft'
+        ? 'draft'
+        : scenario.ruleAssert?.delivery;
       processed = {
         id: `dry_proc_${run.scenarioId}`,
         category: cat,
         summary: `Dry-run summary for ${run.scenarioId}`,
-        draft_text: scenario.expects?.draft === false ? null : 'Thanks for reaching out! I would love to collaborate. Best, Test Creator',
-        delivery_status: scenario.ruleAssert?.delivery || 'draft',
+        draft_text: draftText,
+        delivery_status: assertedDelivery || (draftText ? 'draft' : 'none'),
         ingestion_source: 'forwarded',
         is_test: false,
         negotiation_id: scenario.expects?.negotiation ? `dry_neg_${run.scenarioId}` : null,
+        selected_media_kit_id: selectedKit,
       };
     } else {
       console.log(`Waiting for ${run.subject}…`);
@@ -1017,7 +1241,7 @@ async function cmdWait() {
         pollProcessed(rt, run.subject),
       ]);
     }
-    results.push(evaluate(run.scenarioId, scenario, run.subject, processed, inbound, digestEmails));
+    results.push(evaluate(run.scenarioId, scenario, run.subject, processed, inbound, digestEmails, rt.media_kits, run.fixture));
   }
   
   const summary = {
@@ -1025,10 +1249,12 @@ async function cmdWait() {
     total: results.length,
     pass: results.filter((r) => r.status === 'PASS').length,
     fail: results.filter((r) => r.status === 'FAIL').length,
-    results: results.map(({ scenarioId, status, checks, processed, inbound }) => ({
+    assertion_skip: results.reduce((count, result) => count + result.skips.length, 0),
+    results: results.map(({ scenarioId, status, checks, skips, processed, inbound }) => ({
       scenarioId,
       status,
       checks,
+      skips,
       category: processed?.category ?? null,
       delivery_status: processed?.delivery_status ?? null,
       inbound_status: inbound?.processing_status ?? null,
@@ -1094,49 +1320,101 @@ async function cmdChain() {
   }
 }
 
-async function cmdApiTest() {
+async function cmdApiTest(scenarioIds = null) {
   const rt = await runtime(FLAGS.target, { needsApiToken: true });
   console.log(`Running API tests for ${rt.targetName}...`);
-  if (FLAGS.dryRun) {
-    console.log('[DRY-RUN] API-only tests skipped.');
-    return;
-  }
-  // Example API tests implementation (H-J groups)
-  
-  try {
-    const digest = await api(rt, "digest");
-    console.log("H1/H2/H3 Digest Check PASS: ", digest.emails ? true : false);
-    
-    // I3: forwarded_send (only if --allow-send)
-    if (FLAGS.allowSend) {
-      console.log("Testing forwarded_send...");
-      // implementation...
+  const selected = scenarioIds ?? Object.values(GROUPS)
+    .filter((group) => group.apiOnly)
+    .flatMap((group) => group.ids);
+  const results = [];
+  let digest = null;
+  let memory = null;
+  const record = (scenarioId, status, detail) => results.push({ scenarioId, status, detail });
+
+  for (const scenarioId of selected) {
+    const scenario = SCENARIOS[scenarioId];
+    if (!scenario?.apiOnly) continue;
+    if (FLAGS.dryRun) {
+      record(scenarioId, 'SKIP', 'requires live API state');
+      continue;
     }
-    
-    const memGet = await api(rt, "memory_get");
-    console.log("J1 Memory Get PASS: ", !!memGet);
-    
-  } catch (err) {
-    console.error("API Test Error:", err.message);
+    try {
+      if (['H1_today_visibility', 'H2_negotiation_cards', 'H3_card_structure'].includes(scenarioId)) {
+        digest ??= await api(rt, 'digest');
+      }
+      if (scenarioId === 'H1_today_visibility') {
+        const state = readJson(rt.paths.state, { runs: [] });
+        const actualBySubject = new Map((digest.emails ?? []).map((row) => [row.subject, row]));
+        const mismatches = state.runs.filter((run) => {
+          const expected = SCENARIOS[run.scenarioId]?.expects?.todayVisible;
+          if (typeof expected !== 'boolean') return false;
+          const row = actualBySubject.get(run.subject);
+          const visible = Boolean(row) && !['low_priority', 'spam_or_poor_fit'].includes(row.category);
+          return visible !== expected;
+        });
+        const ok = Array.isArray(digest.emails) && Array.isArray(digest.negotiations) && mismatches.length === 0;
+        record(scenarioId, ok ? 'PASS' : 'FAIL', mismatches.length
+          ? `Today visibility mismatches: ${mismatches.map((run) => run.scenarioId).join(', ')}`
+          : `${state.runs.length} current-run card expectation(s) validated`);
+      } else if (scenarioId === 'H2_negotiation_cards') {
+        if (!digest.negotiations?.length) {
+          record(scenarioId, 'SKIP', 'requires a creator-first active negotiation fixture');
+        } else {
+          const ok = digest.negotiations.every((row) => row.id && row.stage && row.latest_subject && 'draft_email' in row);
+          record(scenarioId, ok ? 'PASS' : 'FAIL', `${digest.negotiations.length} active negotiation card(s)`);
+        }
+      } else if (scenarioId === 'H3_card_structure') {
+        const ok = Array.isArray(digest.emails) && digest.emails.every((row) =>
+          row.id && row.category && typeof row.subject === 'string' && 'delivery_status' in row && 'ingestion_source' in row);
+        record(scenarioId, ok ? 'PASS' : 'FAIL', `${digest.emails?.length ?? 0} email card(s) validated`);
+      } else if (scenarioId === 'J1_memory_learned') {
+        memory ??= await api(rt, 'memory_get');
+        const ok = Array.isArray(memory.observations) && memory.observations.length > 0 &&
+          memory.observations.every((row) => row.id && row.kind && typeof row.value_text === 'string') &&
+          Array.isArray(memory.evidence);
+        record(scenarioId, ok ? 'PASS' : 'FAIL', `${memory.observations?.length ?? 0} observation(s)`);
+      } else if (['J3_chat_query', 'J4_chat_rule'].includes(scenarioId)) {
+        record(scenarioId, 'SKIP', 'chat writes durable account history and has no lossless teardown fixture');
+      } else if (scenarioId === 'I3_draft_send') {
+        record(scenarioId, 'SKIP', FLAGS.allowSend
+          ? 'requires an explicitly selected live draft and acceptance procedure'
+          : 'real Gmail send requires --allow-send and an explicitly selected draft');
+      } else {
+        record(scenarioId, 'SKIP', `${scenario.verifyFn ?? 'scenario'} is not safely automated yet`);
+      }
+    } catch (error) {
+      record(scenarioId, 'FAIL', error.message ?? String(error));
+    }
   }
+
+  const summary = {
+    total: results.length,
+    pass: results.filter((result) => result.status === 'PASS').length,
+    fail: results.filter((result) => result.status === 'FAIL').length,
+    skip: results.filter((result) => result.status === 'SKIP').length,
+    results,
+  };
+  console.log(JSON.stringify(summary, null, 2));
+  return summary;
 }
 
 async function cmdScorecard() {
   console.log("Cross-account Scorecard:");
-  console.log("Account   | PASS | FAIL | TOTAL");
-  console.log("-------------------------------");
+  console.log("Account   | PASS | FAIL | SKIP | TOTAL");
+  console.log("--------------------------------------");
   for (const acc of Object.keys(ACCOUNTS)) {
     const paths = getStatePaths(acc);
     const maturity = readJson(paths.maturity, null);
     const phaseResults = Object.values(maturity?.phases ?? {});
     const summary = phaseResults.length
       ? phaseResults.reduce((total, phase) => ({
-        pass: total.pass + Number(phase.pass ?? 0),
-        fail: total.fail + Number(phase.fail ?? 0),
-        total: total.total + Number(phase.total ?? 0),
-      }), { pass: 0, fail: 0, total: 0 })
-      : readJson(paths.results, { pass: 0, fail: 0, total: 0 });
-    console.log(`${acc.padEnd(9)} | ${String(summary.pass).padEnd(4)} | ${String(summary.fail).padEnd(4)} | ${summary.total}`);
+        pass: total.pass + Number(phase.pass ?? 0) + Number(phase.api?.pass ?? 0),
+        fail: total.fail + Number(phase.fail ?? 0) + Number(phase.api?.fail ?? 0),
+        skip: total.skip + Number(phase.api?.skip ?? 0),
+        total: total.total + Number(phase.total ?? 0) + Number(phase.api?.total ?? 0),
+      }), { pass: 0, fail: 0, skip: 0, total: 0 })
+      : readJson(paths.results, { pass: 0, fail: 0, skip: 0, total: 0 });
+    console.log(`${acc.padEnd(9)} | ${String(summary.pass).padEnd(4)} | ${String(summary.fail).padEnd(4)} | ${String(summary.skip).padEnd(4)} | ${summary.total}`);
   }
 }
 
@@ -1161,6 +1439,14 @@ async function cmdMature() {
   const requestedStartPhase = FLAGS.phase === '' ? 0 : Number(FLAGS.phase);
   if (!Number.isInteger(requestedStartPhase) || !PHASES[requestedStartPhase]) {
     throw new Error(`Invalid maturity start phase: ${FLAGS.phase}`);
+  }
+  const futurePhases = Object.keys(PHASES).filter((id) => Number(id) >= requestedStartPhase);
+  const changesFixtures = futurePhases.some((id) => (PHASES[id].fixturesBefore ?? []).length > 0);
+  if (!FLAGS.dryRun && changesFixtures && !FLAGS.allowFixtures) {
+    throw new Error('Maturity progression changes account fixtures and requires --allow-fixtures.');
+  }
+  if (!FLAGS.dryRun && changesFixtures && ACCOUNTS[FLAGS.target]?.type === 'aged' && !FLAGS.allowAgedFixtures) {
+    throw new Error('Maturity progression on an aged account also requires --allow-aged-fixtures.');
   }
   const priorMaturity = readJson(maturityPath, null);
   const canResume = requestedStartPhase > 0 && priorMaturity?.run_tag === RUN_TAG && priorMaturity?.target === FLAGS.target;
@@ -1194,7 +1480,9 @@ async function cmdMature() {
     await cmdFire();
     await cmdWait();
     const phasePassed = await cmdVerify();
-    allPhasesPassed = allPhasesPassed && phasePassed;
+    const apiTests = tests.filter((scenarioId) => SCENARIOS[scenarioId]?.apiOnly);
+    const apiResults = apiTests.length ? await cmdApiTest(apiTests) : { total: 0, pass: 0, fail: 0, skip: 0, results: [] };
+    allPhasesPassed = allPhasesPassed && phasePassed && apiResults.fail === 0;
 
     // Snapshot metrics for this phase
     const results = readJson(getStatePaths(FLAGS.target).results, null);
@@ -1205,6 +1493,7 @@ async function cmdMature() {
         label: phase.label,
         snapshot_metrics: phase.snapshotMetrics ?? [],
         ...results,
+        api: apiResults,
       };
       maturity.updated_at = new Date().toISOString();
       writeJson(maturityPath, maturity);
@@ -1259,6 +1548,8 @@ Flags:
   --dry-run             Log payloads but do not send
   --allow-auto-send     Permit auto-send behavior
   --allow-send          Permit actual send operations
+  --allow-fixtures      Permit test settings, rules, kits, and calendar mutations
+  --allow-aged-fixtures Additionally permit fixture mutations on the aged account
   --force-reset         Allow reset on aged (yafet2132) account
   --verbose             Verbose output
 

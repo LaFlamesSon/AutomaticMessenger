@@ -68,7 +68,7 @@ test("negotiations and Review-mode tests cannot auto-send", async () => {
   const inbound = await read("functions/inbound-email/index.ts");
   assert.match(inbound, /if \(negotiationRequired && decision === "auto_send"\) decision = "draft"/);
   assert.match(inbound, /if \(isForwardingTest && !forwardingTestAutoSend && decision === "auto_send"\) decision = "draft"/);
-  assert.match(inbound, /human_review_required: negotiationRequired \|\| \(isForwardingTest && !forwardingTestAutoSend\)/);
+  assert.match(inbound, /human_review_required: negotiationRequired \|\| deterministicReviewRecovery \|\|/);
 });
 
 test("OAuth callback stores only send-only authorization after ownership verification", async () => {

@@ -267,7 +267,7 @@
 
   function isTerminalSessionError(error) {
     const code = String(error?.code || "").toLowerCase();
-    return error?.status === 401 && ["invalid_session", "unauthorized"].includes(code);
+    return error?.status === 401 || ["invalid_session", "unauthorized"].includes(code);
   }
 
   function isTransientApiError(error) {

@@ -31,6 +31,19 @@ test('sender pool covers every email scenario with its natural identity', () => 
   });
 });
 
+test('scenario expectations match product boundaries instead of impossible premises', () => {
+  assert.equal(SCENARIOS.A12_spam_bulk.expects.category, 'low_priority');
+  assert.deepEqual(SCENARIOS.B6_no_system_leak.expects, {
+    category: 'spam_or_poor_fit', todayVisible: false, draft: false, negotiation: false, hostile: true,
+  });
+  for (const id of ['D1_initial_offer', 'D2_counteroffer', 'D3_revised_final', 'D4_below_floor', 'D5_above_target', 'D6_vague_collab']) {
+    assert.equal(SCENARIOS[id].expects.negotiation, false);
+    assert.equal(SCENARIOS[id].negotiationAssert.requiresCreatorReply, true);
+  }
+  assert.equal(SCENARIOS.E3_portfolio_request.kitAssert.expectedDefault, true);
+  assert.equal(SCENARIOS.E4_no_match_fallback.kitAssert.expectedDefault, true);
+});
+
 test('inject dry-run builds the signed-endpoint payload without contacting production', () => {
   const runTag = `FWD-STRESS-UNIT-INJECT-${process.pid}`;
   const statePath = path.join(ROOT, '.tmp', `${runTag}-burner-state.json`);
@@ -108,6 +121,37 @@ test('maturity dry-run can resume from a later phase', () => {
   assert.doesNotMatch(result.stdout, /Phase 1: Voice configured/);
   assert.match(result.stdout, /Phase 2: Kits \+ rate profiles added/);
   assert.match(result.stdout, /Phase 4: Maturity checkpoint/);
+});
+
+test('calendar mode assertions use per-scenario fixtures in dry-run scoring', () => {
+  const runTag = `FWD-STRESS-UNIT-CALENDAR-${process.pid}`;
+  const statePath = path.join(ROOT, '.tmp', `${runTag}-burner-state.json`);
+  const resultsPath = path.join(ROOT, '.tmp', `${runTag}-burner-results.json`);
+  try {
+    const fire = runHarness([
+      '--target=burner', '--mode=inject', '--dry-run', '--group=F1_scheduled_call,F2_email_only,F3_phone_mode,F4_booking_conflict', 'fire',
+    ], runTag);
+    assert.equal(fire.status, 0, fire.stderr);
+    const wait = runHarness(['--target=burner', '--dry-run', 'wait'], runTag);
+    assert.equal(wait.status, 0, wait.stderr);
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.deepEqual(state.runs.map((run) => run.fixture.contact_mode), ['scheduled_call', 'email_only', 'phone', 'scheduled_call']);
+    const results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+    assert.equal(results.pass, 4);
+    assert.equal(results.fail, 0);
+    assert.ok(results.results.every((result) => result.checks.some((check) => check.name.startsWith('calendar_') || check.name === 'booking_conflict_excluded')));
+  } finally {
+    fs.rmSync(statePath, { force: true });
+    fs.rmSync(resultsPath, { force: true });
+  }
+});
+
+test('API dry-run reports unsupported coverage as skips', () => {
+  const result = runHarness(['--target=burner', '--dry-run', 'api-test']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /"status": "SKIP"/);
+  assert.match(result.stdout, /"pass": 0/);
+  assert.doesNotMatch(result.stdout, /API-only tests skipped/);
 });
 
 test('reset dry-run includes archive observations and refuses aged accounts by default', () => {

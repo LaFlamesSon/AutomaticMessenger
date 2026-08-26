@@ -113,6 +113,9 @@ test("forwarded content is deduplicated, bounded, and retained as normalized arc
 test("forwarded drafts preserve safety, Review negotiations, and explicit send claims", () => {
   assert.match(ingest, /hostileInboundDetected\(payload\.subject, payload\.text\)/);
   assert.match(ingest, /draftSafetyViolations\(finalDraft\)/);
+  assert.match(ingest, /safeReviewRecoveryDraft\(\{/);
+  assert.match(ingest, /deterministicReviewRecovery = true/);
+  assert.match(ingest, /blockedByNeverDraftRule/);
   assert.match(ingest, /if \(negotiationRequired && decision === "auto_send"\) decision = "draft"/);
   assert.match(api, /case "forwarded_draft_get"/);
   assert.match(api, /case "forwarded_draft_update"/);
@@ -131,7 +134,7 @@ test("forwarded negotiations require a creator reply and remain linked across re
   assert.match(ingest, /\.eq\("gmail_account_id", account\.id\)\.eq\("thread_id", threadKey\)\.eq\("delivery_status", "sent"\)/);
   assert.match(ingest, /commercialTerms\.detected && Boolean\(previousReplies\?\.length\)/);
   assert.match(ingest, /\|\| Boolean\(activeNegotiation\)/);
-  assert.match(ingest, /human_review_required: negotiationRequired \|\| \(isForwardingTest && !forwardingTestAutoSend\)/);
+  assert.match(ingest, /human_review_required: negotiationRequired \|\| deterministicReviewRecovery \|\|/);
 
   const send = api.match(/case "forwarded_send": \{([\s\S]*?)\n      case "gmail_connect_start"/)?.[1] ?? "";
   assert.match(send, /sent_via: "manual_extension"/);
@@ -179,7 +182,7 @@ test("Auto-send acceptance is enabled only for an active policy and self-address
   assert.match(ingest, /forwardingTestAutoSend \? String\(account\.gmail_address\)\.toLowerCase\(\)/);
   assert.match(ingest, /buildReplyMime\(\{ to: replyRecipient/);
   assert.doesNotMatch(ingest, /buildReplyMime\(\{ to: sender\.address/);
-  assert.match(ingest, /human_review_required: negotiationRequired \|\| \(isForwardingTest && !forwardingTestAutoSend\)/);
+  assert.match(ingest, /human_review_required: negotiationRequired \|\| deterministicReviewRecovery \|\|/);
 });
 
 test("new forwarding tables are service-role-only under RLS", () => {

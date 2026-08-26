@@ -73,11 +73,11 @@ const PORTFOLIO_REQUEST = new RegExp(
   String.raw`(?:\b(?:attach|send|share|include|provide|review|see|need(?:s|ed)?|want(?:s|ed)?|request(?:s|ed)?|looking\s+for)\b[^.!?\n]{0,100}\b${PORTFOLIO_NOUN}\b|\b${PORTFOLIO_NOUN}\b[^.!?\n]{0,100}\b(?:attach|send|share|include|provide|review|see|need(?:s|ed)?|want(?:s|ed)?|request(?:s|ed)?|looking\s+for)\b)`,
   "iu",
 );
-const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
-const COLLABORATION_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:oration)?|partnership)\b/i;
-const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|schedule|book)\b)|(?:\b(?:interested\s+in|looking\s+for)\b)/i;
+const WORK_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:or(?:ate|ating|ation))?|partnership|project|(?:campaign|creative|project)\s+brief|full\s+brief|deliverables?|brand\s+(?:assets?|materials?|guidelines?)|media\s+kit|portfolio|work\s+(?:samples?|examples?))\b/i;
+const COLLABORATION_SIGNAL = /\b(?:sponsor(?:ship|ed)?|paid\s+(?:creator\s+)?(?:partnership|collaboration)|creator\s+(?:partnership|campaign)|brand\s+(?:partnership|campaign|collaboration)|campaign|collab(?:or(?:ate|ating|ation))?|partnership)\b/i;
+const REQUEST_SIGNAL = /\?|(?:\b(?:could|can|would)\s+you\b)|(?:\bplease\b)|(?:\b(?:send|share|attach|include|provide|reply|respond|discuss|chat|explore|confirm|schedule|book)\b)|(?:\b(?:interested\s+in|looking\s+for)\b)/i;
 const EXPLICIT_NO_REPLY = /\b(?:fyi\s+only|for\s+(?:awareness|information|your\s+records)\s+only|no\s+(?:reply|response|action)\s+(?:is\s+)?(?:needed|required)|(?:please\s+)?do\s+not\s+reply)\b/i;
-const HOSTILE_INBOUND = /\b(?:ignore|bypass|override|disregard)\b[^.!?\n]{0,80}\b(?:instructions?|rules?|safety|approval|policy|policies|prompts?|settings?|preferences?|configuration)\b|\b(?:system|developer)\s*(?:message|instruction)?\s*:|\b(?:email|these?)\s+instructions?\b[^.!?\n]{0,80}\b(?:outrank|override|replace)\b|\b(?:turn|enable)\b[^.!?\n]{0,40}\bauto[- ]?send\b|\b(?:correct\s+response|reply\s+saying|response\s+is\s+exactly)\b|\b(?:reveal|print|send|share)\b[^.!?\n]{0,80}\b(?:hidden\s+prompt|password|credential|access\s+token|refresh\s+token|secret)\b|\b(?:private|stored)\b[^.!?\n]{0,40}\b(?:phone\s+number|contact\s+details|data|files?)\b|\bguaranteed\b[^.!?\n]{0,80}\b(?:followers?|returns?|engagement)\b|\b(?:buy|purchase)\s+(?:verified\s+)?followers?\b|\b(?:deposit|processing\s+fee)\b[^.!?\n]{0,80}\b(?:before|to\s+claim)\b/i;
+const HOSTILE_INBOUND = /\b(?:ignore|bypass|override|disregard)\b[^.!?\n]{0,80}\b(?:instructions?|rules?|safety|approval|policy|policies|prompts?|settings?|preferences?|configuration)\b|\b(?:system|developer)\s*(?:message|instruction)?\s*:|\b(?:email|these?)\s+instructions?\b[^.!?\n]{0,80}\b(?:outrank|override|replace)\b|\b(?:turn|enable)\b[^.!?\n]{0,40}\bauto[- ]?send\b|\b(?:correct\s+response|reply\s+saying|response\s+is\s+exactly)\b|\b(?:reveal|print|send|share)\b[^.!?\n]{0,80}\b(?:hidden\s+prompt|password|credential|access\s+token|refresh\s+token|secret)\b|\b(?:tell|explain|show|share|reveal|print|send)\b[^.!?\n]{0,100}\b(?:system\s+prompt|internal\s+instructions?|auto[- ]?send\s+(?:settings?|rules?|triggers?)|private\s+configuration)\b|\b(?:private|stored)\b[^.!?\n]{0,40}\b(?:phone\s+number|contact\s+details|data|files?)\b|\bguaranteed\b[^.!?\n]{0,80}\b(?:followers?|returns?|engagement)\b|\b(?:buy|purchase)\s+(?:verified\s+)?followers?\b|\b(?:deposit|processing\s+fee)\b[^.!?\n]{0,80}\b(?:before|to\s+claim)\b/i;
 
 export function explicitPortfolioRequest(subject: string, body: string): boolean {
   return PORTFOLIO_REQUEST.test(`${subject}\n${body}`);
@@ -404,6 +404,24 @@ export function contactSafetyViolations(draft: string, preference: CalendarPrefe
   const expected = applyContactPreference(draft, preference, slots);
   if (draft !== expected) violations.push("unverified_contact_method");
   return violations;
+}
+
+export function safeReviewRecoveryDraft(input: {
+  identity: DraftIdentity;
+  negotiation?: boolean;
+  wantsPortfolio?: boolean;
+  hasAttachment?: boolean;
+  preference: CalendarPreference;
+  slots: VerifiedOpenSlot[];
+}): string | null {
+  let fallback = input.negotiation
+    ? safeNegotiationDraft(input.identity)
+    : safeInformationDraft(input.identity, input.wantsPortfolio === true);
+  if (input.wantsPortfolio) fallback = finalizePortfolioDraft(fallback, input.hasAttachment === true);
+  fallback = applyContactPreference(enforceConfiguredSignoff(fallback, input.identity), input.preference, input.slots);
+  if (draftSafetyViolations(fallback).length || contactSafetyViolations(fallback, input.preference, input.slots).length ||
+    (fallback.match(/\S+/g) ?? []).length > 150) return null;
+  return fallback;
 }
 
 export function localScheduleWindow(now: Date, timezone: string): { date: string; minutes: number } {

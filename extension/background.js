@@ -58,7 +58,11 @@ async function performSessionRefresh(force) {
     }
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      return { ok: false, status: response.status, code: payload?.code || "auth_unavailable" };
+      return {
+        ok: false,
+        status: response.status,
+        code: response.status === 401 ? "invalid_session" : (payload?.code || "auth_unavailable"),
+      };
     }
     const next = Core.normalizeAuthSession(await response.json());
     if (!next) return { ok: false, status: 401, code: "invalid_session" };

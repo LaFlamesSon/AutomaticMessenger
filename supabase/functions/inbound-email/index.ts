@@ -10,7 +10,8 @@ import {
   applyContactPreference, collaborationMediaKitRelevant, contactSafetyViolations, deliveryDecision,
   draftSafetyViolations, enforceConfiguredSignoff, explicitPortfolioRequest, finalizePortfolioDraft,
   findVerifiedOpenSlots, hostileInboundDetected, legitimateInquiryFallbackAllowed, safeCalendarPreference,
-  safeInformationDraft, safeNegotiationDraft, selectMediaKit, type CalendarPreference, type MediaKitCandidate,
+  safeInformationDraft, safeNegotiationDraft, safeReviewRecoveryDraft, selectMediaKit,
+  type CalendarPreference, type MediaKitCandidate,
 } from "../_shared/policy.ts";
 import {
   evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage, negotiationSummary,
@@ -638,8 +639,26 @@ Deno.serve(async (req: Request) => {
     let finalDraft = triage.draft ? enforceConfiguredSignoff(triage.draft, profile) : null;
     if (finalDraft && triage.wants_portfolio) finalDraft = finalizePortfolioDraft(finalDraft, Boolean(selectedKit));
     if (finalDraft) finalDraft = enforceConfiguredSignoff(applyContactPreference(finalDraft, calendar, slots), profile);
-    if (finalDraft && (draftSafetyViolations(finalDraft).length || contactSafetyViolations(finalDraft, calendar, slots).length ||
-      (finalDraft.match(/\S+/g) ?? []).length > 150)) decision = "none";
+    let deterministicReviewRecovery = false;
+    const blockedByNeverDraftRule = matchedRules.some((rule: any) => rule.action === "never_draft");
+    const finalDraftRejected = finalDraft && !blockedByNeverDraftRule && enabledCategories.includes(triage.category) && fallbackAllowed &&
+      (draftSafetyViolations(finalDraft).length ||
+        contactSafetyViolations(finalDraft, calendar, slots).length || (finalDraft.match(/\S+/g) ?? []).length > 150);
+    if (finalDraftRejected) {
+      const recovered = safeReviewRecoveryDraft({
+        identity: profile,
+        negotiation: negotiationRequired,
+        wantsPortfolio: shouldAttach || triage.wants_portfolio,
+        hasAttachment: Boolean(selectedKit),
+        preference: calendar,
+        slots,
+      });
+      if (recovered) {
+        finalDraft = recovered;
+        decision = "draft";
+        deterministicReviewRecovery = true;
+      } else decision = "none";
+    }
     const draftVersion = finalDraft && decision !== "none"
       ? await sha256(JSON.stringify({ to: replyRecipient, subject: payload.subject, body: finalDraft, kit: selectedKit?.id ?? null,
         in_reply_to: payload.message_id, references: payload.references })) : null;
@@ -652,7 +671,8 @@ Deno.serve(async (req: Request) => {
       sender: isForwardingTest ? "CaughtUp Brand Test <test@inbound.getcaughtup.io>" : payload.from || sender.address,
       subject: payload.subject || "(no subject)", delivery_status: finalDraft && decision !== "none" ? "draft" : "none",
       selected_media_kit_id: finalDraft && decision !== "none" && selectedKit ? selectedKit.id : null,
-      negotiation_id: negotiationId, human_review_required: negotiationRequired || (isForwardingTest && !forwardingTestAutoSend), is_test: isForwardingTest,
+      negotiation_id: negotiationId, human_review_required: negotiationRequired || deterministicReviewRecovery ||
+        (isForwardingTest && !forwardingTestAutoSend), is_test: isForwardingTest,
       ingestion_source: "forwarded", inbound_message_id: inbound.id, reply_to_address: replyRecipient,
       rfc_message_id: payload.message_id, rfc_in_reply_to: payload.in_reply_to, rfc_references: payload.references,
       outbound_message_id: outboundMessageId, draft_version: draftVersion, draft_updated_at: draftUpdatedAt,

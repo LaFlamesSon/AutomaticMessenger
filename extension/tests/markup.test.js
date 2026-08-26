@@ -392,6 +392,7 @@ test("background worker refreshes sessions but never signs the user out", () => 
   assert.match(background, /chrome\.alarms\.create/);
   assert.match(background, /auth_refresh/);
   assert.match(background, /refresh_token !== session\.refresh_token/);
+  assert.match(background, /response\.status === 401 \? "invalid_session"/);
   assert.doesNotMatch(background, /storage\.local\.remove/);
 });
 

@@ -134,6 +134,8 @@ test("OAuth sessions require reusable refresh credentials and derive missing exp
 test("only terminal refresh failures invalidate a saved session", () => {
   assert.equal(Core.isTerminalSessionError(new Core.ApiError("expired", 401, "invalid_session")), true);
   assert.equal(Core.isTerminalSessionError(new Core.ApiError("unauthorized", 401, "unauthorized")), true);
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("gateway omitted its code", 401, "auth_unavailable")), true);
+  assert.equal(Core.isTerminalSessionError(new Core.ApiError("explicitly invalid", 503, "invalid_session")), true);
   assert.equal(Core.isTerminalSessionError(new Core.ApiError("offline", 0, "network")), false);
   assert.equal(Core.isTerminalSessionError(new Core.ApiError("busy", 503, "auth_unavailable")), false);
   assert.equal(Core.isTerminalSessionError(new Core.ApiError("slow down", 429, "rate_limited")), false);
