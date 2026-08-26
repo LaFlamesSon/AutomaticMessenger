@@ -79,6 +79,25 @@ test('maturity chain scenarios preserve RFC reply headers across fire commands',
   }
 });
 
+test('resume appends scenarios after an interrupted fire command', () => {
+  const runTag = `FWD-STRESS-UNIT-RESUME-${process.pid}`;
+  const statePath = path.join(ROOT, '.tmp', `${runTag}-burner-state.json`);
+  try {
+    const first = runHarness([
+      '--target=burner', '--mode=inject', '--dry-run', '--group=A1_urgent_deadline', 'fire',
+    ], runTag);
+    assert.equal(first.status, 0, first.stderr);
+    const resumed = runHarness([
+      '--target=burner', '--mode=inject', '--dry-run', '--resume', '--group=A2_urgent_budget', 'fire',
+    ], runTag);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.deepEqual(state.runs.map((run) => run.scenarioId), ['A1_urgent_deadline', 'A2_urgent_budget']);
+  } finally {
+    fs.rmSync(statePath, { force: true });
+  }
+});
+
 test('reset dry-run includes archive observations and refuses aged accounts by default', () => {
   const fresh = runHarness(['--target=burner', '--dry-run', 'reset']);
   assert.equal(fresh.status, 0, fresh.stderr);

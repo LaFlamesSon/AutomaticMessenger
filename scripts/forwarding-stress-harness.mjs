@@ -39,6 +39,7 @@ const FLAGS = {
   allowSend: false,
   verbose: false,
   pause: false,
+  resume: false,
   forceReset: false,
 };
 
@@ -53,6 +54,7 @@ for (const arg of args) {
   else if (arg === '--allow-send') FLAGS.allowSend = true;
   else if (arg === '--verbose') FLAGS.verbose = true;
   else if (arg === '--pause') FLAGS.pause = true;
+  else if (arg === '--resume') FLAGS.resume = true;
   else if (arg === '--force-reset') FLAGS.forceReset = true;
   else if (!arg.startsWith('--')) positional.push(arg);
 }
@@ -145,6 +147,21 @@ async function request(url, options = {}) {
     throw error;
   }
   return payload;
+}
+
+async function requestWithTransientRetry(url, options = {}, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await request(url, options);
+    } catch (error) {
+      lastError = error;
+      const transient = error?.status == null || error.status === 429 || error.status >= 500;
+      if (!transient || attempt === attempts) throw error;
+      await sleep(500 * (2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
 }
 
 async function rest(table, params = {}, options = {}) {
@@ -420,7 +437,7 @@ async function injectDirect(rt, scenarioId, scenario, threadHeaders = {}) {
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = signEcdsa(rt.signingKey, timestamp, body);
 
-  const resp = await request(`${BASE}/functions/v1/inbound-email`, {
+  const resp = await requestWithTransientRetry(`${BASE}/functions/v1/inbound-email`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -556,8 +573,11 @@ function evaluate(scenarioId, scenario, subject, processed, inbound, digestEmail
   const inDigest = digestEmail
     ? digestEmail.some((row) => row.subject === subject || row.summary?.includes(marker(scenarioId)))
     : null;
-  if (expect.todayVisible === true) pass("today_visible", inDigest === true, inDigest === null ? "digest unavailable" : String(inDigest));
-  if (expect.todayVisible === false) pass("today_hidden", inDigest === false, inDigest === null ? "digest unavailable" : String(inDigest));
+  const hiddenByExtension = ['low_priority', 'spam_or_poor_fit'].includes(processed?.category);
+  const inTodayUi = inDigest === null ? null : inDigest && !hiddenByExtension;
+  const todayDetail = inDigest === null ? 'digest unavailable' : `ui=${inTodayUi}, digest=${inDigest}`;
+  if (expect.todayVisible === true) pass("today_visible", inTodayUi === true, todayDetail);
+  if (expect.todayVisible === false) pass("today_hidden", inTodayUi === false, todayDetail);
 
   const draftWordCount = processed?.draft_text ? processed.draft_text.split(/\s+/).length : null;
 
@@ -890,7 +910,10 @@ async function cmdFire() {
     needsSenderAuth: FLAGS.mode === 'hop',
   });
   const previousState = readJson(rt.paths.state, {});
-  writeJson(rt.paths.state, { runs: [], chains: previousState.chains ?? {} });
+  writeJson(rt.paths.state, {
+    runs: FLAGS.resume ? previousState.runs ?? [] : [],
+    chains: previousState.chains ?? {},
+  });
   const rawTargets = FLAGS.group ? FLAGS.group.split(',') : Object.keys(GROUPS).filter(g => !GROUPS[g].apiOnly);
   
   console.log(`Firing targets: ${rawTargets.join(', ')} for ${rt.targetName} (mode=${FLAGS.mode})`);
@@ -1219,6 +1242,7 @@ Flags:
   --phase=0             Phase to run for setup/mature
   --mode=inject|hop     inject (default): direct Edge Function POST; hop: Gmail send
   --pause               Pause between maturity phases for UI observation
+  --resume              Append fire results to current state after an interrupted run
   --dry-run             Log payloads but do not send
   --allow-auto-send     Permit auto-send behavior
   --allow-send          Permit actual send operations
