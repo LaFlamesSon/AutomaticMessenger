@@ -3,6 +3,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { encodeHeaderSubject } from "../_shared/mime.ts";
 import { localScheduleWindow } from "../_shared/policy.ts";
 
 let CFG: Record<string, string> = {};
@@ -124,15 +125,14 @@ Deno.serve(async (req: Request) => {
       const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
       if (noise) lines.push(`🗑 ${noise} newsletters & pitches filtered out for you.`);
       lines.push("", "— CaughtUp, your inbox agent");
-
-      const subject = needsYou
+      const subject = needsYou
         ? `⚡ ${needsYou} need you, ${handled} handled — your CaughtUp digest`
         : `🎉 All caught up — ${handled} handled for you`;
 
       const token = await refreshAccessToken(account.refresh_token);
       const raw = b64urlEncode([
         `To: ${account.gmail_address}`,
-        `Subject: ${subject}`,
+        `Subject: ${encodeHeaderSubject(subject)}`,
         `Content-Type: text/plain; charset="UTF-8"`,
         "",
         lines.join("\r\n"),

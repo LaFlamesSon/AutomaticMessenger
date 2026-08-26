@@ -5,6 +5,12 @@ export function sanitizeHeader(value: unknown, max = 998): string {
   return String(value ?? "").replace(CONTROL, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+export function encodeHeaderSubject(subject: string): string {
+  const clean = sanitizeHeader(subject, 500);
+  if (/^[\x20-\x7E]*$/.test(clean)) return clean;
+  return `=?UTF-8?B?${btoa(unescape(encodeURIComponent(clean)))}?=`;
+}
+
 export function parseStrictRecipient(value: unknown): string | null {
   const clean = sanitizeHeader(value, 320);
   const bracketed = clean.match(/^(?:[^<>]*\s)?<([^<>]+)>$/)?.[1]?.trim();
