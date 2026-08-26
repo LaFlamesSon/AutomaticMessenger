@@ -14,6 +14,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import { SCENARIOS, CHAINS, GROUPS, PHASES, SAFETY_PATTERNS } from './scenario-content.mjs';
+import { senderFor } from './sender-pool.mjs';
 
 const ROOT = process.cwd();
 const PROJECT = process.env.HARNESS_PROJECT ?? "xkrpxvswdkreglmefuot";
@@ -57,6 +58,11 @@ for (const arg of args) {
 }
 const command = positional[0];
 
+if (!['inject', 'hop'].includes(FLAGS.mode)) {
+  console.error(`Invalid --mode=${FLAGS.mode}. Expected inject or hop.`);
+  process.exit(1);
+}
+
 function getStatePaths(target) {
   return {
     state: path.join(ROOT, ".tmp", `${RUN_TAG}-${target}-state.json`),
@@ -67,7 +73,8 @@ function getStatePaths(target) {
 
 loadEnvLocal();
 
-if (!process.env.QA_SERVICE_KEY) {
+const needsServiceKey = Boolean(command) && command !== 'scorecard' && !FLAGS.dryRun;
+if (needsServiceKey && !process.env.QA_SERVICE_KEY) {
   try {
     const raw = execFileSync("npx", ["--yes", "supabase@latest", "projects", "api-keys", "--project-ref", PROJECT, "-o", "json"], {
       cwd: ROOT,
@@ -82,8 +89,8 @@ if (!process.env.QA_SERVICE_KEY) {
   }
 }
 
-const serviceKey = process.env.QA_SERVICE_KEY || (FLAGS.dryRun ? "dummy_key_for_dry_run" : null);
-if (!serviceKey) {
+const serviceKey = process.env.QA_SERVICE_KEY || (FLAGS.dryRun || !needsServiceKey ? "dummy_key_for_local_only" : null);
+if (needsServiceKey && !serviceKey) {
   console.error("QA_SERVICE_KEY is required (service role). Set in env or .env.local.");
   process.exit(1);
 }
@@ -183,7 +190,8 @@ async function gmail(token, endpoint, options = {}) {
   });
 }
 
-async function runtime(targetName = FLAGS.target) {
+async function runtime(targetName = FLAGS.target, options = {}) {
+  const { needsSigningKey = false, needsSenderAuth = false, needsApiToken = false } = options;
   const accountInfo = ACCOUNTS[targetName];
   if (!accountInfo) throw new Error(`Unknown target account: ${targetName}`);
   const targetEmail = accountInfo.email.toLowerCase();
@@ -205,29 +213,30 @@ async function runtime(targetName = FLAGS.target) {
     };
   }
 
+  const requestedAddresses = needsSenderAuth ? `${targetEmail},${SENDER_EMAIL}` : targetEmail;
   const accounts = await rest("ia_gmail_accounts", {
-    select: "id,user_id,gmail_address,refresh_token,oauth_capability",
-    gmail_address: `in.(${targetEmail},${SENDER_EMAIL})`,
+    select: needsSenderAuth ? "id,user_id,gmail_address,refresh_token,oauth_capability" : "id,user_id,gmail_address,oauth_capability",
+    gmail_address: `in.(${requestedAddresses})`,
   });
   const target = accounts.find((row) => row.gmail_address.toLowerCase() === targetEmail);
   const sender = accounts.find((row) => row.gmail_address.toLowerCase() === SENDER_EMAIL);
   if (!target) throw new Error(`Target Gmail account not connected: ${targetEmail}`);
   
-  const users = await rest("ia_users", { select: "id,email,api_token", id: `eq.${target.user_id}` });
-  if (!users[0]?.api_token) throw new Error("Target user api_token missing");
-  
-  const cfgRows = await rest("rpc/ia_get_config", {}, { method: "POST", body: {} });
-  const cfg = Object.fromEntries(cfgRows.map((row) => [row.name, row.secret]));
-  
-  let targetGmailToken = null;
-  try {
-    const targetToken = await refreshGoogle(target.refresh_token, cfg);
-    targetGmailToken = targetToken.access_token;
-  } catch (e) {
-    console.warn(`  [warn] Target Gmail token refresh failed: ${e.message?.slice(0, 80) ?? e}`);
+  const users = await rest("ia_users", {
+    select: needsApiToken ? "id,email,api_token" : "id,email",
+    id: `eq.${target.user_id}`,
+  });
+  if (!users[0]) throw new Error("Target user missing");
+  if (needsApiToken && !users[0].api_token) throw new Error("Target user api_token missing");
+
+  let cfg = {};
+  if (needsSigningKey || needsSenderAuth) {
+    const cfgRows = await rest("rpc/ia_get_config", {}, { method: "POST", body: {} });
+    cfg = Object.fromEntries(cfgRows.map((row) => [row.name, row.secret]));
   }
+
   let senderToken = null;
-  if (sender?.refresh_token) {
+  if (needsSenderAuth && sender?.refresh_token) {
     try {
       senderToken = (await refreshGoogle(sender.refresh_token, cfg)).access_token;
     } catch (e) {
@@ -259,14 +268,13 @@ async function runtime(targetName = FLAGS.target) {
     target,
     sender,
     user: users[0],
-    api_token: users[0].api_token,
-    target_gmail_token: targetGmailToken,
+    api_token: users[0].api_token ?? null,
     sender_gmail_token: senderToken,
     alias: aliasRows[0] ?? null,
     profile: profileRows[0] ?? null,
     media_kits: kitRows,
     paths: getStatePaths(targetName),
-    signingKey: process.env.HARNESS_SIGNING_KEY ?? cfg.ia_inbound_signing_private_key ?? null,
+    signingKey: needsSigningKey ? cfg.ia_inbound_signing_private_key ?? null : null,
   };
 }
 
@@ -276,7 +284,7 @@ function marker(scenarioId) {
 
 function subjectFor(scenarioId, scenario) {
   if (typeof scenario.subject === 'function') {
-    return scenario.subject(marker(scenarioId));
+    return scenario.subject(`${RUN_TAG} ${scenarioId}`);
   }
   return `${marker(scenarioId)} ${scenario.subject}`;
 }
@@ -304,6 +312,9 @@ function scenarioIdSafe(subject) {
 }
 
 async function sendHop(rt, scenarioId, scenario, threadHeaders = []) {
+  if (!FLAGS.dryRun && !FLAGS.allowSend) {
+    throw new Error('Hop mode sends real Gmail messages and requires --allow-send.');
+  }
   if (!rt.sender_gmail_token && !FLAGS.dryRun) {
     throw new Error(`Hop mode requires connected sender account: ${SENDER_EMAIL}`);
   }
@@ -343,6 +354,10 @@ function signEcdsa(privateKeyPem, timestamp, body) {
 }
 
 async function injectDirect(rt, scenarioId, scenario, threadHeaders = {}) {
+  const autoSendEnabled = rt.profile?.auto_send === true || rt.profile?.reply_mode === 'auto_send';
+  if (!FLAGS.dryRun && autoSendEnabled && !FLAGS.allowAutoSend) {
+    throw new Error(`Target ${rt.targetName} has Auto-send enabled; inject mode requires --allow-auto-send.`);
+  }
   if (!rt.signingKey && !FLAGS.dryRun) {
     throw new Error('Inject mode requires ia_inbound_signing_private_key in Supabase Vault config.');
   }
@@ -351,8 +366,9 @@ async function injectDirect(rt, scenarioId, scenario, threadHeaders = {}) {
   }
 
   const subject = subjectFor(scenarioId, scenario);
-  const senderEmail = `${scenario.from.name.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@${scenario.from.domain}`;
-  const senderDisplay = `${scenario.from.name} <${senderEmail}>`;
+  const sender = senderFor(scenarioId);
+  const senderEmail = sender.envelopeFrom;
+  const senderDisplay = sender.fromHeader;
   const messageId = `<${RUN_TAG}-${scenarioId}-${crypto.randomUUID().slice(0, 8)}@getcaughtup.io>`;
 
   const aliasAddress = rt.alias?.alias_address ?? `${rt.targetName}@inbound.getcaughtup.io`;
@@ -388,6 +404,7 @@ async function injectDirect(rt, scenarioId, scenario, threadHeaders = {}) {
     sentAt: new Date().toISOString(),
     mode: 'inject',
     dryRun: Boolean(FLAGS.dryRun),
+    ...(FLAGS.dryRun ? { payload } : {}),
   };
 
   const stateData = readJson(rt.paths.state, { runs: [] });
@@ -395,7 +412,7 @@ async function injectDirect(rt, scenarioId, scenario, threadHeaders = {}) {
   writeJson(rt.paths.state, stateData);
 
   if (FLAGS.dryRun) {
-    console.log(`[DRY-RUN] Recorded inject scenario ${scenarioId} from ${senderEmail}: ${subject}`);
+    console.log(`[DRY-RUN] ${JSON.stringify(payload)}`);
     return runRecord;
   }
 
@@ -412,6 +429,9 @@ async function injectDirect(rt, scenarioId, scenario, threadHeaders = {}) {
     },
     body,
   });
+  if (resp?.discarded) throw new Error(`Inbound injection discarded ${scenarioId}: ${resp.discarded}`);
+  runRecord.response = resp;
+  writeJson(rt.paths.state, stateData);
   if (FLAGS.verbose) console.log(`  Edge Function response:`, JSON.stringify(resp));
   return runRecord;
 }
@@ -565,9 +585,14 @@ async function cmdSetup() {
   }
   console.log(`Setting up Phase ${phaseNum} fixtures for ${rt.targetName}: ${phaseFixtures.join(', ')}`);
 
+  if (FLAGS.dryRun) {
+    console.log(`[DRY-RUN] Would install fixtures: ${phaseFixtures.join(', ')}`);
+    return;
+  }
+
   if (phaseFixtures.includes('voice_profile')) {
     console.log('  Installing voice profile (display_name, signoff, tone)...');
-    await rest('ia_voice_profiles', { user_id: `eq.${rt.user.id}` }, {
+    const updated = await rest('ia_voice_profiles', { user_id: `eq.${rt.user.id}` }, {
       method: 'PATCH',
       body: {
         display_name: 'Carolyn',
@@ -578,7 +603,8 @@ async function cmdSetup() {
         settings_version: (rt.profile?.settings_version ?? 0) + 1,
         updated_at: new Date().toISOString(),
       },
-    }).catch(e => console.error('  voice_profile error:', e.message));
+    });
+    if (updated.length !== 1) throw new Error('Voice profile fixture did not update exactly one row.');
   }
 
   if (phaseFixtures.includes('media_kits')) {
@@ -595,31 +621,48 @@ async function cmdSetup() {
         is_default: true, auto_attach: true },
     ];
     for (const kit of kits) {
-      try {
-        const inserted = await rest('ia_media_kits', {}, {
+      const slug = kit.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const row = {
+        user_id: rt.user.id,
+        ...kit,
+        storage_path: `${rt.user.id}/harness/${slug}.pdf`,
+        original_filename: `${slug}.pdf`,
+        mime_type: 'application/pdf',
+        byte_size: 1,
+        status: 'active',
+        brand_names: [],
+        updated_at: new Date().toISOString(),
+      };
+      const existing = await rest('ia_media_kits', {
+        select: 'id', user_id: `eq.${rt.user.id}`, label: `eq.${kit.label}`, limit: '1',
+      });
+      const saved = existing[0]
+        ? await rest('ia_media_kits', { id: `eq.${existing[0].id}`, user_id: `eq.${rt.user.id}` }, {
+          method: 'PATCH', body: row,
+        })
+        : await rest('ia_media_kits', {}, {
           method: 'POST',
-          body: { user_id: rt.user.id, ...kit, status: 'active', brand_names: [] },
+          body: row,
         });
-        console.log(`    Created: ${kit.label}`);
-        // Create rate profile for Skincare Kit
-        if (kit.label.includes('Skincare') && inserted?.[0]?.id) {
-          await rest('ia_media_kit_rate_profiles', {}, {
-            method: 'POST',
-            body: {
-              user_id: rt.user.id,
-              media_kit_id: inserted[0].id,
-              currency: 'USD',
-              flat_fee_floor: 300,
-              flat_fee_target: 800,
-              commission_floor: 5,
-              commission_target: 15,
-              hybrid_guarantee_floor: 200,
-            },
-          }).catch(e => console.error('    rate profile error:', e.message));
-          console.log('    Created rate profile for Skincare Kit (floor=$300, target=$800)');
-        }
-      } catch (e) {
-        console.error(`    Failed to create ${kit.label}:`, e.message);
+      if (saved.length !== 1) throw new Error(`Media kit fixture failed for ${kit.label}.`);
+      console.log(`    Installed: ${kit.label}`);
+      if (kit.label.includes('Skincare')) {
+        await rest('ia_media_kit_rate_profiles', { on_conflict: 'media_kit_id' }, {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+          body: {
+            user_id: rt.user.id,
+            media_kit_id: saved[0].id,
+            currency: 'USD',
+            flat_fee_floor: 300,
+            flat_fee_target: 800,
+            commission_floor: 5,
+            commission_target: 15,
+            hybrid_guarantee_floor: 200,
+            updated_at: new Date().toISOString(),
+          },
+        });
+        console.log('    Installed rate profile for Skincare Kit (floor=$300, target=$800)');
       }
     }
   }
@@ -632,17 +675,18 @@ async function cmdSetup() {
       { match_type: 'domain', match_value: 'review-brand.com', action: 'require_approval', priority: 3 },
     ];
     for (const rule of rules) {
-      await rest('ia_sender_rules', {}, {
+      const saved = await rest('ia_sender_rules', { on_conflict: 'user_id,match_type,match_value,action' }, {
         method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
         body: { user_id: rt.user.id, ...rule, enabled: true },
-      }).catch(e => console.error(`    sender_rule error (${rule.match_value}):`, e.message));
+      });
+      if (saved.length !== 1) throw new Error(`Sender rule fixture failed for ${rule.match_value}.`);
       console.log(`    Rule: ${rule.action} for ${rule.match_value}`);
     }
   }
 
   if (phaseFixtures.includes('calendar')) {
     console.log('  Setting calendar preferences (scheduled_call + booking URL)...');
-    // Upsert: try insert, fall back to patch
     const calPrefs = {
       user_id: rt.user.id,
       contact_mode: 'scheduled_call',
@@ -655,17 +699,14 @@ async function cmdSetup() {
         { day: 4, start: '09:00', end: '17:00' },
         { day: 5, start: '09:00', end: '17:00' },
       ],
+      updated_at: new Date().toISOString(),
     };
-    await rest('ia_calendar_preferences', {}, {
+    const saved = await rest('ia_calendar_preferences', { on_conflict: 'user_id' }, {
       method: 'POST',
       body: calPrefs,
       headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-    }).catch(async () => {
-      await rest('ia_calendar_preferences', { user_id: `eq.${rt.user.id}` }, {
-        method: 'PATCH',
-        body: { ...calPrefs, user_id: undefined },
-      }).catch(e => console.error('    calendar error:', e.message));
     });
+    if (saved.length !== 1) throw new Error('Calendar preference fixture failed.');
   }
 
   if (phaseFixtures.includes('booking')) {
@@ -675,23 +716,32 @@ async function cmdSetup() {
     nextTuesday.setDate(now.getDate() + ((2 - now.getDay() + 7) % 7 || 7));
     nextTuesday.setHours(10, 0, 0, 0);
     const endTime = new Date(nextTuesday.getTime() + 3600000);
-    await rest('ia_bookings', {}, {
+    const saved = await rest('ia_bookings', { on_conflict: 'user_id,request_id' }, {
       method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
       body: {
         user_id: rt.user.id,
         title: '[HARNESS] Tuesday 10 AM Conflict',
         start_at: nextTuesday.toISOString(),
         end_at: endTime.toISOString(),
+        status: 'held',
+        request_id: `harness:${RUN_TAG}:phase3`,
+        updated_at: new Date().toISOString(),
       },
-    }).catch(e => console.error('    booking error:', e.message));
+    });
+    if (saved.length !== 1) throw new Error('Booking fixture failed.');
   }
 
   console.log('Setup complete.');
 }
 
 async function cmdTeardown() {
-  const rt = await runtime();
+  const rt = await runtime(FLAGS.target, { needsApiToken: true });
   console.log(`Tearing down test fixtures for ${rt.targetName}...`);
+  if (FLAGS.dryRun) {
+    console.log('[DRY-RUN] Would remove [HARNESS] media kits and reset calendar preferences.');
+    return;
+  }
   
   const kits = await rest("ia_media_kits", { user_id: `eq.${rt.user.id}` });
   for (const kit of kits) {
@@ -726,6 +776,8 @@ async function cmdReset() {
     { table: 'ia_send_attempts',      filter: { user_id: `eq.${userId}` }, label: 'send attempts' },
     { table: 'ia_processed_emails',   filter: { gmail_account_id: `eq.${accountId}` }, label: 'processed emails' },
     { table: 'ia_inbound_messages',   filter: { user_id: `eq.${userId}` }, label: 'inbound messages' },
+    { table: 'ia_agent_observation_evidence', filter: { user_id: `eq.${userId}` }, label: 'observation evidence' },
+    { table: 'ia_agent_observations', filter: { user_id: `eq.${userId}` }, label: 'observations' },
     { table: 'ia_inbox_messages',     filter: { user_id: `eq.${userId}` }, label: 'inbox messages' },
     { table: 'ia_inbox_threads',      filter: { user_id: `eq.${userId}` }, label: 'inbox threads' },
     { table: 'ia_sender_rules',       filter: { user_id: `eq.${userId}` }, label: 'sender rules' },
@@ -737,32 +789,44 @@ async function cmdReset() {
     { table: 'ia_draft_edits',        filter: { user_id: `eq.${userId}` }, label: 'draft edits' },
   ];
 
+  if (FLAGS.dryRun) {
+    for (const { table, filter } of cleanupTables) {
+      console.log(`[DRY-RUN] DELETE ${table} ${JSON.stringify(filter)}`);
+    }
+    console.log(`[DRY-RUN] PATCH ia_voice_profiles user_id=eq.${userId} to bare defaults`);
+    return;
+  }
+
   for (const { table, filter, label } of cleanupTables) {
     try {
       await rest(table, filter, { method: 'DELETE' });
       console.log(`  ✓ Cleaned ${label}`);
     } catch (e) {
-      // Table might not exist or be empty — not fatal
-      console.log(`  - Skipped ${label}: ${e.message?.slice(0, 80)}`);
+      // A partial reset is unsafe; fail instead of claiming the account is bare.
+      throw new Error(`Failed to clean ${label}: ${e.message}`);
     }
   }
 
   // Reset voice profile to bare defaults (don't delete — row must exist for processing)
   try {
-    await rest('ia_voice_profiles', { user_id: `eq.${userId}` }, {
+    const resetProfiles = await rest('ia_voice_profiles', { user_id: `eq.${userId}` }, {
       method: 'PATCH',
       body: {
         display_name: '', signoff: '', tone: '', occupation: '',
-        services: '', custom_rules: '', settings_version: 1,
+        services: '', custom_rules: '',
+        always_ask: ['project scope', 'budget range', 'timeline', 'what brand materials they already have'],
+        settings_version: 1,
         reply_mode: 'draft_only', auto_send: false,
         auto_send_confirmed_at: null, auto_send_policy_version: null,
         auto_send_categories: [], draft_categories: ['urgent', 'action_needed'],
-        updated_at: new Date().toISOString(),
+        timezone: 'America/Los_Angeles', updated_at: new Date().toISOString(),
       },
     });
+    if (resetProfiles.length !== 1) throw new Error('Voice profile reset did not update exactly one row.');
     console.log('  ✓ Reset voice profile to bare defaults');
   } catch (e) {
     console.error('  ✗ Voice profile reset failed:', e.message);
+    throw e;
   }
 
   // Clean up state files
@@ -774,7 +838,7 @@ async function cmdReset() {
 }
 
 async function cmdInspect() {
-  const rt = await runtime();
+  const rt = await runtime(FLAGS.target, { needsApiToken: true });
   const recentProcessed = await rest("ia_processed_emails", {
     select: "id,subject,category,delivery_status,ingestion_source,is_test,processed_at",
     gmail_account_id: `eq.${rt.target.id}`,
@@ -821,8 +885,12 @@ async function cmdInspect() {
 }
 
 async function cmdFire() {
-  const rt = await runtime();
-  writeJson(rt.paths.state, { runs: [] });
+  const rt = await runtime(FLAGS.target, {
+    needsSigningKey: FLAGS.mode === 'inject',
+    needsSenderAuth: FLAGS.mode === 'hop',
+  });
+  const previousState = readJson(rt.paths.state, {});
+  writeJson(rt.paths.state, { runs: [], chains: previousState.chains ?? {} });
   const rawTargets = FLAGS.group ? FLAGS.group.split(',') : Object.keys(GROUPS).filter(g => !GROUPS[g].apiOnly);
   
   console.log(`Firing targets: ${rawTargets.join(', ')} for ${rt.targetName} (mode=${FLAGS.mode})`);
@@ -844,12 +912,29 @@ async function cmdFire() {
     if (!scenario || scenario.apiOnly) continue;
     
     const isSequential = ['D', 'F'].includes(scenario.group) || CHAINS.negotiation_main?.steps?.includes(scenarioId);
+    const stateBeforeSend = readJson(rt.paths.state, { runs: [], chains: {} });
+    const chainId = scenario.chainId;
+    const chainHeaders = chainId && scenario.chainStep !== 0
+      ? stateBeforeSend.chains?.[chainId] ?? {}
+      : {};
     
     let row;
     if (FLAGS.mode === 'hop') {
-      row = await sendHop(rt, scenarioId, scenario);
+      const hopHeaders = chainHeaders.inReplyTo
+        ? [`In-Reply-To: ${chainHeaders.inReplyTo}`, `References: ${chainHeaders.references ?? chainHeaders.inReplyTo}`]
+        : [];
+      row = await sendHop(rt, scenarioId, scenario, hopHeaders);
     } else {
-      row = await injectDirect(rt, scenarioId, scenario);
+      row = await injectDirect(rt, scenarioId, scenario, chainHeaders);
+    }
+    if (chainId) {
+      const stateAfterSend = readJson(rt.paths.state, { runs: [], chains: {} });
+      stateAfterSend.chains ??= {};
+      stateAfterSend.chains[chainId] = {
+        inReplyTo: row.messageId,
+        references: [chainHeaders.references, row.messageId].filter(Boolean).join(' '),
+      };
+      writeJson(rt.paths.state, stateAfterSend);
     }
     count++;
     console.log(`[${count}/${scenariosToFire.length}] ${FLAGS.mode === 'hop' ? 'Sent' : 'Injected'} ${scenarioId} from ${row.senderEmail ?? SENDER_EMAIL}`);
@@ -866,11 +951,14 @@ async function cmdFire() {
 }
 
 async function cmdWait() {
-  const rt = await runtime();
+  const rt = await runtime(FLAGS.target, { needsApiToken: !FLAGS.dryRun });
   const state = readJson(rt.paths.state, { runs: [] });
   if (!state.runs.length) throw new Error("No pending runs in state file.");
   
-  const digest = await api(rt, "digest").catch(() => ({ emails: [] }));
+  const digest = FLAGS.dryRun
+    ? { emails: state.runs.filter((run) => SCENARIOS[run.scenarioId]?.expects?.todayVisible === true)
+      .map((run) => ({ subject: run.subject, summary: marker(run.scenarioId) })) }
+    : await api(rt, "digest").catch(() => ({ emails: [] }));
   const digestEmails = digest.emails ?? [];
   const results = [];
   
@@ -924,23 +1012,27 @@ async function cmdWait() {
 }
 
 async function cmdVerify() {
-  const rt = await runtime();
-  const summary = readJson(rt.paths.results, null);
+  if (!ACCOUNTS[FLAGS.target]) throw new Error(`Unknown target account: ${FLAGS.target}`);
+  const summary = readJson(getStatePaths(FLAGS.target).results, null);
   if (!summary) {
     console.log("No results to verify. Run wait first.");
-    return;
+    return false;
   }
-  console.log(`Verification results for ${rt.targetName}:`);
+  console.log(`Verification results for ${FLAGS.target}:`);
   for (const res of summary.results) {
     console.log(`${res.status.padEnd(5)} | ${res.scenarioId}`);
     if (res.status !== 'PASS' && FLAGS.verbose) {
       console.log(`  Failed checks: ${res.checks.filter(c => !c.ok).map(c => c.name).join(', ')}`);
     }
   }
+  return summary.fail === 0;
 }
 
 async function cmdChain() {
-  const rt = await runtime();
+  const rt = await runtime(FLAGS.target, {
+    needsSigningKey: FLAGS.mode === 'inject',
+    needsSenderAuth: FLAGS.mode === 'hop',
+  });
   console.log("Executing chain scenarios...");
   
   for (const [chainId, chain] of Object.entries(CHAINS || {})) {
@@ -962,7 +1054,7 @@ async function cmdChain() {
       }
       
       console.log(`  Waiting for chain step ${stepId}...`);
-      const processed = await pollProcessed(rt, sent.subject);
+      const processed = FLAGS.dryRun ? { id: `dry_${stepId}` } : await pollProcessed(rt, sent.subject);
       
       if (processed) {
         threadHeaders = {
@@ -976,8 +1068,12 @@ async function cmdChain() {
 }
 
 async function cmdApiTest() {
-  const rt = await runtime();
+  const rt = await runtime(FLAGS.target, { needsApiToken: true });
   console.log(`Running API tests for ${rt.targetName}...`);
+  if (FLAGS.dryRun) {
+    console.log('[DRY-RUN] API-only tests skipped.');
+    return;
+  }
   // Example API tests implementation (H-J groups)
   
   try {
@@ -1004,7 +1100,15 @@ async function cmdScorecard() {
   console.log("-------------------------------");
   for (const acc of Object.keys(ACCOUNTS)) {
     const paths = getStatePaths(acc);
-    const summary = readJson(paths.results, { pass: 0, fail: 0, total: 0 });
+    const maturity = readJson(paths.maturity, null);
+    const phaseResults = Object.values(maturity?.phases ?? {});
+    const summary = phaseResults.length
+      ? phaseResults.reduce((total, phase) => ({
+        pass: total.pass + Number(phase.pass ?? 0),
+        fail: total.fail + Number(phase.fail ?? 0),
+        total: total.total + Number(phase.total ?? 0),
+      }), { pass: 0, fail: 0, total: 0 })
+      : readJson(paths.results, { pass: 0, fail: 0, total: 0 });
     console.log(`${acc.padEnd(9)} | ${String(summary.pass).padEnd(4)} | ${String(summary.fail).padEnd(4)} | ${summary.total}`);
   }
 }
@@ -1026,6 +1130,16 @@ async function cmdMature() {
   console.log(`║     Mode: ${FLAGS.mode.padEnd(42)}║`);
   console.log('╚══════════════════════════════════════════════════════╝');
 
+  const maturityPath = getStatePaths(FLAGS.target).maturity;
+  writeJson(getStatePaths(FLAGS.target).state, { runs: [], chains: {} });
+  writeJson(maturityPath, {
+    run_tag: RUN_TAG,
+    target: FLAGS.target,
+    started_at: new Date().toISOString(),
+    phases: {},
+  });
+
+  let allPhasesPassed = true;
   for (const phaseId of Object.keys(PHASES)) {
     const phase = PHASES[phaseId];
     console.log(`\n${'═'.repeat(60)}`);
@@ -1035,7 +1149,7 @@ async function cmdMature() {
     FLAGS.phase = phaseId;
     await cmdSetup();
     
-    const tests = phase.tests || phase.replayTests || [];
+    const tests = [...(phase.tests ?? []), ...(phase.replayTests ?? [])];
     if (!tests.length) {
       console.log('  No test scenarios for this phase.');
       continue;
@@ -1043,12 +1157,21 @@ async function cmdMature() {
     FLAGS.group = tests.join(',');
     await cmdFire();
     await cmdWait();
-    await cmdVerify();
+    const phasePassed = await cmdVerify();
+    allPhasesPassed = allPhasesPassed && phasePassed;
 
     // Snapshot metrics for this phase
-    const results = readJson(rt_paths_for(FLAGS.target).results, null);
+    const results = readJson(getStatePaths(FLAGS.target).results, null);
     if (results) {
       console.log(`\n  Phase ${phaseId} Summary: ${results.pass}/${results.total} PASS, ${results.fail} FAIL`);
+      const maturity = readJson(maturityPath, { run_tag: RUN_TAG, target: FLAGS.target, phases: {} });
+      maturity.phases[phaseId] = {
+        label: phase.label,
+        snapshot_metrics: phase.snapshotMetrics ?? [],
+        ...results,
+      };
+      maturity.updated_at = new Date().toISOString();
+      writeJson(maturityPath, maturity);
     }
 
     if (FLAGS.pause && phaseId !== String(Math.max(...Object.keys(PHASES).map(Number)))) {
@@ -1061,18 +1184,16 @@ async function cmdMature() {
   console.log('\n╔══════════════════════════════════════════════════════╗');
   console.log('║     Maturity Progression Complete                    ║');
   console.log('╚══════════════════════════════════════════════════════╝');
-}
-
-function rt_paths_for(target) {
-  return getStatePaths(target);
+  if (!allPhasesPassed) throw new Error('Maturity progression completed with failed assertions.');
 }
 
 async function cmdFull() {
   await cmdFire();
   await cmdWait();
-  await cmdVerify();
+  const passed = await cmdVerify();
   await cmdApiTest();
   await cmdScorecard();
+  if (!passed) throw new Error('Full stress run completed with failed assertions.');
 }
 
 function usage() {
@@ -1118,7 +1239,9 @@ try {
   else if (command === "inspect") await cmdInspect();
   else if (command === "fire") await cmdFire();
   else if (command === "wait") await cmdWait();
-  else if (command === "verify") await cmdVerify();
+  else if (command === "verify") {
+    if (!await cmdVerify()) process.exitCode = 1;
+  }
   else if (command === "chain") await cmdChain();
   else if (command === "api-test") await cmdApiTest();
   else if (command === "scorecard") await cmdScorecard();
