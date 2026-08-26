@@ -1,16 +1,12 @@
 // Daily digest: emails each user a morning summary of the last 24 hours.
 // Triggered by pg_cron; auth via x-agent-secret matching ia_agent_cron_secret.
+// Daily digest: emails each user a morning summary of the last 24 hours.
+// Triggered by pg_cron; auth via x-agent-secret matching ia_agent_cron_secret.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { encodeHeaderSubject } from "../_shared/mime.ts";
 import { localScheduleWindow } from "../_shared/policy.ts";
-
-let CFG: Record<string, string> = {};
-
-function b64urlEncode(s: string): string {
-  return btoa(unescape(encodeURIComponent(s)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 let CFG: Record<string, string> = {};
 
