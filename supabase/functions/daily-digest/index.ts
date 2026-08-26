@@ -11,6 +11,12 @@ let CFG: Record<string, string> = {};
 function b64urlEncode(s: string): string {
   return btoa(unescape(encodeURIComponent(s)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+let CFG: Record<string, string> = {};
+
+function b64urlEncode(s: string): string {
+  return btoa(unescape(encodeURIComponent(s)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<string> {
@@ -29,9 +35,9 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
 }
 
 const CAT_LABELS: Record<string, string> = {
-  urgent: "⚡ URGENT",
-  action_needed: "✋ ACTION NEEDED",
-  fyi: "📋 FYI",
+  urgent: "URGENT",
+  action_needed: "ACTION NEEDED",
+  fyi: "FYI",
 };
 
 Deno.serve(async (req: Request) => {
@@ -123,11 +129,11 @@ Deno.serve(async (req: Request) => {
         lines.push("");
       }
       const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
-      if (noise) lines.push(`🗑 ${noise} newsletters & pitches filtered out for you.`);
+      if (noise) lines.push(`${noise} newsletters & pitches filtered out for you.`);
       lines.push("", "— CaughtUp, your inbox agent");
-      const subject = needsYou
-        ? `⚡ ${needsYou} need you, ${handled} handled — your CaughtUp digest`
-        : `🎉 All caught up — ${handled} handled for you`;
+      const subject = needsYou
+        ? `${needsYou} need you, ${handled} handled — your CaughtUp digest`
+        : `All caught up — ${handled} handled for you`;
 
       const token = await refreshAccessToken(account.refresh_token);
       const raw = b64urlEncode([

@@ -48,6 +48,7 @@ Summarize the key point in one sentence. For these enabled categories (${draftCa
 
 Hard draft rules:
 - Never state prices, availability, turnaround, acceptance, or rejection.
+- Never use emojis or non-standard symbols in draft replies. Keep formatting professional and standard.
 - Gather information only; never commit the user.
 - If samples were requested, say relevant samples can be shared. The server alone decides whether files are attached.
 - Sign off with ${profile.signoff || "Best"}, followed by ${profile.display_name || "the user's name"}.
