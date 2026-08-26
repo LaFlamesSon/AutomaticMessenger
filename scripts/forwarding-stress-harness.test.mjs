@@ -98,6 +98,18 @@ test('resume appends scenarios after an interrupted fire command', () => {
   }
 });
 
+test('maturity dry-run can resume from a later phase', () => {
+  const runTag = `FWD-STRESS-UNIT-MATURE-${process.pid}`;
+  const result = runHarness([
+    '--target=burner', '--mode=inject', '--dry-run', '--phase=2', 'mature',
+  ], runTag);
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /Phase 0: Bare account/);
+  assert.doesNotMatch(result.stdout, /Phase 1: Voice configured/);
+  assert.match(result.stdout, /Phase 2: Kits \+ rate profiles added/);
+  assert.match(result.stdout, /Phase 4: Maturity checkpoint/);
+});
+
 test('reset dry-run includes archive observations and refuses aged accounts by default', () => {
   const fresh = runHarness(['--target=burner', '--dry-run', 'reset']);
   assert.equal(fresh.status, 0, fresh.stderr);

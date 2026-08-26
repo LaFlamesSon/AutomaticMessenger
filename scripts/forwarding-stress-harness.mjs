@@ -629,6 +629,10 @@ async function cmdSetup() {
 
   if (phaseFixtures.includes('media_kits')) {
     console.log('  Creating media kits with rate profiles...');
+    const currentDefaults = await rest('ia_media_kits', {
+      select: 'id,label', user_id: `eq.${rt.user.id}`, is_default: 'eq.true', status: 'eq.active', limit: '1',
+    });
+    const existingDefaultLabel = currentDefaults[0]?.label ?? null;
     const kits = [
       { label: '[HARNESS] Skincare Kit', best_for: 'Skincare, beauty, serum, moisturizer collaborations',
         sender_domains: ['lumaderm.com'], keywords: ['skincare', 'serum', 'moisturizer', 'beauty'],
@@ -638,7 +642,7 @@ async function cmdSetup() {
         is_default: false, auto_attach: true },
       { label: '[HARNESS] Fallback Kit', best_for: 'General creator portfolio and collaboration overview',
         sender_domains: [], keywords: [],
-        is_default: true, auto_attach: true },
+        is_default: existingDefaultLabel == null || existingDefaultLabel === '[HARNESS] Fallback Kit', auto_attach: true },
     ];
     for (const kit of kits) {
       const slug = kit.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -1154,16 +1158,25 @@ async function cmdMature() {
   console.log('╚══════════════════════════════════════════════════════╝');
 
   const maturityPath = getStatePaths(FLAGS.target).maturity;
-  writeJson(getStatePaths(FLAGS.target).state, { runs: [], chains: {} });
-  writeJson(maturityPath, {
+  const requestedStartPhase = FLAGS.phase === '' ? 0 : Number(FLAGS.phase);
+  if (!Number.isInteger(requestedStartPhase) || !PHASES[requestedStartPhase]) {
+    throw new Error(`Invalid maturity start phase: ${FLAGS.phase}`);
+  }
+  const priorMaturity = readJson(maturityPath, null);
+  const canResume = requestedStartPhase > 0 && priorMaturity?.run_tag === RUN_TAG && priorMaturity?.target === FLAGS.target;
+  if (requestedStartPhase === 0) {
+    writeJson(getStatePaths(FLAGS.target).state, { runs: [], chains: {} });
+  }
+  const maturity = canResume ? priorMaturity : {
     run_tag: RUN_TAG,
     target: FLAGS.target,
     started_at: new Date().toISOString(),
     phases: {},
-  });
+  };
+  writeJson(maturityPath, maturity);
 
-  let allPhasesPassed = true;
-  for (const phaseId of Object.keys(PHASES)) {
+  let allPhasesPassed = Object.values(maturity.phases ?? {}).every((phase) => Number(phase.fail ?? 0) === 0);
+  for (const phaseId of Object.keys(PHASES).filter((id) => Number(id) >= requestedStartPhase)) {
     const phase = PHASES[phaseId];
     console.log(`\n${'═'.repeat(60)}`);
     console.log(`Phase ${phaseId}: ${phase.label}`);
@@ -1239,7 +1252,7 @@ Commands:
 Flags:
   --target=ACCOUNT      Target account (yafet2132, burner, workspace) [default: yafet2132]
   --group=A,B,C         Filter which groups to fire
-  --phase=0             Phase to run for setup/mature
+  --phase=0             Phase to run for setup, or starting phase when resuming mature
   --mode=inject|hop     inject (default): direct Edge Function POST; hop: Gmail send
   --pause               Pause between maturity phases for UI observation
   --resume              Append fire results to current state after an interrupted run
