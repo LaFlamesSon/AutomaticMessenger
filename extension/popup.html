@@ -479,7 +479,10 @@
 
   <dialog id="sendDialog" aria-labelledby="sendDialogTitle">
     <form method="dialog" class="dialog-card">
-      <h2 id="sendDialogTitle">Send this reply?</h2>
+      <div class="dialog-header">
+        <h2 id="sendDialogTitle">Send this reply?</h2>
+        <button id="closeSendDialog" type="button" class="close-btn" aria-label="Close review dialog">&times;</button>
+      </div>
       <dl class="preview-meta">
         <div><dt>To</dt><dd id="previewRecipient"></dd></div>
         <div><dt>Cc</dt><dd id="previewCc"></dd></div>

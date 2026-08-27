@@ -1069,6 +1069,12 @@ $("cancelSend").addEventListener("click", () => {
   pendingSendCard = null;
 });
 
+$("closeSendDialog").addEventListener("click", () => {
+  pendingDraft = null;
+  pendingSendCard = null;
+  $("sendDialog").close();
+});
+
 function setGlobalStatus(message = "", kind = "") {
   const status = $("globalStatus");
   status.textContent = message;
