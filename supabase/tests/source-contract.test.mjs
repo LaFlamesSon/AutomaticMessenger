@@ -184,5 +184,6 @@ test("daily digest outgoing copy is ASCII-only and sanitizes sender subjects", a
   assert.doesNotMatch(copy, /[\u2012-\u2014\u2022\u00B7]/);
   assert.doesNotMatch(copy, /\\u26A1|\\uD83C|🎉|⚡/);
   assert.match(copy, /charset="US-ASCII"/);
-  assert.match(copy, /digest_subject_not_ascii/);
+  assert.match(copy, /Content-Transfer-Encoding: 7bit/);
+  assert.match(copy, /digest_rfc822_not_ascii/);
 });

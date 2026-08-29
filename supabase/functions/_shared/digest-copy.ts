@@ -1,4 +1,4 @@
-import { asciiEmailCopy, encodeHeaderSubject } from "./mime.ts";
+import { asciiEmailCopy, sanitizeHeader } from "./mime.ts";
 
 const ASCII_TEXT = /^[\x20-\x7E]*$/;
 const ASCII_BODY = /^[\x20-\x7E\r\n]*$/;
@@ -67,15 +67,19 @@ export function composeDigestCopy(input: {
 }
 
 export function buildDigestRfc822(input: { to: string; subject: string; body: string }): string {
-  const subject = encodeHeaderSubject(asciiEmailCopy(input.subject, 500));
+  const subject = sanitizeHeader(asciiEmailCopy(input.subject, 500), 500);
   const body = asciiEmailCopy(input.body);
   if (!ASCII_TEXT.test(subject) || subject.includes("=?UTF-8?")) throw new Error("digest_subject_not_ascii");
   assertAscii(body, "body");
-  return [
+  const rfc822 = [
     `To: ${asciiEmailCopy(input.to, 320)}`,
     `Subject: ${subject}`,
+    `MIME-Version: 1.0`,
     `Content-Type: text/plain; charset="US-ASCII"`,
+    `Content-Transfer-Encoding: 7bit`,
     "",
     body,
   ].join("\r\n");
+  if (!ASCII_BODY.test(rfc822)) throw new Error("digest_rfc822_not_ascii");
+  return rfc822;
 }

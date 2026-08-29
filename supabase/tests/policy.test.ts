@@ -422,8 +422,24 @@ test("digest MIME stays ASCII even when inbound rows contain emoji", () => {
 
   const mime = buildDigestRfc822({ to: "owner@example.com", subject: copy.subject, body: copy.body });
   assert.match(mime, /charset="US-ASCII"/);
+  assert.match(mime, /Content-Transfer-Encoding: 7bit/);
   assert.doesNotMatch(mime, /=\?UTF-8\?/);
   assert.doesNotMatch(mime, /[^\x20-\x7E\r\n]/);
+
+  const reportedCaughtUp = buildDigestRfc822({
+    to: "owner@example.com",
+    subject: "\uD83C\uDF89 All caught up \u2014 4 handled for you",
+    body: "hello",
+  });
+  const reportedNeedsYou = buildDigestRfc822({
+    to: "owner@example.com",
+    subject: "\u26A1 31 need you, 33 handled \u2014 your CaughtUp digest",
+    body: "hello",
+  });
+  assert.match(reportedCaughtUp, /Subject: All caught up - 4 handled for you/);
+  assert.match(reportedNeedsYou, /Subject: 31 need you, 33 handled - your CaughtUp digest/);
+  assert.doesNotMatch(reportedCaughtUp, /[^\x20-\x7E\r\n]/);
+  assert.doesNotMatch(reportedNeedsYou, /[^\x20-\x7E\r\n]/);
 });
 
 test("OAuth redirect allowlist is exact and fails closed", () => {
