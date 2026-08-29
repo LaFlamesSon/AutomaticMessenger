@@ -22,6 +22,7 @@ import {
   normalizedStringList,
   selectMediaKit,
 } from "../functions/_shared/policy.ts";
+import { buildDigestRfc822, composeDigestCopy } from "../functions/_shared/digest-copy.ts";
 import {
   asciiEmailCopy, parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
 } from "../functions/_shared/mime.ts";
@@ -389,6 +390,40 @@ test("ASCII email copy strips emoji and maps punctuation", () => {
   assert.equal(asciiEmailCopy("Brand \u2022 subject \u00B7 line"), "Brand - subject - line");
   assert.match(asciiEmailCopy("keep\r\nnewlines"), /^keep\r?\nnewlines$/);
   assert.equal(asciiEmailCopy("plain ASCII subject"), "plain ASCII subject");
+});
+
+test("digest MIME stays ASCII even when inbound rows contain emoji", () => {
+  const party = "\uD83C\uDF89";
+  const bolt = "\u26A1";
+  const copy = composeDigestCopy({
+    needsYou: 31,
+    handled: 33,
+    items: [
+      {
+        category: "urgent",
+        sender: `${party} Brand <brand@example.com>`,
+        subject: `${bolt} Deal \u2014 now`,
+        summary: "Need a reply \u2022 today",
+        draft_created: true,
+      },
+      { category: "fyi", sender: "News", subject: "Roundup", summary: "FYI only", auto_sent: false },
+      { category: "low_priority", sender: "List", subject: "Sale", summary: "noise" },
+    ],
+  });
+  assert.equal(copy.subject, "31 need you, 33 handled - your CaughtUp digest");
+  assert.equal(composeDigestCopy({ needsYou: 0, handled: 4, items: [] }).subject, "All caught up - 4 handled for you");
+  assert.match(copy.body, /URGENT/);
+  assert.match(copy.body, /1 newsletters & pitches filtered out for you/);
+  assert.doesNotMatch(copy.subject, /[^\x20-\x7E]/);
+  assert.doesNotMatch(copy.body, /[^\x20-\x7E\r\n]/);
+  assert.doesNotMatch(copy.body, new RegExp(party));
+  assert.doesNotMatch(copy.body, new RegExp(bolt));
+  assert.match(copy.body, /Brand - Deal - now \[draft ready\]/);
+
+  const mime = buildDigestRfc822({ to: "owner@example.com", subject: copy.subject, body: copy.body });
+  assert.match(mime, /charset="US-ASCII"/);
+  assert.doesNotMatch(mime, /=\?UTF-8\?/);
+  assert.doesNotMatch(mime, /[^\x20-\x7E\r\n]/);
 });
 
 test("OAuth redirect allowlist is exact and fails closed", () => {

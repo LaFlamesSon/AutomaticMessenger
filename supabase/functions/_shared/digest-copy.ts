@@ -1,0 +1,81 @@
+import { asciiEmailCopy, encodeHeaderSubject } from "./mime.ts";
+
+const ASCII_TEXT = /^[\x20-\x7E]*$/;
+const ASCII_BODY = /^[\x20-\x7E\r\n]*$/;
+
+const CATEGORY_LABELS: Record<string, string> = {
+  urgent: "URGENT",
+  action_needed: "ACTION NEEDED",
+  fyi: "FYI",
+};
+
+export interface DigestItem {
+  category?: string;
+  sender?: string;
+  subject?: string;
+  summary?: string;
+  auto_sent?: boolean;
+  draft_created?: boolean;
+}
+
+function assertAscii(value: string, kind: "subject" | "body"): string {
+  const ok = kind === "subject" ? ASCII_TEXT.test(value) : ASCII_BODY.test(value);
+  if (!ok) throw new Error(`digest_${kind}_not_ascii`);
+  return value;
+}
+
+export function composeDigestCopy(input: {
+  needsYou: number;
+  handled: number;
+  items: DigestItem[];
+}): { subject: string; body: string } {
+  const byCat: Record<string, DigestItem[]> = {};
+  for (const row of input.items) (byCat[String(row.category ?? "")] ??= []).push(row);
+
+  const lines: string[] = [
+    "Good morning! Here's what your inbox agent did in the last 24 hours.",
+    "",
+    `${input.needsYou} need you - ${input.handled} handled for you`,
+    "",
+  ];
+  for (const cat of ["urgent", "action_needed", "fyi"]) {
+    const items = byCat[cat];
+    if (!items?.length) continue;
+    lines.push(CATEGORY_LABELS[cat]);
+    for (const item of items) {
+      const status = item.auto_sent ? " [reply sent]" : item.draft_created ? " [draft ready]" : "";
+      const sender = asciiEmailCopy(String(item.sender ?? "").replace(/<.*>/, "")).trim();
+      const itemSubject = asciiEmailCopy(item.subject ?? "").trim();
+      const summary = asciiEmailCopy(item.summary ?? "").trim();
+      lines.push(`  - ${sender} - ${itemSubject}${status}`);
+      lines.push(`    ${summary}`);
+    }
+    lines.push("");
+  }
+  const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
+  if (noise) lines.push(`${noise} newsletters & pitches filtered out for you.`);
+  lines.push("", "- CaughtUp, your inbox agent");
+
+  const subject = asciiEmailCopy(input.needsYou
+    ? `${input.needsYou} need you, ${input.handled} handled - your CaughtUp digest`
+    : `All caught up - ${input.handled} handled for you`, 500);
+  const body = asciiEmailCopy(lines.join("\r\n"));
+  return {
+    subject: assertAscii(subject, "subject"),
+    body: assertAscii(body, "body"),
+  };
+}
+
+export function buildDigestRfc822(input: { to: string; subject: string; body: string }): string {
+  const subject = encodeHeaderSubject(asciiEmailCopy(input.subject, 500));
+  const body = asciiEmailCopy(input.body);
+  if (!ASCII_TEXT.test(subject) || subject.includes("=?UTF-8?")) throw new Error("digest_subject_not_ascii");
+  assertAscii(body, "body");
+  return [
+    `To: ${asciiEmailCopy(input.to, 320)}`,
+    `Subject: ${subject}`,
+    `Content-Type: text/plain; charset="US-ASCII"`,
+    "",
+    body,
+  ].join("\r\n");
+}
