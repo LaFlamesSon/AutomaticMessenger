@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "CaughtUp — AI Inbox Agent",
   "version": "0.7.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvYYp/9ye1crpaDYmT5+zHR51mi/gYN/iWzsITQ1wgnNnPmJ1p3A9CR8R4IZfNktBZV6RNHATQbu+OlloG4uHpBSuwqFrCKqJ+xRiukW1UcpKmfckcQCitQtk5RjUgA2RvvWdNLz3zCsBleYMG64rqx/ZA1flZ7io0QYFPi+raOf1Pir+I3iW2ZyNAz4L/ZmKLyYWuNiFx9XiWqNBeDF6yxL4ZUtcXDUeZj9PmDzkIvvt/8j1ZFpTM9OEff65G7UktMPu1I/LN0O186aW6QGHF3UX9RxRCdDeiLYPxDmvoRc5ZlsofWlNc7xpBgeedhNWo3VZBgb/N78ENiyHgDS16QIDAQAB",
   "description": "Automatically process forwarded Gmail, review safe replies, and send through your Gmail account.",
   "action": {
     "default_popup": "popup.html",
