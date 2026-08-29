@@ -5,7 +5,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { encodeHeaderSubject } from "../_shared/mime.ts";
+import { asciiEmailCopy, encodeHeaderSubject } from "../_shared/mime.ts";
 import { localScheduleWindow } from "../_shared/policy.ts";
 
 let CFG: Record<string, string> = {};
@@ -110,7 +110,7 @@ Deno.serve(async (req: Request) => {
       const lines: string[] = [
         `Good morning! Here's what your inbox agent did in the last 24 hours.`,
         ``,
-        `${needsYou} need you · ${handled} handled for you`,
+        `${needsYou} need you - ${handled} handled for you`,
         ``,
       ];
       for (const cat of ["urgent", "action_needed", "fyi"]) {
@@ -119,25 +119,25 @@ Deno.serve(async (req: Request) => {
         lines.push(CAT_LABELS[cat]);
         for (const e of items) {
           const status = e.auto_sent ? " [reply sent]" : e.draft_created ? " [draft ready]" : "";
-          lines.push(`  • ${e.sender.replace(/<.*>/, "").trim()} — ${e.subject}${status}`);
+          lines.push(`  - ${e.sender.replace(/<.*>/, "").trim()} - ${e.subject}${status}`);
           lines.push(`    ${e.summary}`);
         }
         lines.push("");
       }
       const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
       if (noise) lines.push(`${noise} newsletters & pitches filtered out for you.`);
-      lines.push("", "— CaughtUp, your inbox agent");
-      const subject = needsYou
-        ? `${needsYou} need you, ${handled} handled — your CaughtUp digest`
-        : `All caught up — ${handled} handled for you`;
+      lines.push("", "- CaughtUp, your inbox agent");
+      const subject = asciiEmailCopy(needsYou
+        ? `${needsYou} need you, ${handled} handled - your CaughtUp digest`
+        : `All caught up - ${handled} handled for you`, 500);
 
       const token = await refreshAccessToken(account.refresh_token);
       const raw = b64urlEncode([
         `To: ${account.gmail_address}`,
         `Subject: ${encodeHeaderSubject(subject)}`,
-        `Content-Type: text/plain; charset="UTF-8"`,
+        `Content-Type: text/plain; charset="US-ASCII"`,
         "",
-        lines.join("\r\n"),
+        asciiEmailCopy(lines.join("\r\n")),
       ].join("\r\n"));
       const { data: sendingClaim, error: sendingClaimError } = await supabase.from("ia_job_claims")
         .update({ status: "sending" }).eq("id", claim).eq("status", "claimed")

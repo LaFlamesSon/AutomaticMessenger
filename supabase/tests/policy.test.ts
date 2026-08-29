@@ -23,7 +23,7 @@ import {
   selectMediaKit,
 } from "../functions/_shared/policy.ts";
 import {
-  parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
+  asciiEmailCopy, parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
 } from "../functions/_shared/mime.ts";
 import { allowedChromeRedirect } from "../functions/_shared/oauth.ts";
 import { hasEarlierOwnerSent, hasLaterOwnerAction, isOwnerAction } from "../functions/_shared/gmail.ts";
@@ -380,6 +380,15 @@ test("MIME input helpers reject header injection and invalid recipients", () => 
   assert.equal(sanitizeHeader("Hello\r\nBcc: attacker@example.com"), "Hello Bcc: attacker@example.com");
   assert.equal(sanitizeMessageIds("<ok@example.com>\r\nBcc: bad"), "<ok@example.com>");
   assert.equal(quoteFilename("..\\evil\r\nname.pdf"), "_evil name.pdf");
+});
+
+test("ASCII email copy strips emoji and maps punctuation", () => {
+  assert.equal(asciiEmailCopy("All caught up \u2014 4 handled for you"), "All caught up - 4 handled for you");
+  assert.equal(asciiEmailCopy("\u26A1 31 need you, 33 handled \u2014 your CaughtUp digest"), " 31 need you, 33 handled - your CaughtUp digest");
+  assert.equal(asciiEmailCopy("\uD83C\uDF89 All caught up"), " All caught up");
+  assert.equal(asciiEmailCopy("Brand \u2022 subject \u00B7 line"), "Brand - subject - line");
+  assert.match(asciiEmailCopy("keep\r\nnewlines"), /^keep\r?\nnewlines$/);
+  assert.equal(asciiEmailCopy("plain ASCII subject"), "plain ASCII subject");
 });
 
 test("OAuth redirect allowlist is exact and fails closed", () => {

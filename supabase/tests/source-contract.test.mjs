@@ -173,3 +173,13 @@ test("legacy media-kit seeder is inert", async () => {
   assert.match(seeder, /status:\s*410/);
   assert.doesNotMatch(seeder, /from\("ia_users"\)|raw\.githubusercontent|storage\.from/);
 });
+
+test("daily digest outgoing copy is ASCII-only and sanitizes sender subjects", async () => {
+  const digest = await read("functions/daily-digest/index.ts");
+  assert.match(digest, /asciiEmailCopy/);
+  assert.match(digest, /charset="US-ASCII"/);
+  assert.doesNotMatch(digest, /[\u2012-\u2014\u2022\u00B7]/);
+  assert.doesNotMatch(digest, /\\u26A1|\\uD83C|🎉|⚡/);
+  const mime = await read("functions/_shared/mime.ts");
+  assert.match(mime, /export function asciiEmailCopy/);
+});
