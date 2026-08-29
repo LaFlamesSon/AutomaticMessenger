@@ -104,7 +104,8 @@ async function launchAuthFlow(url) {
     chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
       const runtimeError = chrome.runtime.lastError;
       if (runtimeError || !redirectUrl) {
-        reject(new Core.ApiError(`${flow === "tiktok" ? "TikTok" : "Google"} connection was canceled or could not finish.`, 0, "oauth_canceled"));
+        const detail = runtimeError?.message ? ` (${runtimeError.message})` : "";
+        reject(new Core.ApiError(`${flow === "tiktok" ? "TikTok" : "Google"} connection did not finish${detail}.`, 0, "oauth_canceled"));
         return;
       }
       resolve(redirectUrl);
@@ -286,10 +287,11 @@ async function connectGoogle() {
 
     await beginForwardingSetup(profile);
   } catch (error) {
-    setProgress(100, Core.safeErrorMessage(error), "error");
+    const errorMsg = error instanceof Core.ApiError ? error.message : Core.safeErrorMessage(error);
+    setProgress(100, errorMsg, "error");
     $("statusMark").textContent = "!";
     $("title").textContent = "Connection needs attention";
-    $("message").textContent = "No email was sent. You can safely retry the connection.";
+    $("message").textContent = errorMsg;
     $("retry").classList.remove("hidden");
   } finally {
     running = false;
