@@ -1,19 +1,12 @@
 // Daily digest: emails each user a morning summary of the last 24 hours.
 // Triggered by pg_cron; auth via x-agent-secret matching ia_agent_cron_secret.
-// Daily digest: emails each user a morning summary of the last 24 hours.
-// Triggered by pg_cron; auth via x-agent-secret matching ia_agent_cron_secret.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { buildDigestRfc822, composeDigestCopy } from "../_shared/digest-copy.ts";
+import { buildDigestRfc822, composeDigestCopy, encodeDigestRaw } from "../_shared/digest-copy.ts";
 import { localScheduleWindow } from "../_shared/policy.ts";
 
 let CFG: Record<string, string> = {};
-
-function b64urlEncode(s: string): string {
-  return btoa(unescape(encodeURIComponent(s)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
 
 async function refreshAccessToken(refreshToken: string): Promise<string> {
   const resp = await fetch("https://oauth2.googleapis.com/token", {
@@ -103,7 +96,7 @@ Deno.serve(async (req: Request) => {
       const { subject, body } = composeDigestCopy({ needsYou, handled, items: rows });
 
       const token = await refreshAccessToken(account.refresh_token);
-      const raw = b64urlEncode(buildDigestRfc822({
+      const raw = encodeDigestRaw(buildDigestRfc822({
         to: account.gmail_address,
         subject,
         body,

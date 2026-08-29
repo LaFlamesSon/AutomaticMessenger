@@ -179,6 +179,8 @@ test("daily digest outgoing copy is ASCII-only and sanitizes sender subjects", a
   const copy = await read("functions/_shared/digest-copy.ts");
   assert.match(digest, /composeDigestCopy/);
   assert.match(digest, /buildDigestRfc822/);
+  assert.match(digest, /encodeDigestRaw/);
+  assert.doesNotMatch(digest, /encodeURIComponent|encodeHeaderSubject|unescape\(/);
   assert.doesNotMatch(digest, /[\u2012-\u2014\u2022\u00B7]/);
   assert.doesNotMatch(digest, /\\u26A1|\\uD83C|🎉|⚡/);
   assert.doesNotMatch(copy, /[\u2012-\u2014\u2022\u00B7]/);
@@ -186,4 +188,8 @@ test("daily digest outgoing copy is ASCII-only and sanitizes sender subjects", a
   assert.match(copy, /charset="US-ASCII"/);
   assert.match(copy, /Content-Transfer-Encoding: 7bit/);
   assert.match(copy, /digest_rfc822_not_ascii/);
+  for (const path of ["functions/daily-digest/index.ts", "functions/_shared/digest-copy.ts"]) {
+    const bytes = await readFile(new URL(path, root));
+    assert.equal([...bytes].filter((byte) => byte > 127).length, 0, path);
+  }
 });

@@ -66,13 +66,23 @@ export function composeDigestCopy(input: {
   };
 }
 
+function assertRfc822Ascii(rfc822: string): string {
+  for (let i = 0; i < rfc822.length; i++) {
+    const code = rfc822.charCodeAt(i);
+    if (code > 0x7e || (code < 0x20 && code !== 0x0a && code !== 0x0d)) {
+      throw new Error("digest_rfc822_not_ascii");
+    }
+  }
+  return rfc822;
+}
+
 export function buildDigestRfc822(input: { to: string; subject: string; body: string }): string {
   const subject = sanitizeHeader(asciiEmailCopy(input.subject, 500), 500);
   const body = asciiEmailCopy(input.body);
   if (!ASCII_TEXT.test(subject) || subject.includes("=?UTF-8?")) throw new Error("digest_subject_not_ascii");
   assertAscii(body, "body");
   const rfc822 = [
-    `To: ${asciiEmailCopy(input.to, 320)}`,
+    `To: ${sanitizeHeader(asciiEmailCopy(input.to, 320), 320)}`,
     `Subject: ${subject}`,
     `MIME-Version: 1.0`,
     `Content-Type: text/plain; charset="US-ASCII"`,
@@ -80,6 +90,11 @@ export function buildDigestRfc822(input: { to: string; subject: string; body: st
     "",
     body,
   ].join("\r\n");
-  if (!ASCII_BODY.test(rfc822)) throw new Error("digest_rfc822_not_ascii");
-  return rfc822;
+  return assertRfc822Ascii(rfc822);
+}
+
+/** Base64url for Gmail `raw`. Rejects non-ASCII instead of UTF-8 encoding it. */
+export function encodeDigestRaw(rfc822: string): string {
+  assertRfc822Ascii(rfc822);
+  return btoa(rfc822).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }

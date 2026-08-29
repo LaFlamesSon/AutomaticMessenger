@@ -22,7 +22,7 @@ import {
   normalizedStringList,
   selectMediaKit,
 } from "../functions/_shared/policy.ts";
-import { buildDigestRfc822, composeDigestCopy } from "../functions/_shared/digest-copy.ts";
+import { buildDigestRfc822, composeDigestCopy, encodeDigestRaw } from "../functions/_shared/digest-copy.ts";
 import {
   asciiEmailCopy, parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
 } from "../functions/_shared/mime.ts";
@@ -385,9 +385,10 @@ test("MIME input helpers reject header injection and invalid recipients", () => 
 
 test("ASCII email copy strips emoji and maps punctuation", () => {
   assert.equal(asciiEmailCopy("All caught up \u2014 4 handled for you"), "All caught up - 4 handled for you");
-  assert.equal(asciiEmailCopy("\u26A1 31 need you, 33 handled \u2014 your CaughtUp digest"), " 31 need you, 33 handled - your CaughtUp digest");
-  assert.equal(asciiEmailCopy("\uD83C\uDF89 All caught up"), " All caught up");
+  assert.equal(asciiEmailCopy("\u26A1 31 need you, 33 handled \u2014 your CaughtUp digest"), "31 need you, 33 handled - your CaughtUp digest");
+  assert.equal(asciiEmailCopy("\uD83C\uDF89 All caught up"), "All caught up");
   assert.equal(asciiEmailCopy("Brand \u2022 subject \u00B7 line"), "Brand - subject - line");
+  assert.equal(asciiEmailCopy("word\u2011word"), "word-word");
   assert.match(asciiEmailCopy("keep\r\nnewlines"), /^keep\r?\nnewlines$/);
   assert.equal(asciiEmailCopy("plain ASCII subject"), "plain ASCII subject");
 });
@@ -440,6 +441,13 @@ test("digest MIME stays ASCII even when inbound rows contain emoji", () => {
   assert.match(reportedNeedsYou, /Subject: 31 need you, 33 handled - your CaughtUp digest/);
   assert.doesNotMatch(reportedCaughtUp, /[^\x20-\x7E\r\n]/);
   assert.doesNotMatch(reportedNeedsYou, /[^\x20-\x7E\r\n]/);
+
+  const raw = encodeDigestRaw(mime);
+  const padded = raw.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (raw.length % 4)) % 4);
+  const decoded = atob(padded);
+  assert.doesNotMatch(decoded, /[^\x20-\x7E\r\n]/);
+  assert.match(decoded, /Subject: 31 need you, 33 handled - your CaughtUp digest/);
+  assert.throws(() => encodeDigestRaw("Subject: All caught up \u2014 4 handled\r\n\r\nhello"), /digest_rfc822_not_ascii/);
 });
 
 test("OAuth redirect allowlist is exact and fails closed", () => {
