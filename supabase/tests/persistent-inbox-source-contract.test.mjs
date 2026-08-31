@@ -83,19 +83,29 @@ test("memory, export, thread, and verified deletion APIs are owner scoped", asyn
   assert.match(api, /from\("ia_users"\)\.delete\(\)[\s\S]+\.eq\("id", user\.id\)/);
 });
 
-test("public policies disclose persistent normalized storage and distinct user controls", async () => {
-  const [privacy, security, support] = await Promise.all([
+test("public policies disclose persistent storage, send-only Google access, and Limited Use", async () => {
+  const [privacy, security, support, terms] = await Promise.all([
     read("../web/privacy/index.html"),
     read("../web/security/index.html"),
     read("../web/support/index.html"),
+    read("../web/terms/index.html"),
   ]);
   assert.match(privacy, /Normalized full message bodies/);
   assert.match(privacy, /retained until the user deletes CaughtUp-held data/);
   assert.match(privacy, /language-model provider/);
   assert.match(privacy, /Raw MIME and forwarded attachment files are not retained/);
   assert.match(privacy, /review evidence for learned patterns/);
+  assert.match(privacy, /Google API Services User Data Policy/);
+  assert.match(privacy, /Google Workspace User Data and Developer Policy/);
+  assert.match(privacy, /Chrome Web Store User Data Policy, including the Limited Use requirements/);
+  assert.match(privacy, /<code>gmail\.send<\/code> only/);
+  assert.doesNotMatch(privacy, /authorized Gmail message and thread content|triage eligible inbox mail|apply labels/i);
   assert.match(security, /Email and derived observations remain untrusted context/);
   assert.match(security, /service-role-only, row-level-security-protected tables linked to one owner/);
+  assert.match(security, /does not use Google OAuth to read inbox messages/);
+  assert.match(security, /generalized AI-model training/);
   assert.match(support, /Settings → Agent memory/);
   assert.match(support, /Gmail forwarding must be removed separately|remove the Gmail forwarding rule separately/);
+  assert.match(support, /does not receive inbox message content through the Gmail API/);
+  assert.match(terms, /Google and Chrome Limited Use requirements/);
 });

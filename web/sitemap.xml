@@ -2,7 +2,10 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://getcaughtup.io/</loc></url>
   <url><loc>https://getcaughtup.io/privacy/</loc></url>
+  <url><loc>https://getcaughtup.io/privacy-choices/</loc></url>
+  <url><loc>https://getcaughtup.io/notice-at-collection/</loc></url>
   <url><loc>https://getcaughtup.io/terms/</loc></url>
   <url><loc>https://getcaughtup.io/security/</loc></url>
   <url><loc>https://getcaughtup.io/support/</loc></url>
+  <url><loc>https://getcaughtup.io/billing/</loc></url>
 </urlset>

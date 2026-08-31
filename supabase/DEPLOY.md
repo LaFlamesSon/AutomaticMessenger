@@ -18,6 +18,23 @@ the Supabase Auth redirect allowlist. Google OAuth must authorize the deployed
 
 ## Safe deployment sequence
 
+### Subscription launch gate
+
+Paid enrollment is disabled unless `ia_billing_checkout_enabled` is exactly
+`true`. Before changing that value, install and verify these Vault entries in
+the same environment: `ia_stripe_secret_key`, `ia_stripe_webhook_secret`,
+`ia_stripe_livemode`, `ia_stripe_price_pro_monthly`, and
+`ia_billing_return_url`. The return URL must be an HTTPS URL on
+`getcaughtup.io`; use `https://getcaughtup.io/billing/`. An optional
+`ia_stripe_trial_days` must be an integer from 1 through 30.
+
+In Stripe, configure the Customer Portal to allow direct cancellation and
+payment-method updates. Register the deployed `stripe-webhook` URL for the
+event types named in that function, and configure Stripe's applicable trial
+and renewal reminder emails before enabling checkout. Test-mode and live-mode
+Vault values must never be mixed. A successful redirect is not proof of
+payment; only a valid, mode-matched webhook updates entitlement.
+
 1. Back up the target database and capture currently deployed function versions.
 2. Run the local gates:
    `node --test supabase/tests/policy.test.ts supabase/tests/source-contract.test.mjs`,

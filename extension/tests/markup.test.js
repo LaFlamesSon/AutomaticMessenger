@@ -168,6 +168,7 @@ test("client targets the audited send-only API actions", () => {
     "forwarding_setup_get", "forwarding_setup_start", "forwarding_setup_activate", "forwarding_route_probe", "forwarding_setup_disable",
     "forwarding_test_send", "forwarded_draft_get", "forwarded_draft_update", "forwarded_send",
     "memory_get", "memory_set_status", "memory_reset", "archive_export", "caughtup_data_delete",
+    "billing_status", "billing_checkout_create", "billing_portal_create",
   ].forEach((action) => assert.ok(allScripts.includes(`"${action}"`), `missing ${action}`));
   assert.doesNotMatch(allScripts, /"(?:draft_get|draft_update|send_draft|sweep|opportunity_draft_get|opportunity_send|negotiation_test_draft_create)"/);
 });

@@ -64,8 +64,100 @@ export function explicitStylePreference(message: string): string | null {
   return normalized;
 }
 
+const FIRST_PERSON_CRISIS = /\b(?:i\s+(?:want|plan|intend|am going|might|may)\s+to\s+(?:die|kill|hurt|harm)\s+myself|i(?:'m|\s+am)\s+suicidal|i\s+want\s+to\s+die|i\s+do\s+not\s+want\s+to\s+(?:live|be alive)|i\s+cannot\s+go\s+on|end\s+my\s+life|take\s+my\s+own\s+life)\b/i;
+
+export function crisisSafetyResponse(message: string): string | null {
+  const normalized = String(message ?? "").trim().replace(/\s+/g, " ").slice(0, 4_000);
+  if (!FIRST_PERSON_CRISIS.test(normalized)) return null;
+  return "I'm sorry you're going through this. CaughtUp is an inbox assistant and cannot provide crisis care. " +
+    "If you might act now, have a plan, or are in immediate physical danger, call your local emergency number now " +
+    "(911 in the U.S. or Canada) or go to the nearest emergency department. In the U.S. or Canada, call or text 988 " +
+    "to reach a trained crisis counselor. If you are elsewhere, contact your local crisis line. Please also move away " +
+    "from anything you could use to hurt yourself and contact someone you trust who can stay with you.";
+}
+
 export function draftSafetyViolations(draft: string): string[] {
   return HARD_DRAFT_PATTERNS.filter(([, pattern]) => pattern.test(draft)).map(([name]) => name);
+}
+
+const EMOJI_SEQUENCE =
+  /\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E|\u200D\p{Extended_Pictographic})*|\p{Emoji_Presentation}|\p{Regional_Indicator}{2}|[\u200D\uFE0F\u20E3\u{E0020}-\u{E007F}]/gu;
+
+export function stripDraftEmojis(draft: string): string {
+  return draft
+    .replace(EMOJI_SEQUENCE, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/ {2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const INBOUND_SUBJECT_PREFIX = /^(?:(?:re|fwd|fw)\s*:\s*)+/i;
+const CU_SUBJECT_TAG = /\[CU-[^\]]+\]/gi;
+const UNSAFE_PROPOSAL_ANCHOR =
+  /(?:\$|€|£)\s?\d|https?:\/\/|\bwww\.|\b(?:ignore|bypass|override|system prompt|auto[- ]?send|password|credential|secret)\b/i;
+const NAMED_PLATFORMS = [
+  "tiktok", "instagram", "youtube", "linkedin", "facebook", "twitch", "pinterest", "snapchat",
+];
+const DELIVERABLE_ANCHOR = /\b(\d{1,2})\s+(videos?|posts?|reels?|stories|shorts?|livestreams?|photos?)\b/gi;
+
+export interface InboundProposalContext {
+  subject?: string;
+  body?: string;
+}
+
+function cleanedInboundSubject(subject: string): string | null {
+  let value = stripDraftEmojis(String(subject ?? ""))
+    .replace(CU_SUBJECT_TAG, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  while (INBOUND_SUBJECT_PREFIX.test(value)) {
+    value = value.replace(INBOUND_SUBJECT_PREFIX, "").trim();
+  }
+  value = value.slice(0, 80).trim();
+  if (value.length < 6 || UNSAFE_PROPOSAL_ANCHOR.test(value)) return null;
+  if (![...relevanceTokens(value)].some((token) => token.length >= 4)) return null;
+  return value;
+}
+
+export function extractProposalAnchors(subject: string, body: string): string[] {
+  const anchors: string[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string) => {
+    const value = stripDraftEmojis(raw).replace(/\s+/g, " ").trim().slice(0, 80);
+    if (value.length < 3 || UNSAFE_PROPOSAL_ANCHOR.test(value)) return;
+    const key = value.toLocaleLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    anchors.push(value);
+  };
+  const subjectAnchor = cleanedInboundSubject(subject);
+  if (subjectAnchor) add(subjectAnchor);
+  const text = `${subject}\n${body}`.slice(0, 8_000);
+  for (const platform of NAMED_PLATFORMS) {
+    if (new RegExp(`\\b${platform}\\b`, "i").test(text)) add(platform);
+  }
+  for (const match of text.matchAll(DELIVERABLE_ANCHOR)) {
+    add(`${match[1]} ${match[2].toLocaleLowerCase()}`);
+  }
+  return anchors.slice(0, 4);
+}
+
+export function draftReferencesProposal(draft: string, subject: string, body: string): boolean {
+  const anchors = extractProposalAnchors(subject, body);
+  if (!anchors.length) return true;
+  const haystack = stripDraftEmojis(draft).toLocaleLowerCase();
+  return anchors.some((anchor) => {
+    const lower = anchor.toLocaleLowerCase();
+    if (haystack.includes(lower)) return true;
+    const words = lower.match(/[\p{L}\p{N}]+/gu) ?? [];
+    return words.some((word) => word.length >= 4 && includesTerm(haystack, word));
+  });
+}
+
+function inboundContextText(inbound?: InboundProposalContext): { subject: string; body: string } {
+  return { subject: String(inbound?.subject ?? ""), body: String(inbound?.body ?? "") };
 }
 
 const PORTFOLIO_NOUN = String.raw`(?:media\s+kit|portfolio|work\s+(?:samples?|examples?)|relevant\s+samples?|samples?|examples?|example\s+(?:images?|work)|case\s+stud(?:y|ies))`;
@@ -98,19 +190,33 @@ export function collaborationMediaKitRelevant(subject: string, body: string): bo
   return legitimateInquiryFallbackAllowed(subject, body) && COLLABORATION_SIGNAL.test(text);
 }
 
-export function safeNegotiationDraft(identity: DraftIdentity): string {
+export function safeNegotiationDraft(identity: DraftIdentity, inbound?: InboundProposalContext): string {
+  const { subject, body } = inboundContextText(inbound);
+  const about = extractProposalAnchors(subject, body)[0];
+  const opener = about
+    ? `Thanks for sending the terms on ${about}.`
+    : "Thanks for sending the terms.";
   return enforceConfiguredSignoff(
-    "Thanks for sending the terms. Could you confirm the timeline and any usage or exclusivity expectations so I can review the full scope?",
+    `${opener} Could you confirm the timeline and any usage or exclusivity expectations so I can review the full scope?`,
     identity,
   );
 }
 
-export function safeInformationDraft(identity: DraftIdentity, wantsPortfolio = false): string {
+export function safeInformationDraft(
+  identity: DraftIdentity,
+  wantsPortfolio = false,
+  inbound?: InboundProposalContext,
+): string {
+  const { subject, body } = inboundContextText(inbound);
+  const anchors = extractProposalAnchors(subject, body);
+  const about = anchors[0];
+  const opener = about ? `Thanks for the note about ${about}.` : "Thanks for reaching out.";
+  const extra = anchors.slice(1).find((anchor) => /^\d{1,2}\s+/.test(anchor));
+  const ask = extra
+    ? `Could you share more about the ${extra}, plus the project scope, timeline, and any brand materials you already have?`
+    : "Could you share more about the project scope, goals, timeline, and any brand materials you already have?";
   const portfolio = wantsPortfolio ? "\n\nI can share relevant samples for review." : "";
-  return enforceConfiguredSignoff(
-    `Thanks for reaching out.\n\nCould you share more about the project scope, goals, timeline, and any brand materials you already have?${portfolio}`,
-    identity,
-  );
+  return enforceConfiguredSignoff(`${opener}\n\n${ask}${portfolio}`, identity);
 }
 
 export function enforceConfiguredSignoff(draft: string, identity: DraftIdentity): string {
@@ -413,10 +519,13 @@ export function safeReviewRecoveryDraft(input: {
   hasAttachment?: boolean;
   preference: CalendarPreference;
   slots: VerifiedOpenSlot[];
+  subject?: string;
+  body?: string;
 }): string | null {
+  const inbound = { subject: input.subject, body: input.body };
   let fallback = input.negotiation
-    ? safeNegotiationDraft(input.identity)
-    : safeInformationDraft(input.identity, input.wantsPortfolio === true);
+    ? safeNegotiationDraft(input.identity, inbound)
+    : safeInformationDraft(input.identity, input.wantsPortfolio === true, inbound);
   if (input.wantsPortfolio) fallback = finalizePortfolioDraft(fallback, input.hasAttachment === true);
   fallback = applyContactPreference(enforceConfiguredSignoff(fallback, input.identity), input.preference, input.slots);
   if (draftSafetyViolations(fallback).length || contactSafetyViolations(fallback, input.preference, input.slots).length ||

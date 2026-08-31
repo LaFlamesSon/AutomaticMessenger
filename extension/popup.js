@@ -42,6 +42,8 @@ let intakeGateActive = false;
 let intakeConfirmAlias = "";
 let memoryLoaded = false;
 let memoryLoading = false;
+let billingLoaded = false;
+let billingLoading = false;
 
 function isForwardedDraft(email) {
   return email?.ingestion_source === "forwarded";
@@ -95,6 +97,9 @@ function safeApiMessage(data, status) {
   if (code === "gmail_reconnect_required") {
     return { code, message: "Gmail access expired. Reconnect Gmail to continue." };
   }
+  if (code === "billing_unavailable") return { code, message: "Paid subscriptions are not open yet." };
+  if (code === "subscription_exists") return { code, message: "Use Manage billing for the existing subscription." };
+  if (code === "subscription_not_found") return { code, message: "No Stripe subscription is connected to this account." };
   if (code === "rate_limited" || status === 429) {
     return { code: "rate_limited", message: "You've swept several times recently. Try again in a little while." };
   }
@@ -2125,25 +2130,28 @@ $("exportArchive").addEventListener("click", async () => {
   setBusy(button, true, "Preparing...");
   setStatus("memoryActionStatus", "Preparing your export...");
   try {
-    let page = 0;
-    let result = await readApi("archive_export", { page }, { timeout: 30_000 });
+    const manifest = await readApi("archive_export", { manifest: true }, { timeout: 30_000 });
     const archive = {
-      export_version: result.export_version,
-      generated_at: result.generated_at,
-      account_email: result.account_email,
-      profile: result.profile,
-      observations: result.observations || [],
-      threads: result.threads || [],
-      messages: [...(result.messages || [])],
-      evidence: [...(result.evidence || [])],
+      export_version: manifest.export_version,
+      generated_at: manifest.generated_at,
+      account_email: manifest.account_email,
+      excluded_for_security: manifest.excluded_for_security || [],
+      collections: {},
     };
-    while (result.has_more && page < 199) {
-      page += 1;
-      result = await readApi("archive_export", { page }, { timeout: 30_000 });
-      archive.messages.push(...(result.messages || []));
-      archive.evidence.push(...(result.evidence || []));
+    let recordCount = 0;
+    for (const collection of manifest.export_collections || []) {
+      let page = 0;
+      let result = await readApi("archive_export", { collection, page }, { timeout: 30_000 });
+      const items = [...(result.items || [])];
+      while (result.has_more && page < 199) {
+        page += 1;
+        result = await readApi("archive_export", { collection, page }, { timeout: 30_000 });
+        items.push(...(result.items || []));
+      }
+      if (result.has_more) throw new Core.ApiError(`The ${collection} collection is too large for an extension export. Contact support.`, 413, "too_large");
+      archive.collections[collection] = items;
+      recordCount += items.length;
     }
-    if (result.has_more) throw new Core.ApiError("This archive is too large for an extension export. Contact support.", 413, "too_large");
     const blob = new Blob([JSON.stringify(archive, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = create("a");
@@ -2153,7 +2161,7 @@ $("exportArchive").addEventListener("click", async () => {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setStatus("memoryActionStatus", `Exported ${archive.messages.length} archived messages.`, "success");
+    setStatus("memoryActionStatus", `Exported ${recordCount} CaughtUp data records.`, "success");
   } catch (error) {
     setStatus("memoryActionStatus", Core.safeErrorMessage(error), "error");
   } finally {
@@ -2167,7 +2175,7 @@ $("deleteCaughtUpData").addEventListener("click", async () => {
     setStatus("deleteDataStatus", "Enter your signed-in email exactly.", "error");
     return;
   }
-  if (!confirm("Permanently delete all CaughtUp data? This cannot be undone, and Gmail forwarding must be removed separately in Gmail.")) return;
+  if (!confirm("Cancel any active CaughtUp subscription now and permanently delete all CaughtUp data? This cannot be undone, and Gmail forwarding must be removed separately in Gmail.")) return;
   const button = $("deleteCaughtUpData");
   setBusy(button, true, "Deleting...");
   try {
@@ -2178,6 +2186,76 @@ $("deleteCaughtUpData").addEventListener("click", async () => {
     setStatus("deleteDataStatus", Core.safeErrorMessage(error), "error");
     setBusy(button, false);
   }
+});
+
+function billingDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString() : "";
+}
+
+function renderBilling(billing) {
+  const status = String(billing?.status || "not_started");
+  const labels = {
+    not_started: "Free plan. Paid enrollment is not open.",
+    checkout_pending: "Stripe checkout started. Complete checkout or refresh this status.",
+    incomplete: "Subscription setup is incomplete. Use Manage billing to finish.",
+    incomplete_expired: "The previous checkout expired.",
+    trialing: `Trial active${billingDate(billing.trial_end) ? ` through ${billingDate(billing.trial_end)}` : ""}.`,
+    active: `Subscription active${billingDate(billing.current_period_end) ? ` through ${billingDate(billing.current_period_end)}` : ""}.`,
+    past_due: "Payment needs attention. Use Manage billing to update it.",
+    unpaid: "Subscription payment is unpaid. Use Manage billing.",
+    paused: "Subscription is paused. Use Manage billing for available options.",
+    canceled: "Subscription canceled. Paid access is off.",
+  };
+  const ending = billing?.cancel_at_period_end && billingDate(billing.current_period_end)
+    ? ` Cancellation is scheduled for ${billingDate(billing.current_period_end)}.`
+    : "";
+  stateCard("billingStatus", `${labels[status] || "Subscription status unavailable."}${ending}`,
+    billing?.has_access ? "success" : "");
+  $("startSubscription").classList.toggle("hidden", billing?.checkout_available !== true || billing?.has_access === true);
+  $("manageBilling").classList.toggle("hidden", billing?.manage_available !== true);
+}
+
+async function loadBilling(force = false) {
+  if (billingLoading || (billingLoaded && !force)) return;
+  billingLoading = true;
+  stateCard("billingStatus", "Checking subscription status...");
+  try {
+    const result = await readApi("billing_status");
+    renderBilling(result.billing || {});
+    billingLoaded = true;
+  } catch (error) {
+    stateCard("billingStatus", Core.safeErrorMessage(error), "error", () => loadBilling(true));
+  } finally {
+    billingLoading = false;
+  }
+}
+
+async function openStripeSurface(action, field, host, button, busyText) {
+  setBusy(button, true, busyText);
+  try {
+    const result = await api(action, { request_id: crypto.randomUUID() });
+    const raw = result?.[field];
+    let url;
+    try { url = new URL(raw); } catch { throw new Core.ApiError("Stripe returned an invalid link.", 502, "invalid_redirect"); }
+    if (url.protocol !== "https:" || url.hostname !== host) {
+      throw new Core.ApiError("Stripe returned an invalid link.", 502, "invalid_redirect");
+    }
+    await chrome.tabs.create({ url: url.toString() });
+  } catch (error) {
+    stateCard("billingStatus", Core.safeErrorMessage(error), "error", () => loadBilling(true));
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+$("startSubscription").addEventListener("click", () => {
+  void openStripeSurface("billing_checkout_create", "checkout_url", "checkout.stripe.com", $("startSubscription"), "Opening checkout...");
+});
+
+$("manageBilling").addEventListener("click", () => {
+  void openStripeSurface("billing_portal_create", "portal_url", "billing.stripe.com", $("manageBilling"), "Opening billing...");
 });
 
 async function loadProfile() {
@@ -2196,6 +2274,7 @@ async function loadProfile() {
     settingsLoaded = true;
     await loadForwarding();
     await loadAgentMemory();
+    await loadBilling();
   } catch (error) {
     stateCard("settingsStatus", Core.safeErrorMessage(error), "error", loadProfile);
   }
@@ -2437,6 +2516,7 @@ async function initializePopup() {
     const digestRefresh = loadDigest({ quiet: hydrated.digest });
     void loadKits({ quiet: hydrated.kits });
     void loadCalendar({ quiet: hydrated.calendar });
+    void loadBilling();
     await digestRefresh;
   } catch (error) {
     if (session && !Core.isTerminalSessionError(error)) {

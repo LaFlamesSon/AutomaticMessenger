@@ -462,9 +462,19 @@
         <p id="memoryActionStatus" class="status-text" role="status" aria-live="polite"></p>
       </section>
 
+      <section id="billingCard" class="form-card" aria-labelledby="billingTitle">
+        <h2 id="billingTitle">Subscription</h2>
+        <div id="billingStatus" class="state-card" role="status" aria-live="polite">Checking subscription status&hellip;</div>
+        <p class="hint">Paid subscriptions are not available until CaughtUp explicitly opens enrollment. When enabled, checkout and cancellation use Stripe-hosted pages.</p>
+        <div class="button-row">
+          <button id="startSubscription" type="button" class="primary compact hidden">Start subscription</button>
+          <button id="manageBilling" type="button" class="ghost compact hidden">Manage billing</button>
+        </div>
+      </section>
+
       <section class="form-card danger-zone" aria-labelledby="deleteDataTitle">
         <h2 id="deleteDataTitle">Delete CaughtUp data</h2>
-        <p class="hint">This permanently removes the alias archive, learned patterns, settings, drafts, and uploaded media. Disconnecting intake or signing out does not delete them.</p>
+        <p class="hint">This cancels any active CaughtUp subscription immediately, then permanently removes the alias archive, learned patterns, settings, drafts, and uploaded media. Disconnecting intake or signing out does not delete them.</p>
         <label for="deleteDataConfirmation">Type your signed-in email to confirm</label>
         <input id="deleteDataConfirmation" type="email" maxlength="320" autocomplete="off">
         <button id="deleteCaughtUpData" type="button" class="ghost danger">Delete all CaughtUp data</button>

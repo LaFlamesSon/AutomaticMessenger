@@ -8,10 +8,10 @@ import {
 } from "../_shared/inbound-alias.ts";
 import {
   applyContactPreference, collaborationMediaKitRelevant, contactSafetyViolations, deliveryDecision,
-  draftSafetyViolations, enforceConfiguredSignoff, explicitPortfolioRequest, finalizePortfolioDraft,
-  findVerifiedOpenSlots, hostileInboundDetected, legitimateInquiryFallbackAllowed, safeCalendarPreference,
-  safeInformationDraft, safeNegotiationDraft, safeReviewRecoveryDraft, selectMediaKit,
-  type CalendarPreference, type MediaKitCandidate,
+  draftReferencesProposal, draftSafetyViolations, enforceConfiguredSignoff, explicitPortfolioRequest,
+  finalizePortfolioDraft, findVerifiedOpenSlots, hostileInboundDetected, legitimateInquiryFallbackAllowed,
+  safeCalendarPreference, safeInformationDraft, safeNegotiationDraft, safeReviewRecoveryDraft, selectMediaKit,
+  stripDraftEmojis, type CalendarPreference, type MediaKitCandidate,
 } from "../_shared/policy.ts";
 import {
   evaluateCommercialTerms, extractCommercialTerms, negotiationEventType, negotiationStage, negotiationSummary,
@@ -572,7 +572,9 @@ Deno.serve(async (req: Request) => {
     if (negotiationRequired) {
       const terms = commercialTerms.detected ? commercialTerms : existingNegotiation?.current_terms ?? commercialTerms;
       triage = { ...triage, category: "urgent", summary: negotiationSummary(terms, Boolean(existingNegotiation)), confidence: 1 };
-      if (!triage.draft || draftSafetyViolations(triage.draft).length) triage.draft = safeNegotiationDraft(profile);
+      if (!triage.draft || draftSafetyViolations(triage.draft).length) {
+        triage.draft = safeNegotiationDraft(profile, { subject: payload.subject, body: payload.text });
+      }
     }
 
     const portfolioRequested = explicitPortfolioRequest(payload.subject, payload.text);
@@ -580,11 +582,16 @@ Deno.serve(async (req: Request) => {
     const contextualKit = collaborationMediaKitRelevant(payload.subject, payload.text);
     const shouldAttach = portfolioRequested || contextualKit;
     const enabledCategories = Array.isArray(profile.draft_categories) ? profile.draft_categories : ["urgent", "action_needed"];
-    const recoveryNeeded = enabledCategories.includes(triage.category) && (!triage.draft || draftSafetyViolations(triage.draft).length > 0);
+    const proposedDraft = triage.draft;
+    const ungrounded = typeof proposedDraft === "string" && proposedDraft.length > 0 &&
+      !draftReferencesProposal(proposedDraft, payload.subject, payload.text);
+    const recoveryNeeded = enabledCategories.includes(triage.category) &&
+      (!triage.draft || draftSafetyViolations(triage.draft).length > 0 || ungrounded);
     const categoryRecovery = !enabledCategories.includes(triage.category) && fallbackAllowed && (triage.category !== "fyi" || contextualKit);
     if (fallbackAllowed && (recoveryNeeded || categoryRecovery)) {
       triage = { ...triage, category: categoryRecovery ? "action_needed" : triage.category,
-        draft: safeInformationDraft(profile, shouldAttach || triage.wants_portfolio),
+        draft: safeInformationDraft(profile, shouldAttach || triage.wants_portfolio,
+          { subject: payload.subject, body: payload.text }),
         wants_portfolio: shouldAttach || triage.wants_portfolio, confidence: 1 };
     } else if (shouldAttach && fallbackAllowed) triage.wants_portfolio = true;
 
@@ -636,14 +643,15 @@ Deno.serve(async (req: Request) => {
     if (negotiationRequired && decision === "auto_send") decision = "draft";
     if (isForwardingTest && !forwardingTestAutoSend && decision === "auto_send") decision = "draft";
 
-    let finalDraft = triage.draft ? enforceConfiguredSignoff(triage.draft, profile) : null;
+    let finalDraft = triage.draft ? stripDraftEmojis(enforceConfiguredSignoff(triage.draft, profile)) : null;
     if (finalDraft && triage.wants_portfolio) finalDraft = finalizePortfolioDraft(finalDraft, Boolean(selectedKit));
-    if (finalDraft) finalDraft = enforceConfiguredSignoff(applyContactPreference(finalDraft, calendar, slots), profile);
+    if (finalDraft) finalDraft = stripDraftEmojis(enforceConfiguredSignoff(applyContactPreference(finalDraft, calendar, slots), profile));
     let deterministicReviewRecovery = false;
     const blockedByNeverDraftRule = matchedRules.some((rule: any) => rule.action === "never_draft");
     const finalDraftRejected = finalDraft && !blockedByNeverDraftRule && enabledCategories.includes(triage.category) && fallbackAllowed &&
       (draftSafetyViolations(finalDraft).length ||
-        contactSafetyViolations(finalDraft, calendar, slots).length || (finalDraft.match(/\S+/g) ?? []).length > 150);
+        contactSafetyViolations(finalDraft, calendar, slots).length || (finalDraft.match(/\S+/g) ?? []).length > 150 ||
+        !draftReferencesProposal(finalDraft, payload.subject, payload.text));
     if (finalDraftRejected) {
       const recovered = safeReviewRecoveryDraft({
         identity: profile,
@@ -652,13 +660,16 @@ Deno.serve(async (req: Request) => {
         hasAttachment: Boolean(selectedKit),
         preference: calendar,
         slots,
+        subject: payload.subject,
+        body: payload.text,
       });
       if (recovered) {
-        finalDraft = recovered;
+        finalDraft = stripDraftEmojis(recovered);
         decision = "draft";
         deterministicReviewRecovery = true;
       } else decision = "none";
     }
+    if (finalDraft) finalDraft = stripDraftEmojis(finalDraft);
     const draftVersion = finalDraft && decision !== "none"
       ? await sha256(JSON.stringify({ to: replyRecipient, subject: payload.subject, body: finalDraft, kit: selectedKit?.id ?? null,
         in_reply_to: payload.message_id, references: payload.references })) : null;

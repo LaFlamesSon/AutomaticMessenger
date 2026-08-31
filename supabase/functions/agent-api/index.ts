@@ -1,11 +1,11 @@
-// CaughtUp extension API. User identity comes from a verified Supabase Auth JWT;
-// x-api-token remains temporarily supported for migration only.
+// CaughtUp extension API. User identity comes from a verified Supabase Auth JWT.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   bookingWithinAvailability, CATEGORIES, normalizeWeeklyAvailability,
-  normalizedStringList, explicitStylePreference, draftSafetyViolations, type WeeklyAvailabilityEntry,
+  normalizedStringList, explicitStylePreference, draftSafetyViolations, crisisSafetyResponse,
+  type WeeklyAvailabilityEntry,
 } from "../_shared/policy.ts";
 import {
   parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds,
@@ -29,10 +29,11 @@ import {
 import { fetchEbayProducts, normalizeEbayCampaignId } from "../_shared/ebay.ts";
 import { fetchTikTokProducts, normalizeGrantedScopes, TIKTOK_CREATOR_SCOPE, tokenExpiryIso } from "../_shared/tiktok.ts";
 import { archiveAddress, archiveDomain, archiveOutboundMessage } from "../_shared/inbox-archive.ts";
+import { stripeHostedUrl, stripeIdentifier, subscriptionHasAccess } from "../_shared/stripe.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type, x-api-token",
+  "Access-Control-Allow-Headers": "authorization, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const AUTO_SEND_CONFIRMATION = "ENABLE AUTO-SEND";
@@ -46,12 +47,57 @@ const REQUIRED_QUESTIONS = new Set([
 ]);
 const CONFIG_FREE_ACTIONS = new Set([
   "inbox_threads_get", "memory_get", "memory_set_status", "memory_reset",
-  "archive_export", "caughtup_data_delete",
+  "archive_export",
 ]);
 
 class InputError extends Error {}
 
 const FORWARDING_PUBLIC_SELECT = "status,alias_address,alias_slug,legacy_alias_address,verification_code,confirmation_url,verification_received_at,google_confirmed_at,activated_at,route_verified_at,updated_at";
+
+type ExportCollectionConfig = {
+  table: string;
+  select: string;
+  order: string;
+  scope?: "user" | "account" | "id";
+  tieBreak?: string;
+};
+
+// Explicit field allowlists keep OAuth credentials, secret references, hashes,
+// verification codes, ephemeral challenges, and global provider events out of exports.
+const EXPORT_COLLECTIONS: Readonly<Record<string, ExportCollectionConfig>> = Object.freeze({
+  account: { table: "ia_users", select: "email,plan,created_at", order: "created_at", scope: "id" },
+  profile: { table: "ia_voice_profiles", select: "display_name,occupation,services,tone,signoff,always_ask,custom_rules,auto_send,reply_mode,draft_categories,auto_send_categories,auto_send_confirmed_at,auto_send_policy_version,settings_version,sweep_enabled,sweep_interval_minutes,digest_enabled,digest_local_time,timezone,last_digest_at,updated_at", order: "updated_at" },
+  gmail_connections: { table: "ia_gmail_accounts", select: "id,gmail_address,connected_at,last_sweep_at,oauth_capability", order: "connected_at", tieBreak: "id" },
+  forwarding_connections: { table: "ia_forwarding_aliases", select: "id,gmail_account_id,alias_address,status,verification_received_at,google_confirmed_at,activated_at,route_verified_at,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  forwarding_tests: { table: "ia_forwarding_test_runs", select: "id,gmail_account_id,forwarding_alias_id,status,processed_email_id,expires_at,created_at,updated_at,allow_auto_send,kind", order: "created_at", tieBreak: "id" },
+  calendar_preferences: { table: "ia_calendar_preferences", select: "contact_mode,phone_number,booking_url,timezone,weekly_availability,settings_version,created_at,updated_at", order: "created_at" },
+  sender_rules: { table: "ia_sender_rules", select: "id,match_type,match_value,action,priority,enabled,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  opportunity_preferences: { table: "ia_opportunity_preferences", select: "enabled,creator_styles,industries,platforms,collaboration_types,regions,desired_brands,excluded_brands,content_formats,settings_version,created_at,updated_at", order: "created_at" },
+  chat_messages: { table: "ia_chat_messages", select: "id,role,content,created_at", order: "created_at", tieBreak: "id" },
+  draft_edits: { table: "ia_draft_edits", select: "id,original_draft,edited_final,created_at", order: "created_at", tieBreak: "id" },
+  media_kits: { table: "ia_media_kits", select: "id,label,best_for,original_filename,mime_type,byte_size,brand_names,sender_domains,keywords,is_default,auto_attach,status,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  media_kit_rate_profiles: { table: "ia_media_kit_rate_profiles", select: "id,media_kit_id,currency,flat_fee_floor,flat_fee_target,commission_floor,commission_target,hybrid_guarantee_floor,negotiation_notes,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  bookings: { table: "ia_bookings", select: "id,title,start_at,end_at,status,request_id,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  brand_relationships: { table: "ia_brand_relationships", select: "id,brand_name,brand_domain,relationship_status,collaboration_types,notes,source_type,source_ref,evidence,confirmed,last_contact_at,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  creator_category_metrics: { table: "ia_creator_category_metrics", select: "id,platform,category,sample_size,followers,median_views,engagement_rate,click_through_rate,conversion_rate,revenue_per_thousand_views,source_type,source_ref,evidence,observed_at,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  affiliate_connections: { table: "ia_affiliate_connections", select: "id,provider,external_account_ref,status,scopes,metadata,last_synced_at,error_code,credential_mode,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  opportunities: { table: "ia_opportunities", select: "id,brand_name,brand_domain,contact_email,title,description,tags,source_type,source_ref,source_url,source_published_at,evidence,match_score,match_reasons,recommended_media_kit_id,status,draft_to,draft_subject,draft_body,last_verified_at,opportunity_kind,affiliate_provider,provider_opportunity_id,product_name,product_category,product_url,price_amount,currency,commission_rate,commission_amount,collaboration_model,approval_required,sample_available,shipping_regions,requirements,product_metrics,ease_score,ease_label,ease_reasons,score_components,relevant_metric_id,estimated_earnings_low,estimated_earnings_high,earnings_confidence,allowed_platforms,required_platform,platform_eligible,creator_relevant,channel_evidence,surfaced_at,surfaced_on,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  opportunity_events: { table: "ia_opportunity_events", select: "id,opportunity_id,event_type,metadata,created_at", order: "created_at", tieBreak: "id" },
+  opportunity_send_attempts: { table: "ia_opportunity_send_attempts", select: "id,opportunity_id,status,gmail_message_id,error_code,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  negotiations: { table: "ia_negotiations", select: "id,gmail_account_id,thread_id,brand_name,brand_domain,stage,media_kit_id,current_terms,previous_terms,threshold_status,attention_level,human_review_required,latest_message_id,latest_subject,summary,last_inbound_at,is_test,closed_at,proposed_reply,dismissed_at,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  negotiation_events: { table: "ia_negotiation_events", select: "id,negotiation_id,gmail_message_id,direction,event_type,terms,summary,is_test,created_at", order: "created_at", tieBreak: "id" },
+  processed_emails: { table: "ia_processed_emails", select: "id,gmail_account_id,gmail_message_id,thread_id,category,summary,draft_created,sender,subject,processed_at,auto_sent,draft_text,delivery_status,sent_via,gmail_sent_message_id,sent_at,selected_media_kit_id,negotiation_id,human_review_required,is_test,ingestion_source,reply_to_address,rfc_message_id,rfc_in_reply_to,rfc_references,outbound_message_id,draft_version,draft_updated_at", order: "processed_at", scope: "account", tieBreak: "id" },
+  inbox_threads: { table: "ia_inbox_threads", select: "id,gmail_account_id,forwarding_alias_id,thread_key,subject,participant_addresses,sender_domains,first_message_at,last_message_at,message_count,latest_summary,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  inbox_messages: { table: "ia_inbox_messages", select: "id,thread_id,gmail_account_id,forwarding_alias_id,inbound_message_id,processed_email_id,message_key,direction,source,sender_address,recipient_addresses,sender_domain,subject,body_text,rfc_message_id,in_reply_to,references_header,category,summary,processing_state,occurred_at,normalization_version,safe_metadata,created_at,updated_at", order: "occurred_at", tieBreak: "id" },
+  inbound_messages: { table: "ia_inbound_messages", select: "id,forwarding_alias_id,gmail_account_id,rfc_message_id,thread_key,envelope_from,header_from,reply_to,original_to,subject,text_body,in_reply_to,references_header,received_at,processing_status,error_code,processed_email_id,safe_metadata,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  observations: { table: "ia_agent_observations", select: "id,kind,value_text,normalized_value,confidence,status,evidence_count,first_observed_at,last_observed_at,reviewed_at,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  observation_evidence: { table: "ia_agent_observation_evidence", select: "observation_id,message_id,created_at", order: "created_at", tieBreak: "observation_id" },
+  settings_audit: { table: "ia_settings_audit", select: "id,action,safe_details,request_id,created_at", order: "created_at", tieBreak: "id" },
+  send_attempts: { table: "ia_send_attempts", select: "id,processed_email_id,status,gmail_message_id,error_code,created_at,updated_at", order: "created_at", tieBreak: "id" },
+  agent_runs: { table: "ia_agent_runs", select: "id,gmail_account_id,started_at,finished_at,emails_scanned,drafts_created,status,error", order: "started_at", scope: "account", tieBreak: "id" },
+  subscription: { table: "ia_subscriptions", select: "provider,stripe_customer_id,stripe_subscription_id,stripe_price_id,status,cancel_at_period_end,current_period_start,current_period_end,trial_end,checkout_expires_at,canceled_at,ended_at,last_invoice_id,last_payment_at,created_at,updated_at", order: "created_at" },
+  billing_notifications: { table: "ia_billing_notifications", select: "id,kind,status,due_at,created_at,updated_at", order: "created_at", tieBreak: "id" },
+});
 
 function gmailForwardingSettingsUrl(address?: string | null): string {
   const account = address ? `?authuser=${encodeURIComponent(address)}` : "";
@@ -595,18 +641,43 @@ async function authenticate(supabase: any, req: Request): Promise<any | null> {
     return user ?? null;
   }
 
-  const token = req.headers.get("x-api-token") ?? "";
-  if (!/^[0-9a-f-]{36}$/i.test(token)) return null;
-  const { data: user } = await supabase.from("ia_users")
-    .select("id, email, auth_user_id").eq("api_token", token)
-    .is("api_token_revoked_at", null).maybeSingle();
-  return user ?? null;
+  return null;
 }
 
 async function ownedAccountIds(supabase: any, userId: string): Promise<string[]> {
   const { data, error } = await supabase.from("ia_gmail_accounts").select("id").eq("user_id", userId);
   if (error) throw new Error(error.message);
   return (data ?? []).map((row: any) => row.id);
+}
+
+async function exportCollectionPage(
+  supabase: any,
+  user: any,
+  collection: string,
+  page: number,
+): Promise<{ items: any[]; hasMore: boolean }> {
+  const config = EXPORT_COLLECTIONS[collection];
+  if (!config) throw new InputError("unsupported export collection");
+  const pageSize = 100;
+  const start = page * pageSize;
+  let query = supabase.from(config.table).select(config.select);
+  if (config.scope === "id") {
+    query = query.eq("id", user.id);
+  } else if (config.scope === "account") {
+    const accountIds = await ownedAccountIds(supabase, user.id);
+    if (!accountIds.length) return { items: [], hasMore: false };
+    query = query.in("gmail_account_id", accountIds);
+  } else {
+    query = query.eq("user_id", user.id);
+  }
+  query = query.order(config.order, { ascending: true });
+  if (config.tieBreak && config.tieBreak !== config.order) {
+    query = query.order(config.tieBreak, { ascending: true });
+  }
+  const { data, error } = await query.range(start, start + pageSize);
+  if (error) throw new Error(`export ${collection} failed`);
+  const rows = data ?? [];
+  return { items: rows.slice(0, pageSize), hasMore: rows.length > pageSize };
 }
 
 async function ensureCalendarPreference(supabase: any, userId: string): Promise<any> {
@@ -702,6 +773,89 @@ function ebayConfigured(config: Record<string, string>): boolean {
 
 function tiktokConfigured(config: Record<string, string>): boolean {
   return Boolean(config["ia_tiktok_app_key"] && config["ia_tiktok_app_secret"]);
+}
+
+function stripeApiConfigured(config: Record<string, string>): boolean {
+  const livemode = config["ia_stripe_livemode"];
+  const secret = config["ia_stripe_secret_key"] ?? "";
+  return (livemode === "true" && secret.startsWith("sk_live_")) ||
+    (livemode === "false" && secret.startsWith("sk_test_"));
+}
+
+function billingCheckoutConfigured(config: Record<string, string>): boolean {
+  return config["ia_billing_checkout_enabled"] === "true" && stripeApiConfigured(config) &&
+    /^whsec_[A-Za-z0-9_]{16,}$/.test(config["ia_stripe_webhook_secret"] ?? "") &&
+    Boolean(stripeIdentifier(config["ia_stripe_price_pro_monthly"], "price") && config["ia_billing_return_url"]);
+}
+
+function billingReturnUrl(config: Record<string, string>): string | null {
+  const raw = config["ia_billing_return_url"];
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.hostname !== "getcaughtup.io" || url.username || url.password) return null;
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function stripePost(
+  config: Record<string, string>,
+  path: string,
+  params: URLSearchParams,
+  idempotencyKey: string,
+): Promise<any> {
+  const response = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Bearer ${config["ia_stripe_secret_key"]}`,
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: params,
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!response) throw new Error("stripe_unavailable");
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error("stripe_request_failed");
+  return payload;
+}
+
+async function cancelStripeSubscription(config: Record<string, string>, subscriptionId: string): Promise<void> {
+  const secret = config["ia_stripe_secret_key"];
+  if (!stripeApiConfigured(config)) throw new Error("billing_cleanup_unavailable");
+  const response = await fetch(`https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${secret}` },
+    signal: AbortSignal.timeout(10_000),
+  }).catch(() => null);
+  if (!response) throw new Error("stripe_unavailable");
+  // A prior partial deletion attempt may already have canceled the subscription.
+  if (!response.ok && response.status !== 404) throw new Error("stripe_request_failed");
+}
+
+async function billingSnapshot(supabase: any, userId: string, config: Record<string, string>): Promise<any> {
+  const [{ data: subscription, error: subscriptionError }, { data: account, error: accountError }] = await Promise.all([
+    supabase.from("ia_subscriptions")
+      .select("status,stripe_customer_id,stripe_subscription_id,cancel_at_period_end,current_period_end,trial_end")
+      .eq("user_id", userId).maybeSingle(),
+    supabase.from("ia_users").select("plan,stripe_customer_id").eq("id", userId).single(),
+  ]);
+  if (subscriptionError || accountError) throw new Error("billing_status_failed");
+  const status = subscription?.status ?? "not_started";
+  const customer = stripeIdentifier(subscription?.stripe_customer_id ?? account?.stripe_customer_id, "cus");
+  return {
+    plan: account?.plan ?? "free",
+    status,
+    has_access: subscriptionHasAccess(status),
+    cancel_at_period_end: subscription?.cancel_at_period_end === true,
+    current_period_end: subscription?.current_period_end ?? null,
+    trial_end: subscription?.trial_end ?? null,
+    checkout_available: billingCheckoutConfigured(config) && Boolean(billingReturnUrl(config)),
+    manage_available: Boolean(stripeApiConfigured(config) && customer && billingReturnUrl(config)),
+  };
 }
 
 function providerErrorCode(error: unknown): string {
@@ -1148,6 +1302,13 @@ Deno.serve(async (req: Request) => {
         const { error: userMessageError } = await supabase.from("ia_chat_messages")
           .insert({ user_id: user.id, role: "user", content: message });
         if (userMessageError) throw new Error(userMessageError.message);
+        const crisisReply = crisisSafetyResponse(message);
+        if (crisisReply) {
+          const { error: crisisMessageError } = await supabase.from("ia_chat_messages")
+            .insert({ user_id: user.id, role: "assistant", content: crisisReply });
+          if (crisisMessageError) throw new Error(crisisMessageError.message);
+          return json({ reply: crisisReply, safety_response: "crisis", memory_saved: false });
+        }
         const accountIds = await ownedAccountIds(supabase, user.id);
         const { data: profile } = await supabase.from("ia_voice_profiles").select("*")
           .eq("user_id", user.id).maybeSingle();
@@ -1226,6 +1387,87 @@ Deno.serve(async (req: Request) => {
           reply_mode: savedProfile?.reply_mode ?? profile?.reply_mode,
           auto_send_disabled: Boolean(newRule),
         });
+      }
+
+      case "billing_status": {
+        return json({ billing: await billingSnapshot(supabase, user.id, CFG) });
+      }
+
+      case "billing_checkout_create": {
+        const requestId = cleanUuid(body.request_id, "request_id");
+        const returnUrl = billingReturnUrl(CFG);
+        if (!billingCheckoutConfigured(CFG) || !returnUrl) {
+          return json({ error: "paid subscriptions are not open", code: "billing_unavailable" }, 503);
+        }
+        const { data: current, error: currentError } = await supabase.from("ia_subscriptions")
+          .select("status,stripe_customer_id,stripe_subscription_id,checkout_expires_at").eq("user_id", user.id).maybeSingle();
+        if (currentError) throw new Error("billing_status_failed");
+        const checkoutStillOpen = current?.status === "checkout_pending" &&
+          Number.isFinite(Date.parse(current?.checkout_expires_at ?? "")) &&
+          Date.parse(current.checkout_expires_at) > Date.now();
+        if (current && (!["not_started", "incomplete_expired", "canceled", "checkout_pending"].includes(current.status) || checkoutStillOpen)) {
+          return json({ error: "manage the existing subscription", code: "subscription_exists" }, 409);
+        }
+        const successUrl = new URL(returnUrl);
+        successUrl.searchParams.set("checkout", "success");
+        successUrl.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}");
+        const cancelUrl = new URL(returnUrl);
+        cancelUrl.searchParams.set("checkout", "canceled");
+        const params = new URLSearchParams();
+        params.set("mode", "subscription");
+        params.set("line_items[0][price]", CFG["ia_stripe_price_pro_monthly"]);
+        params.set("line_items[0][quantity]", "1");
+        params.set("success_url", successUrl.toString());
+        params.set("cancel_url", cancelUrl.toString());
+        params.set("client_reference_id", user.id);
+        params.set("metadata[caughtup_user_id]", user.id);
+        params.set("subscription_data[metadata][caughtup_user_id]", user.id);
+        params.set("consent_collection[terms_of_service]", "required");
+        const checkoutExpiresAt = Math.floor(Date.now() / 1000) + (31 * 60);
+        params.set("expires_at", String(checkoutExpiresAt));
+        const customer = stripeIdentifier(current?.stripe_customer_id, "cus");
+        if (customer) params.set("customer", customer);
+        else params.set("customer_email", user.email);
+        const trialDays = Number(CFG["ia_stripe_trial_days"] ?? 0);
+        if (Number.isInteger(trialDays) && trialDays >= 1 && trialDays <= 30) {
+          params.set("subscription_data[trial_period_days]", String(trialDays));
+          params.set("subscription_data[trial_settings][end_behavior][missing_payment_method]", "cancel");
+        }
+        const session = await stripePost(CFG, "checkout/sessions", params, `caughtup-checkout-${user.id}-${requestId}`);
+        const checkoutUrl = stripeHostedUrl(session?.url, "checkout.stripe.com");
+        const checkoutSessionId = stripeIdentifier(session?.id, "cs");
+        if (!checkoutUrl || !checkoutSessionId) throw new Error("stripe_redirect_invalid");
+        const { error: pendingError } = await supabase.from("ia_subscriptions").upsert({
+          user_id: user.id,
+          status: "checkout_pending",
+          stripe_checkout_session_id: checkoutSessionId,
+          checkout_expires_at: new Date(checkoutExpiresAt * 1000).toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "user_id" });
+        if (pendingError) throw new Error("billing_status_failed");
+        return json({ checkout_url: checkoutUrl });
+      }
+
+      case "billing_portal_create": {
+        const requestId = cleanUuid(body.request_id, "request_id");
+        const returnUrl = billingReturnUrl(CFG);
+        if (!stripeApiConfigured(CFG) || !returnUrl) {
+          return json({ error: "billing management is unavailable", code: "billing_unavailable" }, 503);
+        }
+        const [{ data: subscription, error: subscriptionError }, { data: account, error: accountError }] = await Promise.all([
+          supabase.from("ia_subscriptions").select("stripe_customer_id").eq("user_id", user.id).maybeSingle(),
+          supabase.from("ia_users").select("stripe_customer_id").eq("id", user.id).single(),
+        ]);
+        if (subscriptionError || accountError) throw new Error("billing_status_failed");
+        const customer = stripeIdentifier(subscription?.stripe_customer_id ?? account?.stripe_customer_id, "cus");
+        if (!customer) return json({ error: "no subscription to manage", code: "subscription_not_found" }, 404);
+        const params = new URLSearchParams();
+        params.set("customer", customer);
+        params.set("return_url", returnUrl);
+        const session = await stripePost(CFG, "billing_portal/sessions", params, `caughtup-portal-${user.id}-${requestId}`);
+        const portalUrl = stripeHostedUrl(session?.url, "billing.stripe.com");
+        if (!portalUrl) throw new Error("stripe_redirect_invalid");
+        return json({ portal_url: portalUrl });
       }
 
       case "profile_get": {
@@ -2455,6 +2697,37 @@ Deno.serve(async (req: Request) => {
       }
 
       case "archive_export": {
+        if (body.manifest === true) {
+          return json({
+            export_version: 2,
+            generated_at: new Date().toISOString(),
+            account_email: user.email,
+            export_collections: Object.keys(EXPORT_COLLECTIONS),
+            excluded_for_security: [
+              "OAuth access and refresh credentials",
+              "secret references and hashes",
+              "one-time verification codes and challenges",
+              "global provider webhook and anti-abuse state",
+            ],
+          });
+        }
+        if (typeof body.collection === "string") {
+          const collection = cleanString(body.collection, "collection", 80);
+          const page = Math.max(0, Math.min(100_000, Number(body.page ?? 0) || 0));
+          const result = await exportCollectionPage(supabase, user, collection, page);
+          return json({
+            export_version: 2,
+            generated_at: new Date().toISOString(),
+            account_email: user.email,
+            collection,
+            page,
+            has_more: result.hasMore,
+            items: result.items,
+          });
+        }
+
+        // Compatibility path for older installed extensions. New clients use
+        // the manifest and collection protocol above for a broader export.
         const page = Math.max(0, Math.min(100_000, Number(body.page ?? 0) || 0));
         const pageSize = 100;
         const start = page * pageSize;
@@ -2510,6 +2783,22 @@ Deno.serve(async (req: Request) => {
         const confirmation = cleanString(body.confirmation, "confirmation", 320).toLowerCase();
         if (confirmation !== String(user.email).toLowerCase()) {
           return json({ error: "email confirmation does not match", code: "confirmation_required" }, 400);
+        }
+        const { data: billing, error: billingError } = await supabase.from("ia_subscriptions")
+          .select("stripe_subscription_id,status").eq("user_id", user.id).maybeSingle();
+        if (billingError) throw new Error("billing_cleanup_unavailable");
+        const subscriptionId = stripeIdentifier(billing?.stripe_subscription_id, "sub");
+        if (subscriptionId && !["canceled", "incomplete_expired", "not_started"].includes(String(billing?.status))) {
+          await cancelStripeSubscription(CFG, subscriptionId);
+          const canceledAt = new Date().toISOString();
+          const [{ error: subscriptionUpdateError }, { error: planUpdateError }] = await Promise.all([
+            supabase.from("ia_subscriptions").update({
+              status: "canceled", cancel_at_period_end: false, canceled_at: canceledAt,
+              ended_at: canceledAt, updated_at: canceledAt,
+            }).eq("user_id", user.id).eq("stripe_subscription_id", subscriptionId),
+            supabase.from("ia_users").update({ plan: "free" }).eq("id", user.id),
+          ]);
+          if (subscriptionUpdateError || planUpdateError) throw new Error("billing_cleanup_unavailable");
         }
         const { error: disconnectError } = await supabase.rpc("ia_disconnect_tiktok_connection", { p_user_id: user.id });
         if (disconnectError) throw new Error("provider credential deletion failed");

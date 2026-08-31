@@ -113,6 +113,9 @@ test("forwarded content is deduplicated, bounded, and retained as normalized arc
 test("forwarded drafts preserve safety, Review negotiations, and explicit send claims", () => {
   assert.match(ingest, /hostileInboundDetected\(payload\.subject, payload\.text\)/);
   assert.match(ingest, /draftSafetyViolations\(finalDraft\)/);
+  assert.match(ingest, /draftReferencesProposal\(finalDraft, payload\.subject, payload\.text\)/);
+  assert.match(ingest, /stripDraftEmojis\(finalDraft\)/);
+  assert.match(ingest, /safeInformationDraft\(profile, shouldAttach \|\| triage\.wants_portfolio,\s*\{ subject: payload\.subject, body: payload\.text \}\)/);
   assert.match(ingest, /safeReviewRecoveryDraft\(\{/);
   assert.match(ingest, /deterministicReviewRecovery = true/);
   assert.match(ingest, /blockedByNeverDraftRule/);
