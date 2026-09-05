@@ -11,6 +11,20 @@ export function encodeHeaderSubject(subject: string): string {
   return `=?UTF-8?B?${btoa(unescape(encodeURIComponent(clean)))}?=`;
 }
 
+/** Map common punctuation to ASCII, then drop remaining non-ASCII (emoji included). */
+export function asciiEmailCopy(value: unknown, max = 20_000): string {
+  let text = String(value ?? "");
+  text = text
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/[\u2022\u2023\u2043\u00B7\u2219]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/[\t\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+  text = text.replace(/[^\n\r\x20-\x7E]/g, "");
+  return text.trim().slice(0, max);
+}
+
 export function parseStrictRecipient(value: unknown): string | null {
   const clean = sanitizeHeader(value, 320);
   const bracketed = clean.match(/^(?:[^<>]*\s)?<([^<>]+)>$/)?.[1]?.trim();
