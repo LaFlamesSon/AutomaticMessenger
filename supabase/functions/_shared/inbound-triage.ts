@@ -48,7 +48,7 @@ Summarize the key point in one sentence. For these enabled categories (${draftCa
 
 Hard draft rules:
 - Never state prices, availability, turnaround, acceptance, or rejection.
-- Never use emojis, emoticons, or decorative symbols. Plain professional text only.
+- Never use emojis, emoticons, decorative symbols, or fancy punctuation. Plain professional ASCII text only.
 - Never send interchangeable boilerplate that could be reused on an unrelated inquiry. If you cannot name this brand or a proposal-specific detail, return draft null.
 - Gather information only; never commit the user.
 - If samples were requested, say relevant samples can be shared. The server alone decides whether files are attached.
@@ -96,7 +96,7 @@ export async function triageInbound(
   const parsed = JSON.parse(raw);
   const categories: Category[] = ["urgent", "action_needed", "fyi", "low_priority", "spam_or_poor_fit"];
   const observationKinds: InboxObservationKind[] = ["niche", "inquiry_pattern", "campaign_type", "missing_information"];
-  const summary = String(parsed.summary ?? "Message received.").replace(/[\u0000-\u001f\u007f]/g, " ")
+  const summary = stripDraftEmojis(String(parsed.summary ?? "Message received.").replace(/[\u0000-\u001f\u007f]/g, " "))
     .replace(/\s+/g, " ").trim().slice(0, 500) || "Message received.";
   return {
     category: categories.includes(parsed.category) ? parsed.category : "low_priority",

@@ -84,13 +84,70 @@ const EMOJI_SEQUENCE =
   /\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E|\u200D\p{Extended_Pictographic})*|\p{Emoji_Presentation}|\p{Regional_Indicator}{2}|[\u200D\uFE0F\u20E3\u{E0020}-\u{E007F}]/gu;
 
 export function stripDraftEmojis(draft: string): string {
-  return draft
+  return String(draft ?? "")
     .replace(EMOJI_SEQUENCE, "")
+    .replace(/\u00C2(?=[\s\u00B7\u2022\u2013\u2014.\-])/g, "")
+    .replace(/[\u00B7\u2022\u2023\u2043\u2219]/g, "-")
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[\u2190-\u2194\u21D2]/g, "-")
+    .replace(/\u00A0/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/ {2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export interface DailyDigestRow {
+  category?: string | null;
+  sender?: string | null;
+  subject?: string | null;
+  summary?: string | null;
+  draft_created?: boolean | null;
+  auto_sent?: boolean | null;
+}
+
+const DIGEST_LABELS: Record<string, string> = {
+  urgent: "URGENT",
+  action_needed: "ACTION NEEDED",
+  fyi: "FYI",
+};
+
+export function buildDailyDigest(rows: DailyDigestRow[]): { subject: string; body: string } {
+  const byCat: Record<string, DailyDigestRow[]> = {};
+  for (const row of rows) (byCat[String(row.category ?? "")] ??= []).push(row);
+  const needsYou = (byCat.urgent?.length ?? 0) + (byCat.action_needed?.length ?? 0);
+  const handled = rows.length - needsYou;
+  const lines = [
+    "Good morning. Here is what your inbox agent did in the last 24 hours.",
+    "",
+    `${needsYou} need you - ${handled} handled for you`,
+    "",
+  ];
+  for (const cat of ["urgent", "action_needed", "fyi"]) {
+    const items = byCat[cat];
+    if (!items?.length) continue;
+    lines.push(DIGEST_LABELS[cat]);
+    for (const item of items) {
+      const status = item.auto_sent ? " [reply sent]" : item.draft_created ? " [draft ready]" : "";
+      const sender = stripDraftEmojis(String(item.sender ?? "").replace(/<[^>]*>/g, ""));
+      const subject = stripDraftEmojis(String(item.subject ?? ""));
+      lines.push(`  - ${sender} - ${subject}${status}`);
+      const summary = stripDraftEmojis(String(item.summary ?? ""));
+      if (summary) lines.push(`    ${summary}`);
+    }
+    lines.push("");
+  }
+  const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
+  if (noise) lines.push(`${noise} newsletters and pitches filtered out for you.`);
+  lines.push("", "- CaughtUp, your inbox agent");
+  const subject = needsYou
+    ? `${needsYou} need you, ${handled} handled - your CaughtUp digest`
+    : `All caught up - ${handled} handled for you`;
+  return { subject: stripDraftEmojis(subject), body: stripDraftEmojis(lines.join("\n")) };
 }
 
 const INBOUND_SUBJECT_PREFIX = /^(?:(?:re|fwd|fw)\s*:\s*)+/i;

@@ -25,6 +25,7 @@ import {
   normalizedStringList,
   selectMediaKit,
   stripDraftEmojis,
+  buildDailyDigest,
 } from "../functions/_shared/policy.ts";
 import {
   parseStrictRecipient, quoteFilename, sanitizeHeader, sanitizeMessageIds, stableDraftPreview,
@@ -278,6 +279,10 @@ test("agent drafts strip emojis and stay unique to the inbound proposal", () => 
   assert.equal(stripDraftEmojis("Hello 👋🏻 team"), "Hello team");
   assert.equal(stripDraftEmojis("Thanks for the brief."), "Thanks for the brief.");
   assert.doesNotMatch(stripDraftEmojis("Launch 🎉 next week!"), /\p{Extended_Pictographic}/u);
+  assert.equal(stripDraftEmojis("3 need you · 2 handled"), "3 need you - 2 handled");
+  assert.equal(stripDraftEmojis("Brand • brief — next steps"), "Brand - brief - next steps");
+  assert.equal(stripDraftEmojis("Gmail: a@x.com Â· Signed in: b@x.com"), "Gmail: a@x.com - Signed in: b@x.com");
+  assert.doesNotMatch(stripDraftEmojis("Thanks 🎉 · Nike — August"), /Â|[·•—]|[\p{Extended_Pictographic}]/u);
 
   const subject = "Nike summer TikTok campaign proposal";
   const body = "We would like 3 videos for a paid creator partnership this August.";
@@ -319,6 +324,28 @@ test("agent drafts strip emojis and stay unique to the inbound proposal", () => 
   });
   assert.doesNotMatch(hostile, /ignore safety|auto-send|evil\.example|\$5000/i);
   assert.match(hostile, /Thanks for reaching out/);
+});
+
+test("daily digest stays ASCII and strips inbound emoji or fancy punctuation", () => {
+  const digest = buildDailyDigest([
+    {
+      category: "action_needed",
+      sender: "OkayLove Lashes 💖 <talent18@okaylovelashes.com>",
+      subject: "yay paid collab · TikTok",
+      summary: "They want a TikTok — 3 videos 🎉",
+      draft_created: true,
+      auto_sent: false,
+    },
+    { category: "fyi", sender: "SHEIN", subject: "Campaign update", summary: "No reply needed.", draft_created: false },
+  ]);
+  assert.doesNotMatch(digest.subject, /Â|[·•—]|[\p{Extended_Pictographic}]/u);
+  assert.doesNotMatch(digest.body, /Â|[·•—]|[\p{Extended_Pictographic}]/u);
+  assert.match(digest.subject, /1 need you, 1 handled - your CaughtUp digest/);
+  assert.match(digest.body, /1 need you - 1 handled for you/);
+  assert.match(digest.body, /OkayLove Lashes/);
+  assert.match(digest.body, /\[draft ready\]/);
+  assert.match(digest.body, /ACTION NEEDED/);
+  assert.doesNotMatch(digest.body, /💖|🎉/);
 });
 
 test("draft preview fingerprint ignores Gmail transport ids but detects content changes", () => {

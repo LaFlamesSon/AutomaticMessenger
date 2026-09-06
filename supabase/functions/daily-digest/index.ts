@@ -6,7 +6,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { encodeHeaderSubject } from "../_shared/mime.ts";
-import { localScheduleWindow } from "../_shared/policy.ts";
+import { buildDailyDigest, localScheduleWindow } from "../_shared/policy.ts";
 
 let CFG: Record<string, string> = {};
 
@@ -29,12 +29,6 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
   if (!resp.ok) throw new Error(`token_refresh_${resp.status}`);
   return (await resp.json()).access_token;
 }
-
-const CAT_LABELS: Record<string, string> = {
-  urgent: "URGENT",
-  action_needed: "ACTION NEEDED",
-  fyi: "FYI",
-};
 
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
@@ -102,34 +96,11 @@ Deno.serve(async (req: Request) => {
       }
       jobClaimId = claim;
 
-      const byCat: Record<string, any[]> = {};
-      for (const r of rows) (byCat[r.category] ??= []).push(r);
-      const needsYou = (byCat.urgent?.length ?? 0) + (byCat.action_needed?.length ?? 0);
+      const digest = buildDailyDigest(rows);
+      const subject = digest.subject;
+      const body = digest.body;
+      const needsYou = rows.filter((row) => row.category === "urgent" || row.category === "action_needed").length;
       const handled = rows.length - needsYou;
-
-      const lines: string[] = [
-        `Good morning! Here's what your inbox agent did in the last 24 hours.`,
-        ``,
-        `${needsYou} need you · ${handled} handled for you`,
-        ``,
-      ];
-      for (const cat of ["urgent", "action_needed", "fyi"]) {
-        const items = byCat[cat];
-        if (!items?.length) continue;
-        lines.push(CAT_LABELS[cat]);
-        for (const e of items) {
-          const status = e.auto_sent ? " [reply sent]" : e.draft_created ? " [draft ready]" : "";
-          lines.push(`  • ${e.sender.replace(/<.*>/, "").trim()} — ${e.subject}${status}`);
-          lines.push(`    ${e.summary}`);
-        }
-        lines.push("");
-      }
-      const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
-      if (noise) lines.push(`${noise} newsletters & pitches filtered out for you.`);
-      lines.push("", "— CaughtUp, your inbox agent");
-      const subject = needsYou
-        ? `${needsYou} need you, ${handled} handled — your CaughtUp digest`
-        : `All caught up — ${handled} handled for you`;
 
       const token = await refreshAccessToken(account.refresh_token);
       const raw = b64urlEncode([
@@ -137,7 +108,7 @@ Deno.serve(async (req: Request) => {
         `Subject: ${encodeHeaderSubject(subject)}`,
         `Content-Type: text/plain; charset="UTF-8"`,
         "",
-        lines.join("\r\n"),
+        body.replace(/\n/g, "\r\n"),
       ].join("\r\n"));
       const { data: sendingClaim, error: sendingClaimError } = await supabase.from("ia_job_claims")
         .update({ status: "sending" }).eq("id", claim).eq("status", "claimed")

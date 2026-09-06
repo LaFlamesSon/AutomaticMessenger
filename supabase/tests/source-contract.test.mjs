@@ -71,6 +71,15 @@ test("negotiations and Review-mode tests cannot auto-send", async () => {
   assert.match(inbound, /human_review_required: negotiationRequired \|\| deterministicReviewRecovery \|\|/);
 });
 
+test("daily digest and chat replies are ASCII-sanitized before they reach a user", async () => {
+  const digest = await read("functions/daily-digest/index.ts");
+  const api = await read("functions/agent-api/index.ts");
+  assert.match(digest, /buildDailyDigest\(rows\)/);
+  assert.doesNotMatch(digest, /need you ·| • |— CaughtUp|handled —/);
+  assert.match(api, /stripDraftEmojis\(cleanString\(String\(parsed\.reply/);
+  assert.match(api, /Never use emojis, emoticons, decorative symbols, or fancy punctuation/);
+});
+
 test("OAuth callback stores only send-only authorization after ownership verification", async () => {
   const oauth = await read("functions/gmail-oauth/index.ts");
   const api = await read("functions/agent-api/index.ts");

@@ -231,11 +231,11 @@ function renderOpportunities() {
   (state.category_metrics || []).forEach((metric) => {
     const row = create("div", "metric-row");
     const summary = create("div");
-    summary.append(create("strong", "", `${metric.category} Â· ${metric.platform}`));
+    summary.append(create("strong", "", `${metric.category} - ${metric.platform}`));
     const facts = [];
     if (metric.median_views !== null) facts.push(`${Number(metric.median_views).toLocaleString()} median views`);
     if (metric.engagement_rate !== null) facts.push(`${(Number(metric.engagement_rate) * 100).toFixed(2)}% engagement`);
-    summary.append(create("p", "meta", facts.join(" Â· ") || "No performance values yet"));
+    summary.append(create("p", "meta", facts.join(" - ") || "No performance values yet"));
     const remove = create("button", "ghost compact", "Remove");
     remove.type = "button";
     remove.addEventListener("click", async () => {
@@ -287,7 +287,7 @@ function renderOpportunities() {
     const economics = [];
     if (opportunity.commission_rate !== null) economics.push(`${Number(opportunity.commission_rate).toFixed(2)}% commission`);
     if (opportunity.commission_amount !== null) economics.push(`${opportunity.currency || "USD"} ${Number(opportunity.commission_amount).toFixed(2)} per sale`);
-    card.append(create("p", "product-economics", economics.join(" Â· ")));
+    card.append(create("p", "product-economics", economics.join(" - ")));
     card.append(create("p", "product-description", opportunity.description || "View the product listing for full details."));
     const listingPlatforms = opportunity.required_platform ? [opportunity.required_platform] : (opportunity.allowed_platforms || []);
     if (listingPlatforms.length) {
@@ -517,7 +517,7 @@ function applyIdentity(result = {}) {
 
 function connectedIdentityLabel() {
   if (gmailAddress && appEmail && gmailAddress.toLowerCase() !== appEmail.toLowerCase()) {
-    return `Gmail: ${gmailAddress} Â· Signed in: ${appEmail}`;
+    return `Gmail: ${gmailAddress} - Signed in: ${appEmail}`;
   }
   if (gmailAddress) return `Connected Gmail: ${gmailAddress}`;
   if (appEmail) return `Signed in: ${appEmail}`;
@@ -653,7 +653,7 @@ function negotiationTerms(terms = {}, currency = "USD") {
   if (Array.isArray(terms.deliverables) && terms.deliverables.length) parts.push(terms.deliverables.join(", "));
   if (terms.usage_rights) parts.push("usage rights");
   if (terms.exclusivity) parts.push("exclusivity");
-  return parts.join(" Â· ") || "Payment details are still missing";
+  return parts.join(" - ") || "Payment details are still missing";
 }
 
 function negotiationThresholdLabel(status) {
@@ -1476,7 +1476,7 @@ function renderKitCard(kit) {
   const identity = create("div");
   identity.append(
     create("div", "kit-label", kit.label || "Untitled kit"),
-    create("div", "kit-file", `${kit.original_filename || "File"}${kit.byte_size ? ` Â· ${Core.formatBytes(kit.byte_size)}` : ""}`),
+    create("div", "kit-file", `${kit.original_filename || "File"}${kit.byte_size ? ` - ${Core.formatBytes(kit.byte_size)}` : ""}`),
   );
   head.appendChild(identity);
   if (kit.is_default) head.appendChild(create("span", "badge draft", "Fallback"));
@@ -1831,7 +1831,7 @@ function renderAliasInbox(view, forwarding) {
   if (!showInbox) return;
   $("forwardingInboxHint").textContent = waiting
     ? `After you add ${forwarding.alias_address} in Gmail forwarding, Google will email that alias. CaughtUp polls every few seconds and will show the Confirm button here when the message arrives.`
-    : `Mail for ${forwarding.alias_address} — what CaughtUp received from Google:`;
+    : `Mail for ${forwarding.alias_address} - what CaughtUp received from Google:`;
   $("forwardingInboxMessage").classList.toggle("hidden", waiting);
   if (waiting) return;
   $("forwardingInboxTime").textContent = formatAliasReceivedAt(forwarding.verification_received_at) || "Just now";
@@ -2057,14 +2057,14 @@ function renderAgentMemory(result) {
     title.append(create("p", "", observation.value_text));
     head.append(title, create("span", `badge ${observation.status === "confirmed" ? "sent" : observation.status === "rejected" ? "failed" : "proposed"}`, observation.status));
     card.append(head);
-    card.append(create("p", "", `${observation.evidence_count} supporting message${Number(observation.evidence_count) === 1 ? "" : "s"} · ${Math.round(Number(observation.confidence || 0) * 100)}% confidence`));
+    card.append(create("p", "", `${observation.evidence_count} supporting message${Number(observation.evidence_count) === 1 ? "" : "s"} - ${Math.round(Number(observation.confidence || 0) * 100)}% confidence`));
     const evidenceRows = evidenceByObservation.get(observation.id) || [];
     if (evidenceRows.length) {
       const details = create("details");
       const summary = create("summary", "", "View evidence");
       details.append(summary);
       evidenceRows.slice(0, 3).forEach((evidence) => {
-        details.append(create("p", "", `${evidence.sender_address || "Sender"} — ${evidence.subject || "(no subject)"}: ${evidence.excerpt || "No excerpt"}`));
+        details.append(create("p", "", `${evidence.sender_address || "Sender"} - ${evidence.subject || "(no subject)"}: ${evidence.excerpt || "No excerpt"}`));
       });
       card.append(details);
     }
