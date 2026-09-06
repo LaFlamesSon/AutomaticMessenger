@@ -60,36 +60,14 @@ delete messages, or change Gmail settings.
 
 **Authorized domains:** `getcaughtup.io`
 
-## Per-scope justifications
+## Scope justification
 
-Paste each block into the justification field for that scope.
+`openid`, `userinfo.email`, and `userinfo.profile` are non-sensitive Google
+Sign-In scopes. The console pre-fills them. They do not need a written
+justification.
 
-### `openid`
-
-```text
-CaughtUp uses OpenID Connect so a creator can sign in and create a CaughtUp
-account. This scope identifies the Google account during sign-in. It is not
-used to read Gmail. Inbox intake uses Gmail forwarding that the creator
-configures, not Google mailbox APIs.
-```
-
-### `https://www.googleapis.com/auth/userinfo.email`
-
-```text
-CaughtUp needs the verified Google email address to create and match the
-creator's CaughtUp account, and to confirm that Gmail send authorization is
-for the same mailbox. CaughtUp will not send from a Gmail address that does
-not match the signed-in account. This scope is not used to read mailbox
-contents.
-```
-
-### `https://www.googleapis.com/auth/userinfo.profile`
-
-```text
-CaughtUp reads basic Google profile information during sign-in so the
-extension can show the signed-in identity. It is not used to access Gmail
-messages, contacts, or settings.
-```
+Write a justification only for the sensitive scope, `gmail.send`, and explain
+why a narrower Gmail scope is not enough.
 
 ### `https://www.googleapis.com/auth/gmail.send`
 
