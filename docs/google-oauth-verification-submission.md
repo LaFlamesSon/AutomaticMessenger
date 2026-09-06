@@ -112,25 +112,105 @@ CaughtUp in their Google Account permissions. CaughtUp does not sell Google
 user data or use it for advertising.
 ```
 
-## Demo video checklist
+## Demo video
 
-Record a real end-to-end walkthrough in English on an unlisted YouTube video,
-using a dedicated test account after revoking any prior CaughtUp grant:
+Google reviews this video to confirm you understand `gmail.send`. Last
+submissions failed when the recording looked like inbox access, Gmail Drafts,
+or a generic login. This video has to prove three facts:
 
-1. Start signed out. Open the production Chrome extension setup flow.
-2. Show Google identity consent (`openid` / email / profile) and the resulting
-   CaughtUp session.
-3. Show the separate Gmail consent screen. The address bar must show the
-   production OAuth client ID. The screen must list permission to send email
-   only, not inbox, draft, label, or settings access.
-4. Return to CaughtUp. Complete forwarding-address confirmation and
-   activation, then run the controlled test send.
-5. Show a real external message arriving through Gmail forwarding and an
-   explicitly approved reply sent from the verified Gmail address.
-6. Show Auto-send disclosure, a negotiation remaining Review-only, forwarding
-   disconnect, Google revocation instructions, and the deletion-request path.
-7. Show that CaughtUp does not request inbox reading, Gmail Draft, label, or
-   settings permissions.
+1. Consent asks only for permission to send email.
+2. Inbox content arrives through Gmail forwarding, not the Gmail API.
+3. `gmail.send` is used when the creator clicks Send, because a real message
+   then appears in that Gmail account's Sent folder.
+
+Record on the already-deployed send-only product. Do not add new scopes for
+the video. If the Cloud project has leftover unused OAuth clients, delete
+them before recording. The form requires every assigned client to appear in
+the video.
+
+### Before you press record
+
+1. In Cloud Console, Data Access lists only the four scopes above.
+2. On the Clients page, keep only the clients this app actually uses
+   (typically the Chrome / web client for Google sign-in and the send-only
+   Gmail client). Open each remaining client and note its client ID.
+3. Publishing can stay Production. Do not ship a new unverified scope to
+   other users. Record with one dedicated test Gmail account.
+4. On that test account, open Google Account, Third-party access, and
+   remove CaughtUp so the unverified-app screen appears. That screen is
+   expected and must be in the video.
+5. Sign out of the extension. Use a clean Chrome window. Keep the address
+   bar visible for every Google page.
+6. Have a second mailbox ready to send one short brand-style test into the
+   test Gmail, then forward it to the CaughtUp alias.
+
+### Shot list (English narration, about 6 to 8 minutes)
+
+Linger 3 to 4 seconds on each Google screen. Say what the screen is and why
+it exists.
+
+0. Project clients (10 seconds). Open Cloud Console, Clients. Point at each
+   remaining client ID. Say: "These are the only OAuth clients in this
+   project. The video will show each of them."
+
+1. Start signed out (15 seconds). Open the production CaughtUp extension.
+   Show the connect / sign-in screen. Say: "This is the production CaughtUp
+   Chrome extension."
+
+2. Google identity consent. Complete sign-in with openid / email / profile
+   only. Show the unverified-app screen if it appears, the App Name
+   CaughtUp, and the address bar client ID. After sign-in, show the
+   extension session. Say: "This first consent is Google sign-in only. It
+   does not grant Gmail send or inbox access."
+
+3. Separate Gmail send consent. This is the required scope. When the
+   extension asks to connect Gmail, show the unverified-app screen and
+   click through it; the address bar, including the OAuth client ID; the
+   App Name CaughtUp; and the permission list: Send email on your behalf.
+   No read, draft, label, or settings permission. Say: "This second consent
+   is https://www.googleapis.com/auth/gmail.send. CaughtUp uses it only to
+   send from this same verified Gmail address. It cannot read the inbox."
+   If sign-in and send use two different client IDs, both must appear in
+   the address bar across shots 2 and 3.
+
+4. Forwarding, not Gmail read (45 to 90 seconds). Show CaughtUp's forwarding
+   address, Gmail's forwarding confirmation, and activation. Say: "Brand
+   email reaches CaughtUp because I configured Gmail forwarding. That is
+   why we do not request gmail.readonly or gmail.modify."
+
+5. A real inbound message (30 seconds). From the second mailbox, send a
+   short test to the test Gmail, let it forward, and show it in CaughtUp
+   Today as a reviewable draft. Open Gmail Drafts and show it is empty.
+   Say: "The reply lives in CaughtUp, not Gmail Drafts. That is why
+   gmail.compose is not enough and gmail.send is the scope we need."
+
+6. The send. This is the proof. In CaughtUp, open the draft, click the
+   explicit Send control, then open Gmail, Sent and show the same reply
+   from the connected address. Say: "CaughtUp just called Gmail
+   users.messages.send with the send-only token. That is the only Gmail
+   API use of this scope." Do not make Auto-send the proof. Reviewers
+   need to see a person approve a send.
+
+7. Limits (30 seconds). Show Auto-send as an explicit opt-in that stays
+   off unless the creator enables it, and say negotiations stay
+   Review-only. Do not enable Auto-send during the video unless you
+   already planned a separate controlled test.
+
+8. Disconnect and delete (30 seconds). Show CaughtUp disconnect /
+   revocation guidance and Google Account, Third-party access. Optionally
+   show Settings export or deletion. Say: "The creator can revoke send
+   access in Google Account without giving CaughtUp inbox access."
+
+### Do not put in the video
+
+- Vault, refresh tokens, client secrets, or SQL
+- Another person's real brand mail
+- Inbox read, Gmail Draft creation, labels, or settings changes
+- Old gmail.modify language
+- A recording that starts already connected with no consent screens
+
+Upload to YouTube as Unlisted. Paste that URL into the YouTube link field.
+The Save button enables after the link is valid.
 
 ## Console checklist before Submit for verification
 
