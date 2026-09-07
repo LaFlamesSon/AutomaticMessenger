@@ -1,7 +1,10 @@
 import PostalMime, { type Address, type Email } from "postal-mime";
 import { parseInboundRecipient } from "./recipient";
 
-const MAX_RAW_BYTES = 10_000_000;
+// Cloudflare Email Routing's inbound ceiling. Do not set a tighter CaughtUp cap:
+// brand briefs with HTML, inline images, or PDFs commonly exceed 10 MB and would
+// bounce to Gmail as "Message exceeds CaughtUp's inbound size limit".
+const MAX_RAW_BYTES = 25 * 1024 * 1024;
 const MAX_BODY_CHARS = 100_000;
 const MAX_ATTACHMENTS = 25;
 const GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google.com";

@@ -51,6 +51,15 @@ test("catch-all Email Routing owns stable aliases; opaque inbound mailboxes stay
   assert.doesNotMatch(routing, /console\.(?:log|error|info|debug)/);
 });
 
+test("inbound raw size uses Cloudflare's 25 MiB ceiling instead of a tighter CaughtUp cap", () => {
+  assert.match(worker, /MAX_RAW_BYTES = 25 \* 1024 \* 1024/);
+  assert.match(ingest, /MAX_RAW_BYTES = 25 \* 1024 \* 1024/);
+  assert.match(worker, /message\.rawSize < 1 \|\| message\.rawSize > MAX_RAW_BYTES/);
+  assert.match(ingest, /rawSize < 1 \|\| rawSize > MAX_RAW_BYTES/);
+  assert.doesNotMatch(worker, /MAX_RAW_BYTES = 10_000_000/);
+  assert.doesNotMatch(ingest, /rawSize > 10_000_000/);
+});
+
 test("Cloudflare buffers MIME once, minimizes it, and signs the exact JSON body", () => {
   assert.equal((worker.match(/message\.raw/g) ?? []).length, 4, "raw should appear only in size/stream handling and payload metadata");
   assert.match(worker, /new Response\(message\.raw\)\.arrayBuffer\(\)/);
@@ -113,9 +122,9 @@ test("forwarded content is deduplicated, bounded, and retained as normalized arc
 test("forwarded drafts preserve safety, Review negotiations, and explicit send claims", () => {
   assert.match(ingest, /hostileInboundDetected\(payload\.subject, payload\.text\)/);
   assert.match(ingest, /draftSafetyViolations\(finalDraft\)/);
-  assert.match(ingest, /draftReferencesProposal\(finalDraft, payload\.subject, payload\.text\)/);
+  assert.match(ingest, /draftReferencesProposal\(finalDraft, payload\.subject, payload\.text, payload\.from\)/);
   assert.match(ingest, /stripDraftEmojis\(finalDraft\)/);
-  assert.match(ingest, /safeInformationDraft\(profile, shouldAttach \|\| triage\.wants_portfolio,\s*\{ subject: payload\.subject, body: payload\.text \}\)/);
+  assert.match(ingest, /safeInformationDraft\(profile, shouldAttach \|\| triage\.wants_portfolio,\s*\{ from: payload\.from, subject: payload\.subject, body: payload\.text \}\)/);
   assert.match(ingest, /safeReviewRecoveryDraft\(\{/);
   assert.match(ingest, /deterministicReviewRecovery = true/);
   assert.match(ingest, /blockedByNeverDraftRule/);

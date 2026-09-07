@@ -22,6 +22,7 @@ import {
 } from "../_shared/inbox-archive.ts";
 
 const MAX_DAILY_MESSAGES = 200;
+const MAX_RAW_BYTES = 25 * 1024 * 1024;
 const GOOGLE_FORWARDING_SENDER = "forwarding-noreply@google.com";
 const INBOUND_SIGNING_PUBLIC_KEYS = [
   `-----BEGIN PUBLIC KEY-----
@@ -104,10 +105,10 @@ function validatePayload(raw: any): InboundPayload | null {
   if (!recipient || recipient.aliasToken !== token || !envelopeMatchesAliasToken(envelopeTo, token)) return null;
   const received = new Date(String(raw?.received_at ?? ""));
   const rawSize = Number(raw?.raw_size);
-  if (!Number.isFinite(received.getTime()) || !Number.isInteger(rawSize) || rawSize < 1 || rawSize > 10_000_000) return null;
+  if (!Number.isFinite(received.getTime()) || !Number.isInteger(rawSize) || rawSize < 1 || rawSize > MAX_RAW_BYTES) return null;
   const attachments = Array.isArray(raw?.attachments) ? raw.attachments.slice(0, 25).map((item: any) => ({
     filename: clean(item?.filename, 180), mime_type: clean(item?.mime_type, 100).toLowerCase(),
-    byte_size: Math.max(0, Math.min(10_000_000, Number(item?.byte_size) || 0)),
+    byte_size: Math.max(0, Math.min(MAX_RAW_BYTES, Number(item?.byte_size) || 0)),
   })) : [];
   return {
     alias_token: token,
@@ -573,7 +574,7 @@ Deno.serve(async (req: Request) => {
       const terms = commercialTerms.detected ? commercialTerms : existingNegotiation?.current_terms ?? commercialTerms;
       triage = { ...triage, category: "urgent", summary: negotiationSummary(terms, Boolean(existingNegotiation)), confidence: 1 };
       if (!triage.draft || draftSafetyViolations(triage.draft).length) {
-        triage.draft = safeNegotiationDraft(profile, { subject: payload.subject, body: payload.text });
+        triage.draft = safeNegotiationDraft(profile, { from: payload.from, subject: payload.subject, body: payload.text });
       }
     }
 
@@ -584,14 +585,14 @@ Deno.serve(async (req: Request) => {
     const enabledCategories = Array.isArray(profile.draft_categories) ? profile.draft_categories : ["urgent", "action_needed"];
     const proposedDraft = triage.draft;
     const ungrounded = typeof proposedDraft === "string" && proposedDraft.length > 0 &&
-      !draftReferencesProposal(proposedDraft, payload.subject, payload.text);
+      !draftReferencesProposal(proposedDraft, payload.subject, payload.text, payload.from);
     const recoveryNeeded = enabledCategories.includes(triage.category) &&
       (!triage.draft || draftSafetyViolations(triage.draft).length > 0 || ungrounded);
     const categoryRecovery = !enabledCategories.includes(triage.category) && fallbackAllowed && (triage.category !== "fyi" || contextualKit);
     if (fallbackAllowed && (recoveryNeeded || categoryRecovery)) {
       triage = { ...triage, category: categoryRecovery ? "action_needed" : triage.category,
         draft: safeInformationDraft(profile, shouldAttach || triage.wants_portfolio,
-          { subject: payload.subject, body: payload.text }),
+          { from: payload.from, subject: payload.subject, body: payload.text }),
         wants_portfolio: shouldAttach || triage.wants_portfolio, confidence: 1 };
     } else if (shouldAttach && fallbackAllowed) triage.wants_portfolio = true;
 
@@ -651,7 +652,7 @@ Deno.serve(async (req: Request) => {
     const finalDraftRejected = finalDraft && !blockedByNeverDraftRule && enabledCategories.includes(triage.category) && fallbackAllowed &&
       (draftSafetyViolations(finalDraft).length ||
         contactSafetyViolations(finalDraft, calendar, slots).length || (finalDraft.match(/\S+/g) ?? []).length > 150 ||
-        !draftReferencesProposal(finalDraft, payload.subject, payload.text));
+        !draftReferencesProposal(finalDraft, payload.subject, payload.text, payload.from));
     if (finalDraftRejected) {
       const recovered = safeReviewRecoveryDraft({
         identity: profile,
@@ -662,6 +663,7 @@ Deno.serve(async (req: Request) => {
         slots,
         subject: payload.subject,
         body: payload.text,
+        from: payload.from,
       });
       if (recovered) {
         finalDraft = stripDraftEmojis(recovered);

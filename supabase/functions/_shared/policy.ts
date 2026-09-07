@@ -84,13 +84,70 @@ const EMOJI_SEQUENCE =
   /\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E|\u200D\p{Extended_Pictographic})*|\p{Emoji_Presentation}|\p{Regional_Indicator}{2}|[\u200D\uFE0F\u20E3\u{E0020}-\u{E007F}]/gu;
 
 export function stripDraftEmojis(draft: string): string {
-  return draft
+  return String(draft ?? "")
     .replace(EMOJI_SEQUENCE, "")
+    .replace(/\u00C2(?=[\s\u00B7\u2022\u2013\u2014.\-])/g, "")
+    .replace(/[\u00B7\u2022\u2023\u2043\u2219]/g, "-")
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[\u2190-\u2194\u21D2]/g, "-")
+    .replace(/\u00A0/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/ {2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export interface DailyDigestRow {
+  category?: string | null;
+  sender?: string | null;
+  subject?: string | null;
+  summary?: string | null;
+  draft_created?: boolean | null;
+  auto_sent?: boolean | null;
+}
+
+const DIGEST_LABELS: Record<string, string> = {
+  urgent: "URGENT",
+  action_needed: "ACTION NEEDED",
+  fyi: "FYI",
+};
+
+export function buildDailyDigest(rows: DailyDigestRow[]): { subject: string; body: string } {
+  const byCat: Record<string, DailyDigestRow[]> = {};
+  for (const row of rows) (byCat[String(row.category ?? "")] ??= []).push(row);
+  const needsYou = (byCat.urgent?.length ?? 0) + (byCat.action_needed?.length ?? 0);
+  const handled = rows.length - needsYou;
+  const lines = [
+    "Good morning. Here is what your inbox agent did in the last 24 hours.",
+    "",
+    `${needsYou} need you - ${handled} handled for you`,
+    "",
+  ];
+  for (const cat of ["urgent", "action_needed", "fyi"]) {
+    const items = byCat[cat];
+    if (!items?.length) continue;
+    lines.push(DIGEST_LABELS[cat]);
+    for (const item of items) {
+      const status = item.auto_sent ? " [reply sent]" : item.draft_created ? " [draft ready]" : "";
+      const sender = stripDraftEmojis(String(item.sender ?? "").replace(/<[^>]*>/g, ""));
+      const subject = stripDraftEmojis(String(item.subject ?? ""));
+      lines.push(`  - ${sender} - ${subject}${status}`);
+      const summary = stripDraftEmojis(String(item.summary ?? ""));
+      if (summary) lines.push(`    ${summary}`);
+    }
+    lines.push("");
+  }
+  const noise = (byCat.low_priority?.length ?? 0) + (byCat.spam_or_poor_fit?.length ?? 0);
+  if (noise) lines.push(`${noise} newsletters and pitches filtered out for you.`);
+  lines.push("", "- CaughtUp, your inbox agent");
+  const subject = needsYou
+    ? `${needsYou} need you, ${handled} handled - your CaughtUp digest`
+    : `All caught up - ${handled} handled for you`;
+  return { subject: stripDraftEmojis(subject), body: stripDraftEmojis(lines.join("\n")) };
 }
 
 const INBOUND_SUBJECT_PREFIX = /^(?:(?:re|fwd|fw)\s*:\s*)+/i;
@@ -105,6 +162,41 @@ const DELIVERABLE_ANCHOR = /\b(\d{1,2})\s+(videos?|posts?|reels?|stories|shorts?
 export interface InboundProposalContext {
   subject?: string;
   body?: string;
+  from?: string;
+}
+
+const GENERIC_GROUNDING_TOKENS = new Set([
+  ...NAMED_PLATFORMS,
+  "brief", "deadline", "deliverable", "hello", "inquiry", "invitation", "invite", "lash", "lashes",
+  "note", "offer", "opportunity", "paid", "post", "posts", "proposal", "reaching", "reel", "reels",
+  "short", "shorts", "story", "thanks", "video", "videos", "yay",
+]);
+const GENERIC_SENDER_LOCAL_PARTS = new Set([
+  "hello", "hi", "info", "kol", "mail", "marketing", "noreply", "no-reply", "partnerships",
+  "support", "talent", "team",
+]);
+
+function senderBrandHints(from: string): string[] {
+  const raw = stripDraftEmojis(String(from ?? "")).replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!raw) return [];
+  const hints: string[] = [];
+  const display = raw.replace(/<[^>]+>/g, "").replace(/^['"]+|['"]+$/g, "").trim();
+  if (display && !display.includes("@") && display.length >= 3 && !UNSAFE_PROPOSAL_ANCHOR.test(display)) {
+    hints.push(display.slice(0, 80));
+  }
+  const address = (raw.match(/<([^>]+)>/)?.[1] ?? raw).trim().toLocaleLowerCase();
+  const domain = address.split("@")[1] ?? "";
+  const local = (address.split("@")[0] ?? "").replace(/[^a-z0-9]+/gi, "");
+  if (local.length >= 5 && !GENERIC_SENDER_LOCAL_PARTS.has(local) &&
+    !hints.some((hint) => hint.toLocaleLowerCase().includes(local))) {
+    hints.push(local.slice(0, 80));
+  }
+  const brandLabel = domain.split(".")[0] ?? "";
+  if (brandLabel.length >= 4 && !GENERIC_SENDER_LOCAL_PARTS.has(brandLabel) &&
+    !hints.some((hint) => hint.toLocaleLowerCase().includes(brandLabel))) {
+    hints.push(brandLabel.slice(0, 80));
+  }
+  return hints;
 }
 
 function cleanedInboundSubject(subject: string): string | null {
@@ -121,7 +213,7 @@ function cleanedInboundSubject(subject: string): string | null {
   return value;
 }
 
-export function extractProposalAnchors(subject: string, body: string): string[] {
+export function extractProposalAnchors(subject: string, body: string, from = ""): string[] {
   const anchors: string[] = [];
   const seen = new Set<string>();
   const add = (raw: string) => {
@@ -132,32 +224,46 @@ export function extractProposalAnchors(subject: string, body: string): string[] 
     seen.add(key);
     anchors.push(value);
   };
+  for (const hint of senderBrandHints(from)) add(hint);
   const subjectAnchor = cleanedInboundSubject(subject);
   if (subjectAnchor) add(subjectAnchor);
   const text = `${subject}\n${body}`.slice(0, 8_000);
-  for (const platform of NAMED_PLATFORMS) {
-    if (new RegExp(`\\b${platform}\\b`, "i").test(text)) add(platform);
-  }
   for (const match of text.matchAll(DELIVERABLE_ANCHOR)) {
     add(`${match[1]} ${match[2].toLocaleLowerCase()}`);
+  }
+  for (const platform of NAMED_PLATFORMS) {
+    if (new RegExp(`\\b${platform}\\b`, "i").test(text)) add(platform);
   }
   return anchors.slice(0, 4);
 }
 
-export function draftReferencesProposal(draft: string, subject: string, body: string): boolean {
-  const anchors = extractProposalAnchors(subject, body);
-  if (!anchors.length) return true;
-  const haystack = stripDraftEmojis(draft).toLocaleLowerCase();
-  return anchors.some((anchor) => {
-    const lower = anchor.toLocaleLowerCase();
-    if (haystack.includes(lower)) return true;
-    const words = lower.match(/[\p{L}\p{N}]+/gu) ?? [];
-    return words.some((word) => word.length >= 4 && includesTerm(haystack, word));
-  });
+export function distinctiveProposalTokens(subject: string, body: string, from = ""): string[] {
+  const tokens = new Set<string>();
+  for (const anchor of extractProposalAnchors(subject, body, from)) {
+    for (const token of relevanceTokens(anchor)) {
+      if (token.length >= 4 && !GENERIC_GROUNDING_TOKENS.has(token) && !DESCRIPTION_STOP_WORDS.has(token)) {
+        tokens.add(token);
+      }
+    }
+  }
+  return [...tokens];
 }
 
-function inboundContextText(inbound?: InboundProposalContext): { subject: string; body: string } {
-  return { subject: String(inbound?.subject ?? ""), body: String(inbound?.body ?? "") };
+export function draftReferencesProposal(draft: string, subject: string, body: string, from = ""): boolean {
+  const haystack = stripDraftEmojis(draft).toLocaleLowerCase();
+  const distinctive = distinctiveProposalTokens(subject, body, from);
+  if (distinctive.length) return distinctive.some((token) => includesTerm(haystack, token));
+  const anchors = extractProposalAnchors(subject, body, from);
+  if (!anchors.length) return true;
+  return anchors.some((anchor) => haystack.includes(anchor.toLocaleLowerCase()));
+}
+
+function inboundContextText(inbound?: InboundProposalContext): { subject: string; body: string; from: string } {
+  return {
+    subject: String(inbound?.subject ?? ""),
+    body: String(inbound?.body ?? ""),
+    from: String(inbound?.from ?? ""),
+  };
 }
 
 const PORTFOLIO_NOUN = String.raw`(?:media\s+kit|portfolio|work\s+(?:samples?|examples?)|relevant\s+samples?|samples?|examples?|example\s+(?:images?|work)|case\s+stud(?:y|ies))`;
@@ -191,8 +297,8 @@ export function collaborationMediaKitRelevant(subject: string, body: string): bo
 }
 
 export function safeNegotiationDraft(identity: DraftIdentity, inbound?: InboundProposalContext): string {
-  const { subject, body } = inboundContextText(inbound);
-  const about = extractProposalAnchors(subject, body)[0];
+  const { subject, body, from } = inboundContextText(inbound);
+  const about = extractProposalAnchors(subject, body, from)[0];
   const opener = about
     ? `Thanks for sending the terms on ${about}.`
     : "Thanks for sending the terms.";
@@ -207,8 +313,8 @@ export function safeInformationDraft(
   wantsPortfolio = false,
   inbound?: InboundProposalContext,
 ): string {
-  const { subject, body } = inboundContextText(inbound);
-  const anchors = extractProposalAnchors(subject, body);
+  const { subject, body, from } = inboundContextText(inbound);
+  const anchors = extractProposalAnchors(subject, body, from);
   const about = anchors[0];
   const opener = about ? `Thanks for the note about ${about}.` : "Thanks for reaching out.";
   const extra = anchors.slice(1).find((anchor) => /^\d{1,2}\s+/.test(anchor));
@@ -519,10 +625,11 @@ export function safeReviewRecoveryDraft(input: {
   hasAttachment?: boolean;
   preference: CalendarPreference;
   slots: VerifiedOpenSlot[];
+  from?: string;
   subject?: string;
   body?: string;
 }): string | null {
-  const inbound = { subject: input.subject, body: input.body };
+  const inbound = { from: input.from, subject: input.subject, body: input.body };
   let fallback = input.negotiation
     ? safeNegotiationDraft(input.identity, inbound)
     : safeInformationDraft(input.identity, input.wantsPortfolio === true, inbound);
