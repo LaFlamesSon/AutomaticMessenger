@@ -212,6 +212,164 @@ it exists.
 Upload to YouTube as Unlisted. Paste that URL into the YouTube link field.
 The Save button enables after the link is valid.
 
+### Spoken recording script
+
+Print this or keep it on a second screen. Do the action in brackets, pause,
+then say the line. Speak slowly. Linger 3 to 4 seconds on every Google
+screen. Keep the browser address bar visible.
+
+**Off camera, once:** Revoke CaughtUp on the test Google account. Sign out
+of the extension. Open Cloud Console on the test project. Have a second
+mailbox ready. Do not show secrets.
+
+---
+
+**Scene 0. Clients, about 15 seconds**
+
+[Open Google Cloud Console → Clients.]
+
+"This Google Cloud project is CaughtUp. These are the only OAuth clients
+assigned to it. The rest of this video will use each of them."
+
+[Point at each client ID.]
+
+---
+
+**Scene 1. Extension, about 15 seconds**
+
+[Open the production CaughtUp Chrome extension. You are signed out.]
+
+"This is the production CaughtUp Chrome extension. CaughtUp is a
+creator-controlled Gmail assistant. I am starting signed out so you can
+see both Google consents from a clean grant."
+
+---
+
+**Scene 2. Sign-in only, about 45 seconds**
+
+[Click Connect or the Google sign-in control. When Google opens, do not
+rush.]
+
+"This first Google screen is sign-in only: openid, email, and profile.
+CaughtUp uses it to create the account and match the verified email. It
+does not grant Gmail send, and it does not read the inbox."
+
+[If the unverified-app screen appears, stay on it.]
+
+"This unverified-app screen is expected while we wait for Google's review.
+I am showing it on purpose."
+
+[Show the address bar, including the client ID. Show the app name
+CaughtUp. Finish sign-in. Return to the extension.]
+
+"I am now signed into CaughtUp. Gmail sending is still not authorized."
+
+---
+
+**Scene 3. gmail.send consent, about 60 seconds**
+
+[Click Connect Gmail.]
+
+"This second consent is the sensitive scope we are requesting:
+https://www.googleapis.com/auth/gmail.send."
+
+[Show the unverified-app screen again if it appears. Show the address
+bar and the client ID. If this client ID is different from sign-in, say
+so.]
+
+"The address bar shows this project's OAuth client ID. The app name is
+CaughtUp."
+
+[On the permission list, point at Send email on your behalf.]
+
+"Google is asking only for permission to send email on my behalf. There
+is no permission to read the inbox, create Gmail drafts, change labels,
+delete mail, or change Gmail settings. That is the narrowest scope that
+can send from my own Gmail address."
+
+[Allow / Continue. Return to the extension.]
+
+"CaughtUp now has a send-only token for this same verified Gmail
+address. It still cannot read my mailbox through the Gmail API."
+
+---
+
+**Scene 4. Forwarding, about 90 seconds**
+
+[In CaughtUp, open Set up forwarding. Show the alias address.]
+
+"Brand email reaches CaughtUp through Gmail forwarding that I configure,
+not through Gmail read scopes. This is the CaughtUp forwarding address."
+
+[Open Gmail settings → Forwarding. Add the address. When Google's
+confirmation appears in CaughtUp, click Confirm with Google, then in
+Gmail turn on Forward a copy and Save. Click I enabled forwarding if
+shown.]
+
+"I added that address in Gmail and confirmed Google's forwarding email.
+Inbox content now arrives because I forwarded it. That is why we do not
+request gmail.readonly or gmail.modify."
+
+---
+
+**Scene 5. A real message, about 45 seconds**
+
+[From the second mailbox, send a short test to the test Gmail, such as
+"Test partnership for the September brief." Wait until it appears in
+CaughtUp Today as Draft ready.]
+
+"A real message was sent to this Gmail account, forwarded to CaughtUp,
+and a reply draft appeared in the extension."
+
+[Open Gmail → Drafts. Show it is empty.]
+
+"Gmail Drafts is empty. The reply lives in CaughtUp until I approve it.
+gmail.compose is not enough, because we never create a Gmail draft."
+
+---
+
+**Scene 6. The send. This is the proof, about 60 seconds**
+
+[In CaughtUp, open the draft. Click Send. Confirm Send this reply
+through Gmail.]
+
+"I am explicitly sending this reply. CaughtUp will call Gmail
+users.messages.send with the send-only token. That is the only Gmail API
+use of this scope."
+
+[Wait for Reply sent. Open Gmail → Sent. Show the same message from the
+connected address.]
+
+"Here is the same reply in Gmail Sent, from my connected address. That
+is why we need gmail.send."
+
+---
+
+**Scene 7. Limits, about 20 seconds**
+
+[Open Settings. Show Review before sending selected. Do not turn on
+Auto-send.]
+
+"Auto-send is off unless the creator later enables it. Negotiations stay
+in Review. The proof you just saw was a person clicking Send."
+
+---
+
+**Scene 8. Revoke, about 20 seconds**
+
+[Show CaughtUp disconnect or Settings guidance, then Google Account →
+Third-party access.]
+
+"The creator can disconnect CaughtUp here, and can revoke send access in
+their Google Account. Revoking send access does not require inbox
+access."
+
+[Stop recording.]
+
+---
+
+Upload as Unlisted on YouTube and paste the link into the form.
+
 ## Console checklist before Submit for verification
 
 1. OAuth consent screen is External, production app name is CaughtUp.
